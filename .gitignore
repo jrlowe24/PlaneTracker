@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+coverage/
+
+# Secrets: never commit API keys
+.env
+.env.*
+!.env.example
+
+# Large recorded fixtures can be regenerated with the record script
+*.log
