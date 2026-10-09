@@ -204,7 +204,10 @@ export class AircraftInstances {
     const pixelToWorld =
       (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, viewportHeight)
     const cameraAltitude = origin.length() - 6_371_000
-    const attached = cameraModeStore.get().mode !== 'globe'
+    // Markers shrink to true size once the camera rides with an aircraft,
+    // not the moment a fly-in starts (they visibly vanished mid-flight).
+    const cameraMode = cameraModeStore.get()
+    const attached = cameraMode.mode !== 'globe' && !cameraMode.transitioning
     const markerPixels = attached
       ? MARKER_PIXELS_ATTACHED
       : MARKER_PIXELS_NEAR +

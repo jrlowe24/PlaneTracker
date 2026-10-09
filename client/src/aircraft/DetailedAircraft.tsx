@@ -1,4 +1,4 @@
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import { AtmosphereContext } from '@takram/three-atmosphere/r3f'
 import { useContext, useEffect, useMemo, type FC } from 'react'
 import { Group, Matrix4, Mesh, Vector3, type Object3D } from 'three'
@@ -12,7 +12,7 @@ import { AIRFRAMES, type AircraftClass } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { FRAME_PRIORITY } from './framePriority'
 import { lightAnchor } from './lightAnchor'
-import { createDetailedModel, disposeDetailedModel } from './models'
+import { createDetailedModel, disposeDetailedModel, preloadModels } from './models'
 import { typeDimensions } from './typeDimensions'
 import { aircraftShading, skyBrightness } from './shading'
 
@@ -188,12 +188,24 @@ class DetailedAircraftController {
 export const DetailedAircraft: FC = () => {
   const { transientStates } = useContext(AtmosphereContext)
   const controller = useMemo(() => new DetailedAircraftController(), [])
+  const gl = useThree(({ gl }) => gl)
+  const camera = useThree(({ camera }) => camera)
+  const scene = useThree(({ scene }) => scene)
   useEffect(
     () => () => {
       controller.dispose()
     },
     [controller]
   )
+  // Warm up aircraft models shortly after startup (textures, shaders).
+  useEffect(() => {
+    const id = setTimeout(() => {
+      void preloadModels(gl, camera, scene)
+    }, 4000)
+    return () => {
+      clearTimeout(id)
+    }
+  }, [gl, camera, scene])
   useFrame(() => {
     controller.update(transientStates?.sunDirection ?? null)
   }, FRAME_PRIORITY.detailedModels)

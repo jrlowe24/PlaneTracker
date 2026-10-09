@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "night-lights": "node scripts/build-night-lights.mjs"
+    "night-lights": "node scripts/build-night-lights.mjs",
+    "optimize-models": "node scripts/optimize-models.mjs"
   },
   "dependencies": {
     "3d-tiles-renderer": "0.5.3",

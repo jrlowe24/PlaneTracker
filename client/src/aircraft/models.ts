@@ -1,4 +1,16 @@
-import { Group, Mesh, MeshStandardMaterial, Vector3, type BufferGeometry, type Material, type Object3D } from 'three'
+import {
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  Texture,
+  Vector3,
+  type BufferGeometry,
+  type Camera,
+  type Material,
+  type Object3D,
+  type Scene,
+  type WebGLRenderer
+} from 'three'
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 
@@ -276,4 +288,45 @@ export function createDetailedModel(
     })
   })
   return placeholder
+}
+
+/**
+ * Loads every model in the manifest in the background, uploads its textures
+ * and compiles its shaders, so the first time an aircraft is shown in
+ * detail (typically mid fly-in to follow it) doesn't stall a frame.
+ */
+export async function preloadModels(renderer: WebGLRenderer, camera: Camera, scene: Scene): Promise<void> {
+  const manifest = await loadManifest()
+  const entries = new Map<string, ModelEntry>()
+  for (const entry of [
+    ...Object.values(manifest.models),
+    ...Object.values(manifest.classes ?? {}),
+    ...Object.values(manifest.liveries ?? {})
+  ]) {
+    if (entry != null) entries.set(entry.url, entry)
+  }
+  for (const entry of entries.values()) {
+    const loaded = await loadTypeModel(entry)
+    if (loaded == null) continue
+    loaded.object.traverse(child => {
+      if (!(child instanceof Mesh)) return
+      for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+        for (const value of Object.values(material as unknown as Record<string, unknown>)) {
+          if (value instanceof Texture) renderer.initTexture(value)
+        }
+      }
+    })
+    // Compile the patched (per-instance) material variant the detailed
+    // aircraft use, off to the side of the scene graph.
+    const sample = prepare(loaded.object.clone(true), true)
+    sample.visible = true
+    try {
+      await renderer.compileAsync(sample, camera, scene)
+    } catch {
+      // Compilation is an optimization only.
+    }
+    disposeDetailedModel(sample)
+    // Let a few frames render between models.
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
 }
