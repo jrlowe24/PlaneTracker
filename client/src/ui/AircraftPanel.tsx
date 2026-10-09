@@ -27,11 +27,18 @@ function useTicker(intervalMs: number): void {
 
 const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
 
-function formatAltitude(state: AircraftState): string {
+/**
+ * Reported altitude is above sea level (an airport at 433 ft reads 450 ft on
+ * the runway), so near the ground the height above the terrain is shown too.
+ */
+function formatAltitude(state: AircraftState, aboveGroundM: number | null): string {
   if (state.onGround) return 'On ground'
   const parts: string[] = []
   if (state.altBaro != null) parts.push(`${fmt.format(state.altBaro)} ft`)
-  if (state.altGeom != null) parts.push(`GNSS ${fmt.format(state.altGeom)} ft`)
+  else if (state.altGeom != null) parts.push(`GNSS ${fmt.format(state.altGeom)} ft`)
+  if (aboveGroundM != null && aboveGroundM < 1500) {
+    parts.push(`${fmt.format(Math.max(0, aboveGroundM / 0.3048))} ft above ground`)
+  }
   return parts.length > 0 ? parts.join(' · ') : '—'
 }
 
@@ -112,7 +119,14 @@ export const AircraftPanel: FC = () => {
       )}
       <dl className='aircraft-facts'>
         <dt>Altitude</dt>
-        <dd>{formatAltitude(state)}</dd>
+        <dd>
+          {formatAltitude(
+            state,
+            tracked.pose != null && tracked.groundHeight != null
+              ? tracked.pose.height - tracked.groundHeight
+              : null
+          )}
+        </dd>
         <dt>Ground speed</dt>
         <dd>{state.groundSpeed == null ? '—' : `${fmt.format(state.groundSpeed)} kt`}</dd>
         <dt>Vertical rate</dt>
