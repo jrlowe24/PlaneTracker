@@ -139,7 +139,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     // ~0.9 albedo so they read as moonlit, not overcast day), by opacity.
     .replace(
       'vec4 overlay = texture(overlayBuffer, uv);',
-      'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
+      'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (any(isnan(overlay)) || any(isinf(overlay))) overlay = vec4(0.0);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
     )
     // Volumetric clouds fade out with camera altitude (and stop rendering,
     // leaving stale buffers): fade their overlay, shadows and shafts too.

@@ -19,7 +19,7 @@ import { settingsStore } from '../state/settings'
 import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
-import { RegionalCoverageController } from './regionalShader'
+import { patchCloudsResolve, RegionalCoverageController } from './regionalShader'
 
 /**
  * Volumetric clouds fade out between these camera altitudes and aren't
@@ -85,6 +85,7 @@ interface CloudsPassInternals {
   cloudsPass?: {
     currentRenderTarget?: { depthVelocity?: Texture | null }
     currentMaterial?: ShaderMaterial
+    resolveMaterial?: ShaderMaterial
   }
   shadowPass?: { currentMaterial?: ShaderMaterial }
 }
@@ -204,6 +205,10 @@ export const VolumetricClouds: FC = () => {
           if (material != null && !regional.patch(material)) {
             console.warn('[clouds] regional coverage patch did not apply')
           }
+        }
+        const resolve = passes.cloudsPass?.resolveMaterial
+        if (resolve != null && !patchCloudsResolve(resolve)) {
+          console.warn('[clouds] NaN guard patch did not apply')
         }
       }}
       qualityPreset={preset.clouds}

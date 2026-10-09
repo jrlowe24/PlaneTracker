@@ -131,3 +131,32 @@ export class RegionalCoverageController {
     this.coverage.dispose()
   }
 }
+
+const RESOLVE_MARKER = '/* window-seat nan guard */'
+
+/**
+ * Keeps NaN/Inf out of the clouds' temporal history. One bad pixel (some
+ * GPUs produce NaN in edge cases of the cloud march) was blended into the
+ * history each frame and spread through the neighbourhood clamp, growing
+ * into black blocks across the sky. Bad current samples become empty sky,
+ * bad history falls back to the current sample.
+ */
+export function patchCloudsResolve(material: ShaderMaterial): boolean {
+  if (material.fragmentShader.includes(RESOLVE_MARKER)) return true
+  const current = '  vec4 currentColor = texelFetch(colorBuffer, coord, 0);'
+  const history = '  vec4 historyColor = texture(colorHistoryBuffer, prevUv);'
+  const blend = '  outputColor = mix(clippedColor, currentColor, temporalAlpha);'
+  const source = material.fragmentShader
+  const anchor = 'void temporalUpscale('
+  if (!source.includes(current) || !source.includes(history) || !source.includes(blend) || !source.includes(anchor)) {
+    return false
+  }
+  // After the raw shader's own precision/defines header.
+  material.fragmentShader = source
+    .replace(anchor, `${RESOLVE_MARKER}\nbool badColor(const vec4 c) { return any(isnan(c)) || any(isinf(c)); }\n\n${anchor}`)
+    .replace(current, `${current}\n  if (badColor(currentColor)) currentColor = vec4(0.0);`)
+    .replaceAll(history, `${history}\n  if (badColor(historyColor)) historyColor = currentColor;`)
+    .replace(blend, `${blend}\n  if (badColor(outputColor)) outputColor = currentColor;`)
+  material.needsUpdate = true
+  return true
+}
