@@ -32,9 +32,13 @@ export function nightFactor(sunDotUp: number): number {
   return smoothstep(0.05, -0.15, sunDotUp)
 }
 
-/** Emissive glow of icon-sized markers by day and at night. */
+/**
+ * Emissive glow of icon-sized markers by day and at night (globe view).
+ * Night exposure is ~8× daylight (eye adaptation), so the night value is
+ * small: icons stay findable without glaring.
+ */
 export const GLOW_DAY = 0.03
-export const GLOW_NIGHT = 0.6
+export const GLOW_NIGHT = 0.05
 
 /**
  * Shading vector (glow, sun visibility, sky scale) for an aircraft at ECEF

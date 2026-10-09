@@ -3,10 +3,11 @@ import { AtmosphereContext, SkyLight, SunLight } from '@takram/three-atmosphere/
 import { ecefToGeodetic } from '@windowseat/shared'
 import type { SunDirectionalLight } from '@takram/three-atmosphere'
 import { useContext, useEffect, useMemo, useRef, type FC } from 'react'
-import { Vector3, type Group, type HemisphereLight, type PerspectiveCamera } from 'three'
+import { Vector3, type AmbientLight, type Group, type HemisphereLight, type PerspectiveCamera } from 'three'
 
 import { flightConnection } from '../data/flightConnection'
 import { computeViewState, type ViewState } from '../data/viewport'
+import { nightState } from '../scene/nightLighting'
 import { cameraModeStore } from '../state/cameraMode'
 import { selectionStore } from '../state/selection'
 import { AircraftLayer } from './AircraftLayer'
@@ -81,6 +82,7 @@ export const AircraftSystem: FC = () => {
   const sunRef = useRef<SunDirectionalLight>(null)
   const skyGroupRef = useRef<Group>(null)
   const bounceRef = useRef<HemisphereLight>(null)
+  const nightRef = useRef<AmbientLight>(null)
   useFrame(() => {
     const { mode, targetHex } = cameraModeStore.get()
     const followed =
@@ -108,6 +110,8 @@ export const AircraftSystem: FC = () => {
       group.position.copy(lightAnchor)
       group.updateMatrixWorld()
     }
+    // Moonlight + starlight (the atmosphere provides none at night).
+    nightRef.current?.color.setRGB(nightState.ambient.x, nightState.ambient.y, nightState.ambient.z)
     // Sunlight reflected off the ground lights undersides (a high wing seen
     // from the cabin, bellies from below): a hemisphere light whose ground
     // color is the sun color × a typical ground albedo × sun elevation.
@@ -156,6 +160,7 @@ export const AircraftSystem: FC = () => {
     <>
       <SunLight ref={sunRef} />
       <hemisphereLight ref={bounceRef} args={[0x000000, 0x000000, 1]} />
+      <ambientLight ref={nightRef} args={[0x000000, 1]} />
       <group ref={skyGroupRef}>
         <SkyLight />
       </group>

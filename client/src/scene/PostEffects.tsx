@@ -1,6 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { SMAA, ToneMapping } from '@react-three/postprocessing'
-import type { LightingMaskPass } from '@takram/three-atmosphere'
+import type { AerialPerspectiveEffect, LightingMaskPass } from '@takram/three-atmosphere'
 import {
   AerialPerspective,
   AtmosphereContext,
@@ -13,7 +13,7 @@ import {
   type EffectComposer as EffectComposerImpl
 } from 'postprocessing'
 import { useContext, useEffect, useRef, useState, type FC } from 'react'
-import { Vector3 } from 'three'
+import { Uniform, Vector3 } from 'three'
 
 import { AIRCRAFT_LAYER } from '../aircraft/layers'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
@@ -21,6 +21,38 @@ import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { EffectComposer } from './EffectComposer'
+import { nightState, updateNightLighting } from './nightLighting'
+
+/**
+ * Adds night light to takram's AerialPerspective: ambient irradiance
+ * (moonlight + starlight) on lit surfaces and a faint glow behind the
+ * stars. Patched into its shader once; values come from nightState.
+ */
+function patchNightLight(effect: AerialPerspectiveEffect): void {
+  const marker = '/* window-seat night light */'
+  const source = effect.getFragmentShader()
+  if (source == null || source.includes(marker)) return
+  const shader = source
+    .replace(
+      'void mainImage(',
+      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nvoid mainImage(`
+    )
+    .replace(
+      'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
+      'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);\n    radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient;'
+    )
+    .replace(
+      '#else // SKY\n    outputColor = inputColor;',
+      '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
+    )
+  if ((shader.match(/nightAmbient|nightSky/g) ?? []).length < 4) {
+    // takram's shader changed: night light only partly applied.
+    console.warn('[night] AerialPerspective shader patch did not fully apply')
+  }
+  effect.uniforms.set('nightAmbient', new Uniform(nightState.ambient))
+  effect.uniforms.set('nightSky', new Uniform(nightState.sky))
+  ;(effect as unknown as { setFragmentShader: (s: string) => void }).setFragmentShader(shader)
+}
 
 const up = new Vector3()
 
@@ -47,8 +79,17 @@ export const PostEffects: FC = () => {
 
   // GlobeControls changes near/far every frame; effects reconstructing
   // positions from depth must use the same values.
-  useFrame(({ gl }) => {
-    gl.toneMappingExposure = settingsStore.get().exposure
+  useFrame(({ gl }, delta) => {
+    if (transientStates != null) {
+      updateNightLighting(
+        camera.position,
+        transientStates.sunDirection,
+        transientStates.moonDirection,
+        Math.min(delta, 0.1)
+      )
+    }
+    // Eye adaptation: the exposure setting is the daylight value.
+    gl.toneMappingExposure = settingsStore.get().exposure * nightState.exposureGain
     const composer = composerRef.current
     if (composer == null) return
     for (const pass of composer.passes) {
@@ -80,6 +121,9 @@ export const PostEffects: FC = () => {
       <LightingMask ref={lightingMaskRef} selectionLayer={AIRCRAFT_LAYER} />
       <VolumetricClouds />
       <AerialPerspective
+        ref={effect => {
+          if (effect != null) patchNightLight(effect)
+        }}
         sky={cloudsEnabled && sunUp}
         sunLight
         skyLight

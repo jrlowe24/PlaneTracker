@@ -1,4 +1,6 @@
-import type { FC } from 'react'
+import { useEffect, useState, type FC } from 'react'
+
+import { nightState } from '../scene/nightLighting'
 
 import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
@@ -13,9 +15,21 @@ export const WindowFrame: FC = () => {
   const mode = useStore(cameraModeStore, s => s.mode)
   const transitioning = useStore(cameraModeStore, s => s.transitioning)
   const visible = mode === 'window'
+  // The cabin is dim at night (cabin lights down for night flights).
+  const [night, setNight] = useState(0)
+  useEffect(() => {
+    if (!visible) return
+    const id = setInterval(() => {
+      setNight(Math.round(nightState.night * 20) / 20)
+    }, 500)
+    return () => {
+      clearInterval(id)
+    }
+  }, [visible])
   return (
     <div
       className={`window-overlay${visible ? ' visible' : ''}${visible && !transitioning ? ' settled' : ''}`}
+      style={{ filter: `brightness(${1 - 0.82 * night})` }}
       aria-hidden
     >
       <div className='window-bezel'>

@@ -11,6 +11,7 @@ import {
 } from 'three'
 
 import { flightConnection, serverNow } from '../data/flightConnection'
+import { cameraModeStore } from '../state/cameraMode'
 import { selectionStore } from '../state/selection'
 import { settingsStore } from '../state/settings'
 import { createAircraftMaterial } from './aircraftMaterial'
@@ -32,6 +33,12 @@ const INITIAL_CAPACITY = 1024
  */
 const MARKER_PIXELS_NEAR = 18
 const MARKER_PIXELS_ORBIT = 5
+/**
+ * While the camera rides with an aircraft, other traffic is drawn at true
+ * size (a distant airliner is a speck, as from a real cockpit or window),
+ * with only a tiny minimum so it doesn't vanish; nav lights show it at night.
+ */
+const MARKER_PIXELS_ATTACHED = 2.5
 const SELECTED_MARKER_PIXELS = 26
 /** Within this distance aircraft get bank/pitch (beyond, they are icons). */
 const DETAIL_DISTANCE = 80_000
@@ -197,10 +204,12 @@ export class AircraftInstances {
     const pixelToWorld =
       (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, viewportHeight)
     const cameraAltitude = origin.length() - 6_371_000
-    const markerPixels =
-      MARKER_PIXELS_NEAR +
-      (MARKER_PIXELS_ORBIT - MARKER_PIXELS_NEAR) *
-        smoothstep(300_000, 8_000_000, cameraAltitude)
+    const attached = cameraModeStore.get().mode !== 'globe'
+    const markerPixels = attached
+      ? MARKER_PIXELS_ATTACHED
+      : MARKER_PIXELS_NEAR +
+        (MARKER_PIXELS_ORBIT - MARKER_PIXELS_NEAR) *
+          smoothstep(300_000, 8_000_000, cameraAltitude)
 
     let count = 0
     for (let i = 0; i < list.length; ++i) {
@@ -271,7 +280,8 @@ export class AircraftInstances {
         pose.position.y,
         pose.position.z,
         pose.height,
-        Math.min(1, (iconScale - 1) / 4),
+        // No icon glow while riding along: nav lights do that job.
+        attached ? 0 : Math.min(1, (iconScale - 1) / 4),
         anchorSky,
         selected,
         shadingScratch
