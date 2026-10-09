@@ -88,10 +88,11 @@ float waterScore(const vec3 albedo) {
 /**
  * Surface classes from the photo texture's own colors (unlit albedo at this
  * point in the chain): x = street-like (mid-dark grey asphalt next to
- * contrasting surfaces), y = other built-up (grey, brighter: roofs, lots).
+ * contrasting surfaces), y = other built-up (grey, brighter: roofs, lots),
+ * z = local texture structure (0 on smooth or still-coarse tiles).
  * Water (dark, bluish) and vegetation (green) score zero.
  */
-vec2 surfaceScore(const vec3 albedo, const vec2 uv) {
+vec3 surfaceScore(const vec3 albedo, const vec2 uv) {
   float lum = luminance(albedo);
   float hi = max(albedo.r, max(albedo.g, albedo.b));
   float lo = min(albedo.r, min(albedo.g, albedo.b));
@@ -108,7 +109,7 @@ vec2 surfaceScore(const vec3 albedo, const vec2 uv) {
   float structure = smoothstep(0.03, 0.25, abs(lum - around) / (lum + around + 0.02));
   float road = grey * smoothstep(0.025, 0.05, lum) * smoothstep(0.17, 0.09, lum);
   float built = grey * smoothstep(0.09, 0.2, lum);
-  return vec2(road, built) * (0.3 + 0.7 * structure);
+  return vec3(vec2(road, built) * (0.3 + 0.7 * structure), structure);
 }
 
 uvec3 pcg3d(uvec3 v);
@@ -181,14 +182,17 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
   // ground pixels of hundreds of meters) the map alone describes the glow,
   // still kept off water.
   float footprint = length(offset) * pixelAngle;
-  vec2 surface = surfaceScore(inputColor.rgb, uv);
+  vec3 surface = surfaceScore(inputColor.rgb, uv);
   // Streets glow, roofs barely; contrast curves keep it from reading as a
   // tinted photo. Districts vary (some blocks much brighter than others).
   float district = districtVariation(offset);
   float near = district * (0.7 * pow(surface.x, 1.6) + 0.05 * surface.y * surface.y);
   float lampWeight = smoothstep(14.0, 4.0, footprint);
   if (lampWeight > 0.0) {
-    near += lampWeight * smoothstep(0.15, 0.45, surface.x) * lamps(offset, up, footprint);
+    // Only where the imagery shows real street structure: coarse tiles
+    // still loading are smooth, and a lamp grid on them reads as dots.
+    near += lampWeight * smoothstep(0.15, 0.45, surface.x) * smoothstep(0.25, 0.55, surface.z) *
+      lamps(offset, up, footprint);
   }
   // Facades (surface normal from depth derivatives, near-horizontal) get
   // lit windows up close.

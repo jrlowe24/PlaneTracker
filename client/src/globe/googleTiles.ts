@@ -89,12 +89,33 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
     console.error('[tiles] load error', safeUrl, error)
   })
 
+  tuneTileLoading(tiles)
+
   g[GLOBAL_KEY] = tiles
   if (import.meta.env.DEV) {
     // Handy for debugging from the console: __windowSeatTiles.stats
     ;(globalThis as Record<string, unknown>).__windowSeatTiles = tiles
   }
   return tiles
+}
+
+/**
+ * Tile loading tuned for what's on screen:
+ * - Off-screen siblings are not loaded. The library loads them by default so
+ *   panning shows detail sooner, but they compete with (and delay) the
+ *   ground in view, and every tile fetched is billed.
+ * - Bigger cache: the default (~430 MB) fills on a single low-altitude city
+ *   view; once full, refinement stops (tiles in use can't be evicted).
+ * The download order itself stays the library's: screen-space error first,
+ * which already favors nearby ground. Sorting by distance instead was
+ * measured to be worse (it fetched deep tiles that can't show until their
+ * ancestors and siblings arrive: ~1.1 GB before anything sharpened).
+ */
+const TILE_CACHE_BYTES = 800e6
+
+function tuneTileLoading(tiles: TilesRenderer): void {
+  tiles.lruCache.maxBytesSize = TILE_CACHE_BYTES
+  ;(tiles as unknown as { loadSiblings: boolean }).loadSiblings = false
 }
 
 /**
