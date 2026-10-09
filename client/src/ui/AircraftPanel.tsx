@@ -97,10 +97,19 @@ export const AircraftPanel: FC = () => {
   const route = routeFor(tracked)
   const ageS = Math.max(0, (serverNow() - state.positionTimestamp) / 1000)
   return (
-    <div className='aircraft-panel'>
+    <div className={`aircraft-panel${attached ? ' attached' : ''}`}>
       <div className='aircraft-panel-header'>
         <div>
           <div className='aircraft-title'>{state.callsign ?? state.hex.toUpperCase()}</div>
+          <div className='aircraft-summary muted'>
+            {[
+              route?.short,
+              state.onGround ? 'On ground' : state.altBaro != null ? `${fmt.format(state.altBaro)} ft` : null,
+              state.groundSpeed != null ? `${fmt.format(state.groundSpeed)} kt` : null
+            ]
+              .filter(v => v != null)
+              .join(' · ')}
+          </div>
           <div className='muted'>
             {[state.registration, state.typeCode].filter(v => v != null).join(' · ') ||
               'Unknown aircraft'}

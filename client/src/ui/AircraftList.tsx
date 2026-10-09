@@ -201,7 +201,7 @@ export const AircraftList: FC = () => {
   }
 
   return (
-    <div className={`aircraft-list${open ? ' open' : ''}`}>
+    <div className={`aircraft-list${open ? ' open' : ''}${followedHex != null ? ' attached' : ''}`}>
       <button
         type='button'
         className='aircraft-list-header'

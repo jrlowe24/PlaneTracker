@@ -5,6 +5,7 @@ import { Scene } from './scene/Scene'
 import { AircraftList } from './ui/AircraftList'
 import { AircraftPanel } from './ui/AircraftPanel'
 import { Attribution } from './ui/Attribution'
+import { ContextLost } from './ui/ContextLost'
 import { DevPanel } from './ui/DevPanel'
 import { QualityMenu } from './ui/QualityMenu'
 import { TileErrorBanner } from './ui/TileErrorBanner'
@@ -33,5 +34,6 @@ export const App: FC = () => (
       <QualityMenu />
     </div>
     <Attribution />
+    <ContextLost />
   </div>
 )

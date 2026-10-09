@@ -757,3 +757,49 @@ kbd {
     display: none;
   }
 }
+
+.aircraft-summary {
+  display: none;
+}
+
+/*
+ * Phones riding with an aircraft: keep the view clear. One compact card
+ * (callsign, route · altitude · speed, buttons); the list is hidden.
+ */
+@media (max-width: 640px) {
+  .aircraft-list.attached {
+    display: none;
+  }
+
+  .aircraft-panel.attached {
+    padding: 10px 12px;
+  }
+
+  .aircraft-panel.attached .aircraft-panel-header {
+    margin-bottom: 6px;
+  }
+
+  .aircraft-panel.attached .aircraft-panel-header .muted:not(.aircraft-summary),
+  .aircraft-panel.attached .aircraft-route,
+  .aircraft-panel.attached .aircraft-facts {
+    display: none;
+  }
+
+  .aircraft-panel.attached .aircraft-summary {
+    display: block;
+  }
+
+  .aircraft-panel.attached .aircraft-title {
+    font-size: 16px;
+  }
+
+  .aircraft-panel.attached .aircraft-actions {
+    margin-top: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .aircraft-panel.attached .aircraft-actions button {
+    min-height: 40px;
+    padding: 6px 8px;
+  }
+}

@@ -6,7 +6,7 @@ import type { Camera } from 'three'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { nightState } from '../scene/nightLighting'
-import { qualityStore } from '../state/quality'
+import { isMobileDevice, qualityStore } from '../state/quality'
 import { NightLightsEffect } from './NightLightsEffect'
 import { nightLightsPass, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
@@ -19,11 +19,14 @@ class NightLightsController {
   readonly tiles = new NightLightTiles()
   readonly effect: NightLightsEffect
   private ready = false
-  private active = true
+  private active = false
   private sinceFlush = 0
 
   constructor(camera: Camera) {
     this.effect = new NightLightsEffect(camera)
+    // Phones: the 8192×4096 light map alone is ~180 MB of GPU memory, enough
+    // to get textures evicted on iOS (black terrain and sky).
+    if (isMobileDevice()) return
     void this.tiles.load().then(ok => {
       if (!ok) return
       this.effect.setMaps(this.tiles.base, this.tiles.detail)
