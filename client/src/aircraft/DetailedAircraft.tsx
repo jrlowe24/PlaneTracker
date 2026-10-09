@@ -1,7 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { AtmosphereContext } from '@takram/three-atmosphere/r3f'
 import { useContext, useEffect, useMemo, type FC } from 'react'
-import { Group, Matrix4, Mesh, Vector3, type Object3D } from 'three'
+import { Group, Matrix4, Mesh, PerspectiveCamera, Vector3, type Camera, type Object3D } from 'three'
 
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
@@ -19,6 +19,8 @@ import { aircraftShading, skyBrightness } from './shading'
 /** Aircraft closer than this get a detailed model instead of an instance. */
 const DETAIL_RADIUS = 1500
 const MAX_DETAILED = 12
+/** Minimum on-screen length (px) of the followed aircraft during a fly-in. */
+const FLY_IN_MIN_PIXELS = 26
 
 interface DetailedEntry {
   object: Object3D
@@ -114,7 +116,12 @@ class DetailedAircraftController {
     this.entries.delete(hex)
   }
 
-  update(sunDirection: Vector3 | null): void {
+  update(sunDirection: Vector3 | null, camera: Camera, viewportHeight: number): void {
+    const pixelToWorld =
+      camera instanceof PerspectiveCamera
+        ? (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, viewportHeight)
+        : 0
+    const flyIn = cameraModeStore.get().transitioning
     const wanted = this.wanted()
     for (const [hex, entry] of this.entries) {
       if (!wanted.has(hex)) this.destroy(hex, entry)
@@ -153,6 +160,14 @@ class DetailedAircraftController {
       } else if (aircraft != null) {
         object.scale.set(aircraft.scale.span, aircraft.scale.length, aircraft.scale.length)
       }
+      // During a fly-in the aircraft keeps the findable on-screen size its
+      // marker had and shrinks smoothly to true size as the camera closes
+      // in, instead of vanishing to a speck at the start.
+      if (flyIn && aircraft != null && pixelToWorld > 0) {
+        const length = AIRFRAMES[aircraft.cls].length * aircraft.scale.length
+        const boost = Math.max(1, (FLY_IN_MIN_PIXELS * aircraft.cameraDistance * pixelToWorld) / length)
+        object.scale.multiplyScalar(boost)
+      }
       object.updateMatrixWorld()
 
       aircraftShading(
@@ -189,6 +204,7 @@ export const DetailedAircraft: FC = () => {
   const { transientStates } = useContext(AtmosphereContext)
   const controller = useMemo(() => new DetailedAircraftController(), [])
   const gl = useThree(({ gl }) => gl)
+  const size = useThree(({ size }) => size)
   const camera = useThree(({ camera }) => camera)
   const scene = useThree(({ scene }) => scene)
   useEffect(
@@ -207,7 +223,7 @@ export const DetailedAircraft: FC = () => {
     }
   }, [gl, camera, scene])
   useFrame(() => {
-    controller.update(transientStates?.sunDirection ?? null)
+    controller.update(transientStates?.sunDirection ?? null, camera, size.height)
   }, FRAME_PRIORITY.detailedModels)
   return <primitive object={controller.group} dispose={null} />
 }

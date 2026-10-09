@@ -43,6 +43,7 @@ const relDesired = new Vector3()
 const dirStart = new Vector3()
 const dirDesired = new Vector3()
 const rotation = new Quaternion()
+const trackQuaternion = new Quaternion()
 const unitZ = new Vector3()
 
 /**
@@ -118,7 +119,11 @@ class CameraRigController {
         this.look = { yaw: 0, pitch: 0 }
       } else if (attaching && pose != null) {
         const switchingView = wasAttached && targetHex === this.activeHex
-        this.beginTransition(camera, pose.position, switchingView ? 1.2 : ENTER_DURATION_S, false)
+        // Longer flights for longer distances (log scale): ~2 s from close
+        // by, up to ~5 s from orbit.
+        const ratio = Math.max(1, camera.position.distanceTo(pose.position) / 110)
+        const duration = switchingView ? 1.2 : Math.min(5, Math.max(ENTER_DURATION_S * 0.7, 1.4 + 0.33 * Math.log(ratio)))
+        this.beginTransition(camera, pose.position, duration, false)
         if (!switchingView && mode === 'follow') {
           this.orbit = { yaw: 0, pitch: 10, distance: 110 }
         }
@@ -165,8 +170,12 @@ class CameraRigController {
       camera.position
         .copy(pose.position)
         .add(unitZ.copy(dirStart).applyQuaternion(rotation).multiplyScalar(distance))
-      // Turn toward the target early, then track it.
-      camera.quaternion.slerpQuaternions(transition.startQuaternion, desiredQuaternion, easeInOutCubic(Math.min(1, t * 1.6)))
+      // Turn toward the aircraft early and keep it centred from wherever
+      // the camera is (looking along the final view direction from far
+      // away left the aircraft off-screen, then snapped it in at the end);
+      // the look-at converges on the final orientation as the camera does.
+      lookAtQuaternion(camera.position, pose.position, headingFrame(pose).up, trackQuaternion)
+      camera.quaternion.slerpQuaternions(transition.startQuaternion, trackQuaternion, easeInOutCubic(Math.min(1, t * 2.2)))
       if (t >= 1) {
         this.transition = null
         cameraModeStore.set({ transitioning: false })
