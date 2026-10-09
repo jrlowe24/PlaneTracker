@@ -1,9 +1,10 @@
-import { Group, Mesh, MeshStandardMaterial, type BufferGeometry, type Material, type Object3D } from 'three'
+import { Group, Mesh, MeshStandardMaterial, Vector3, type BufferGeometry, type Material, type Object3D } from 'three'
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 
 import { createAircraftMaterial, patchAircraftMaterial } from './aircraftMaterial'
 import { AIRFRAMES, buildAirframe, buildGear, type AircraftClass } from './airframes'
+import type { LightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
 
 /**
@@ -88,10 +89,73 @@ function getLoader(): GLTFLoader {
   return gltfLoader
 }
 
-const gltfCache = new Map<string, Promise<Object3D | null>>()
+interface LoadedModel {
+  object: Object3D
+  anchors: LightAnchors
+}
 
-/** Loads (once) and normalizes a glTF model for a type; null on failure. */
-function loadTypeModel(entry: ModelEntry): Promise<Object3D | null> {
+const gltfCache = new Map<string, Promise<LoadedModel | null>>()
+
+/**
+ * Nav light positions from a model's geometry (in its normalized body
+ * frame): the leading edge of the left (+X) wingtip; along the
+ * centerline (|x| < 0.6 m), the aft-most point below the fin for the tail
+ * light and the highest/lowest points around mid-length for the beacons.
+ */
+export function computeLightAnchors(root: Object3D): LightAnchors {
+  root.updateMatrixWorld(true)
+  const wingtip = new Vector3(0, 0, 0)
+  const tail = new Vector3(0, 0, Infinity)
+  const top = new Vector3(0, -Infinity, 0)
+  const bottom = new Vector3(0, Infinity, 0)
+  let minZ = Infinity
+  let maxZ = -Infinity
+  const points: Vector3[] = []
+  const v = new Vector3()
+  root.traverse(child => {
+    if (!(child instanceof Mesh)) return
+    const position = (child.geometry as BufferGeometry).getAttribute('position')
+    if (position == null) return
+    const step = Math.max(1, Math.floor(position.count / 20_000))
+    for (let i = 0; i < position.count; i += step) {
+      v.fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld)
+      points.push(v.clone())
+      if (v.x > wingtip.x) wingtip.copy(v)
+      minZ = Math.min(minZ, v.z)
+      maxZ = Math.max(maxZ, v.z)
+    }
+  })
+  // Nav lights sit right at the tip: from the outermost point, take the
+  // leading edge at that height (within ~0.6 m), and stand the light just
+  // ahead of it so the tip itself doesn't hide it from the side or the
+  // cabin.
+  const outer = wingtip.clone()
+  for (const p of points) {
+    if (outer.x - p.x < 0.6 && Math.abs(p.y - outer.y) < 0.6 && p.z > wingtip.z) wingtip.copy(p)
+  }
+  wingtip.z += 0.15
+  const midZ = (minZ + maxZ) / 2
+  const length = maxZ - minZ
+  for (const p of points) {
+    if (Math.abs(p.x) > 0.6) continue
+    if (Math.abs(p.z - midZ) < length * 0.08) {
+      if (p.y > top.y) top.copy(p)
+      if (p.y < bottom.y) bottom.copy(p)
+    }
+  }
+  // Tail light: aft-most centerline point no higher than the fuselage top.
+  for (const p of points) {
+    if (Math.abs(p.x) > 0.6 || p.y > top.y) continue
+    if (p.z < tail.z) tail.copy(p)
+  }
+  if (!Number.isFinite(top.y)) top.set(0, 1, 0)
+  if (!Number.isFinite(bottom.y)) bottom.set(0, -1, 0)
+  if (!Number.isFinite(tail.z)) tail.set(0, 0, minZ)
+  return { wingtip, tail, top, bottom }
+}
+
+/** Loads (once) and normalizes a glTF model; null on failure. */
+function loadTypeModel(entry: ModelEntry): Promise<LoadedModel | null> {
   let promise = gltfCache.get(entry.url)
   if (promise == null) {
     promise = getLoader()
@@ -105,7 +169,7 @@ function loadTypeModel(entry: ModelEntry): Promise<Object3D | null> {
         const [ox = 0, oy = 0, oz = 0] = entry.offset ?? [0, 0, 0]
         scene.position.set(ox, oy, oz)
         root.add(scene)
-        return root as Object3D
+        return { object: root as Object3D, anchors: computeLightAnchors(root) }
       })
       .catch((error: unknown) => {
         console.warn(`[models] failed to load ${entry.url}`, error)
@@ -115,6 +179,9 @@ function loadTypeModel(entry: ModelEntry): Promise<Object3D | null> {
   }
   return promise
 }
+
+/** glTF base color scale: model textures sit near 1.0, real paint ~0.8. */
+const PAINT_ALBEDO_SCALE = 0.8
 
 const placeholderGeometry = new Map<AircraftClass, BufferGeometry>()
 const gearGeometry = new Map<AircraftClass, BufferGeometry>()
@@ -158,6 +225,12 @@ function prepare(object: Object3D, cloneMaterials: boolean): Object3D {
       const patch = (material: Material): Material => {
         if (!(material instanceof MeshStandardMaterial)) return material
         const copy = material.clone()
+        // Aircraft are painted (dielectric): AI-generated models often mark
+        // the whole skin fully metallic, which mirrors the bright sky and
+        // blows out in sunlight. Their albedo also tends to sit at 1.0;
+        // white aircraft paint is ~0.8.
+        copy.metalness = Math.min(copy.metalness, 0.15)
+        copy.color.multiplyScalar(PAINT_ALBEDO_SCALE)
         patchAircraftMaterial(copy, false)
         return copy
       }
@@ -190,14 +263,14 @@ export function createDetailedModel(
   typeCode: string | null,
   cls: AircraftClass,
   callsign: string | null,
-  onUpgrade: (model: Object3D, entry: ModelEntry) => void
+  onUpgrade: (model: Object3D, entry: ModelEntry, anchors: LightAnchors) => void
 ): Object3D {
   const placeholder = prepare(placeholderModel(cls), false)
   void loadManifest().then(manifest => {
     const entry = findModelEntry(manifest, typeCode, cls, callsign)
     if (entry == null) return
     void loadTypeModel(entry).then(model => {
-      if (model != null) onUpgrade(prepare(model.clone(true), true), entry)
+      if (model != null) onUpgrade(prepare(model.object.clone(true), true), entry, model.anchors)
     })
   })
   return placeholder

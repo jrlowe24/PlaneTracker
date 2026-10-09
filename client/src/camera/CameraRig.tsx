@@ -18,7 +18,7 @@ import { applyJump, takeJump, updatePendingFollow } from './jump'
 import { windowCameraPose, type WindowLook } from './windowCamera'
 
 const DEFAULT_FOV = 50
-const WINDOW_FOV = 60
+const WINDOW_FOV = 72
 const ENTER_DURATION_S = 2.8
 const EXIT_DURATION_S = 2.2
 const MIN_DISTANCE = 12
@@ -111,7 +111,12 @@ class CameraRigController {
     if (mode !== this.activeMode || targetHex !== this.activeHex) {
       const wasAttached = this.activeMode !== 'globe'
       const attaching = mode !== 'globe'
-      if (attaching && pose != null) {
+      if (mode === 'window' && pose != null) {
+        // The window seat is a cut, not a flight: you're simply in the seat.
+        this.transition = null
+        if (cameraModeStore.get().transitioning) cameraModeStore.set({ transitioning: false })
+        this.look = { yaw: 0, pitch: 0 }
+      } else if (attaching && pose != null) {
         const switchingView = wasAttached && targetHex === this.activeHex
         this.beginTransition(camera, pose.position, switchingView ? 1.2 : ENTER_DURATION_S, false)
         if (!switchingView && mode === 'follow') {

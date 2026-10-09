@@ -18,6 +18,7 @@ import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
+import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
 import { RegionalCoverageController } from './regionalShader'
@@ -110,6 +111,7 @@ export const VolumetricClouds: FC = () => {
   // Our own blended layer heights (not read back from the effect, whose
   // layers <Clouds> may reset to defaults).
   const heights = useRef<Array<{ altitude: number; height: number }>>([])
+  const sinceDisplay = useRef(0)
 
   useFrame((_, delta) => {
     const effect = ref.current
@@ -137,6 +139,15 @@ export const VolumetricClouds: FC = () => {
     const sample = weatherStore.get().sample
     const live = settings.cloudSource === 'weather' && sample != null
     const spec = live ? cloudLayersFromWeather(sample) : manualSpec(settings.cloudCoverage)
+    // Cover at the view center comes from the blended grid when there is
+    // one (the same field the shader uses everywhere), not the single
+    // nearest reading, which jumps between cells.
+    const gridCover = live ? regional.coverAtPoint(lightAnchor) : null
+    if (gridCover != null) {
+      spec.low = { ...spec.low, coverage: gridCover.low }
+      spec.mid = { ...spec.mid, coverage: gridCover.mid }
+      spec.high = { ...spec.high, coverage: gridCover.high }
+    }
     const geoid = live ? geoidHeight(sample.lat, sample.lon) : 0
     const targets = layerTargets(spec, geoid)
 
@@ -177,6 +188,11 @@ export const VolumetricClouds: FC = () => {
     // when there is weather data (patched shader), else the blended
     // view-center / manual cover everywhere.
     regional.update(dt, live, lightAnchor, weatherStore.get().grid, [cover[0]!, cover[1]!, cover[2]!])
+    sinceDisplay.current += dt
+    if (sinceDisplay.current > 0.5) {
+      sinceDisplay.current = 0
+      cloudCoverStore.set({ low: cover[0]!, mid: cover[1]!, high: cover[2]!, regional: gridCover != null })
+    }
   })
 
   if (preset.clouds === false) return null

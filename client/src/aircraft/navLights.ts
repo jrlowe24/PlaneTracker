@@ -10,31 +10,34 @@ import {
 import { flightConnection } from '../data/flightConnection'
 import { nightState } from '../scene/nightLighting'
 import { AIRFRAMES } from './airframes'
-import { detailedHexes } from './detailState'
+import { detailedHexes, modelLightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
 
 /**
  * Aircraft navigation lights: red left wingtip, green right wingtip, white
  * tail, red anti-collision beacons (top and bottom, ~1 Hz) and white
- * wingtip strobes (double flash, airborne only). Small emissive octahedra
- * kept at least ~1.5 px across, so aircraft read as moving lights at night
- * instead of glowing silhouettes; masked out of post lighting like the
- * aircraft (aerial perspective still dims distant lights).
+ * wingtip strobes (double flash, airborne only). Small, very bright
+ * emissive cores kept at least ~1 px across (the bloom pass adds the glow),
+ * so aircraft read as moving lights at night; masked out of post lighting
+ * like the aircraft (aerial perspective still dims distant lights).
  */
 
 const LIGHTS_PER_AIRCRAFT = 7
-/** Physical light radius, meters. */
-const LIGHT_RADIUS = 0.3
+/** Physical light radius, meters (the lens, not the glow). */
+const LIGHT_RADIUS = 0.09
 /** Minimum on-screen radius, pixels. */
-const MIN_PIXELS = 1.6
+const MIN_PIXELS = 1.1
 /** Lights further than this aren't drawn (icons/markers take over). */
 const MAX_DISTANCE = 120_000
 
-// Radiance (renderer units, before exposure).
-const RED: [number, number, number] = [0.09, 0.004, 0.003]
-const GREEN: [number, number, number] = [0.004, 0.08, 0.03]
-const WHITE: [number, number, number] = [0.06, 0.06, 0.06]
-const STROBE: [number, number, number] = [0.35, 0.35, 0.38]
+// Displayed brightness (radiance × exposure): bright enough to read as
+// emitters (selective bloom adds the glow) but not so far past white that
+// tone mapping washes out red and green. Divided by the current exposure,
+// so lights don't blind when exposure adapts up at night.
+const RED: [number, number, number] = [3.2, 0.12, 0.06]
+const GREEN: [number, number, number] = [0.12, 2.8, 0.9]
+const WHITE: [number, number, number] = [2.2, 2.2, 2.2]
+const STROBE: [number, number, number] = [7, 7, 7.4]
 
 /** Stable per-aircraft phase so lights don't flash in sync. */
 function phaseOf(hex: string): number {
@@ -71,7 +74,7 @@ export class NavLights {
     this.mesh.dispose()
   }
 
-  update(camera: PerspectiveCamera, viewportHeight: number, time: number): void {
+  update(camera: PerspectiveCamera, viewportHeight: number, time: number, exposure: number): void {
     const list = flightConnection.registry.list
     const needed = list.length * LIGHTS_PER_AIRCRAFT
     if (needed > this.capacity) {
@@ -85,8 +88,8 @@ export class NavLights {
     const colors = this.mesh.instanceColor!.array as Float32Array
     const pixelToWorld =
       (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, viewportHeight)
-    // Lights matter at dusk and night; by day they're nearly invisible.
-    const visibility = 0.15 + 0.85 * nightState.night
+    // Lights stand out most at dusk and night.
+    const visibility = (0.12 + 0.88 * nightState.night) / Math.max(exposure, 1e-3)
 
     let n = 0
     const put = (
@@ -98,7 +101,11 @@ export class NavLights {
       intensity: number
     ): void => {
       if (intensity <= 0) return
-      const s = Math.max(LIGHT_RADIUS, MIN_PIXELS * distance * pixelToWorld)
+      const minSize = MIN_PIXELS * distance * pixelToWorld
+      const s = Math.max(LIGHT_RADIUS, minSize)
+      // Once held at the minimum on-screen size, dim with distance (a far
+      // light is a faint point, not a big glow).
+      if (minSize > LIGHT_RADIUS) intensity *= Math.max(0.12, LIGHT_RADIUS / minSize)
       const o = n * 16
       matrices[o] = s
       matrices[o + 1] = 0
@@ -154,17 +161,25 @@ export class NavLights {
       const strobe = !pose.onGround && (strobeT < 0.05 || (strobeT > 0.15 && strobeT < 0.2)) ? 1 : 0
       const isDetailed = detailedHexes.has(aircraft.hex)
 
-      const [lx, ly, lz] = at(halfSpan, wingY, tipZ)
+      // A glTF model's own light positions when it's drawn; else the class
+      // placeholder's proportions.
+      const anchors = isDetailed ? modelLightAnchors.get(aircraft.hex) : undefined
+      const tip = anchors?.wingtip
+      const [lx, ly, lz] = tip != null ? at(tip.x, tip.y, tip.z) : at(halfSpan, wingY, tipZ)
       put(lx, ly, lz, distance, RED, 1)
-      const [rx, ry, rz] = at(-halfSpan, wingY, tipZ)
+      const [rx, ry, rz] = tip != null ? at(-tip.x, tip.y, tip.z) : at(-halfSpan, wingY, tipZ)
       put(rx, ry, rz, distance, GREEN, 1)
-      const [tx, ty, tz] = at(0, r * 0.3, (-p.length / 2) * ls)
+      const tailAt = anchors?.tail
+      const [tx, ty, tz] = tailAt != null ? at(0, tailAt.y, tailAt.z) : at(0, r * 0.3, (-p.length / 2) * ls)
       put(tx, ty, tz, distance, WHITE, 1)
-      const [bx, by, bz] = at(0, r * 1.02, 0)
+      const topAt = anchors?.top
+      const [bx, by, bz] = topAt != null ? at(0, topAt.y + 0.15, topAt.z) : at(0, r * 1.02, 0)
       put(bx, by, bz, distance, RED, beacon * 1.6)
       // Belly beacon and strobes only when close enough to matter.
       if (isDetailed || distance < 20_000) {
-        const [ux, uy, uz] = at(0, -r * 1.02, -r)
+        const bottomAt = anchors?.bottom
+        const [ux, uy, uz] =
+          bottomAt != null ? at(0, bottomAt.y - 0.15, bottomAt.z) : at(0, -r * 1.02, -r)
         put(ux, uy, uz, distance, RED, ((t + 0.5) % 1 < 0.12 ? 1 : 0) * 1.6)
       }
       put(lx, ly, lz, distance, STROBE, strobe)

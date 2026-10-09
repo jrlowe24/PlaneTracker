@@ -13,7 +13,6 @@ import { useStore } from '../state/createStore'
  */
 export const WindowFrame: FC = () => {
   const mode = useStore(cameraModeStore, s => s.mode)
-  const transitioning = useStore(cameraModeStore, s => s.transitioning)
   const visible = mode === 'window'
   // The cabin is dim at night (cabin lights down for night flights).
   const [night, setNight] = useState(0)
@@ -28,7 +27,7 @@ export const WindowFrame: FC = () => {
   }, [visible])
   return (
     <div
-      className={`window-overlay${visible ? ' visible' : ''}${visible && !transitioning ? ' settled' : ''}`}
+      className={`window-overlay${visible ? ' visible' : ''}`}
       style={{ filter: `brightness(${1 - 0.82 * night})` }}
       aria-hidden
     >

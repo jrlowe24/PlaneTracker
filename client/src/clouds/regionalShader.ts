@@ -1,8 +1,8 @@
-import type { WeatherGridCell } from '@windowseat/shared'
+import { ecefToGeodetic, type WeatherGridCell } from '@windowseat/shared'
 import { Uniform, Vector3, type ShaderMaterial, type Texture } from 'three'
 
 import { COVERAGE_THRESHOLD } from './coverageTexture'
-import { REGION_RADIUS, RegionalCoverage } from './regionalCoverage'
+import { REGION_RADIUS, RegionalCoverage, type Cover } from './regionalCoverage'
 
 /**
  * Patches takram's cloud shaders (the clouds pass and the cloud shadow
@@ -102,8 +102,14 @@ export class RegionalCoverageController {
     fallback: [number, number, number]
   ): void {
     this.uniforms.coverageFallback.value.set(...fallback)
-    if (live) this.coverage.update(dt, center, grid, fallback)
+    if (live) this.coverage.update(dt, center, grid)
     this.uniforms.regionalEnabled.value = live && this.coverage.hasData ? 1 : 0
+  }
+
+  /** Blended grid cover at an ECEF point, or null without grid data. */
+  coverAtPoint(point: Vector3): Cover | null {
+    const g = ecefToGeodetic(point.x, point.y, point.z)
+    return this.coverage.coverAt(g.lat, g.lon)
   }
 
   patch(material: ShaderMaterial): boolean {

@@ -2,6 +2,7 @@ import { useEffect, useState, type FC } from 'react'
 
 import { config } from '../config'
 import { flightStatusStore } from '../data/flightConnection'
+import { cloudCoverStore } from '../clouds/cloudCoverStore'
 import { weatherStore } from '../data/weather'
 import { tileStatusStore } from '../globe/tileStatus'
 import { useStore } from '../state/createStore'
@@ -34,6 +35,7 @@ export const DevPanel: FC = () => {
   const coverage = useStore(settingsStore, s => s.cloudCoverage)
   const cloudSource = useStore(settingsStore, s => s.cloudSource)
   const weather = useStore(weatherStore, s => s.sample)
+  const cover = useStore(cloudCoverStore, s => s)
   const aircraftCount = useStore(flightStatusStore, s => s.aircraftCount)
   const source = useStore(flightStatusStore, s => s.source)
   const connection = useStore(flightStatusStore, s => s.status)
@@ -139,7 +141,7 @@ export const DevPanel: FC = () => {
         <div className='dev-row muted'>
           {weather == null
             ? 'Waiting for weather…'
-            : `Cloud cover low ${weather.cloudCoverLow}% · mid ${weather.cloudCoverMid}% · high ${weather.cloudCoverHigh}% · ${weather.temperature.toFixed(0)}/${weather.dewPoint.toFixed(0)} °C`}
+            : `Cloud cover here low ${Math.round(cover.low * 100)}% · mid ${Math.round(cover.mid * 100)}% · high ${Math.round(cover.high * 100)}%${cover.regional ? ' (blended grid)' : ''} · ${weather.temperature.toFixed(0)}/${weather.dewPoint.toFixed(0)} °C`}
         </div>
       ) : (
         <label className='dev-row'>

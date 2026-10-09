@@ -9,7 +9,7 @@ import { selectionStore } from '../state/selection'
 import { shadingUniform } from './aircraftMaterial'
 import { aircraftClass } from './typeClasses'
 import type { AircraftClass } from './airframes'
-import { detailedHexes } from './detailState'
+import { detailedHexes, modelLightAnchors } from './detailState'
 import { FRAME_PRIORITY } from './framePriority'
 import { lightAnchor } from './lightAnchor'
 import { createDetailedModel, disposeDetailedModel } from './models'
@@ -66,7 +66,7 @@ class DetailedAircraftController {
       fitScale: { span: 1, length: 1 },
       cls,
       typeCode,
-      object: createDetailedModel(typeCode, cls, state?.callsign ?? null, (model, modelEntry) => {
+      object: createDetailedModel(typeCode, cls, state?.callsign ?? null, (model, modelEntry, anchors) => {
         // Swap in the glTF model if this entry is still alive.
         if (this.entries.get(hex) !== entry) {
           disposeDetailedModel(model)
@@ -80,6 +80,15 @@ class DetailedAircraftController {
           const [length, span] = typeDimensions(typeCode, cls)
           entry.fitScale = { span: span / modelEntry.fit[1], length: length / modelEntry.fit[0] }
         }
+        // Nav lights follow this model's shape (scaled like the model).
+        const { span, length } = entry.fitScale
+        const scaled = (v: Vector3): Vector3 => v.clone().multiply(new Vector3(span, length, length))
+        modelLightAnchors.set(hex, {
+          wingtip: scaled(anchors.wingtip),
+          tail: scaled(anchors.tail),
+          top: scaled(anchors.top),
+          bottom: scaled(anchors.bottom)
+        })
         this.group.add(model)
       })
     }
@@ -88,6 +97,7 @@ class DetailedAircraftController {
   }
 
   private destroy(hex: string, entry: DetailedEntry): void {
+    modelLightAnchors.delete(hex)
     this.group.remove(entry.object)
     disposeDetailedModel(entry.object)
     this.entries.delete(hex)

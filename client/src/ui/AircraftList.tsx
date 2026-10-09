@@ -29,6 +29,7 @@ interface Row {
   routePlausible: boolean
   altitude: string
   distanceNm: number
+  onGround: boolean
 }
 
 const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -127,7 +128,8 @@ function toRow(aircraft: TrackedAircraft, from: { lat: number; lon: number }): R
       : (state.altGeom ?? state.altBaro) == null
         ? '—'
         : `${fmt.format((state.altGeom ?? state.altBaro)!)} ft`,
-    distanceNm
+    distanceNm,
+    onGround: state.onGround
   }
 }
 
@@ -152,7 +154,8 @@ function useRows(query: string): { rows: Row[]; total: number } {
       const rows = candidates
         .filter(a => a.pose != null)
         .map(a => toRow(a, from))
-        .sort((a, b) => a.distanceNm - b.distanceNm)
+        // Airborne first, then nearest.
+        .sort((a, b) => Number(a.onGround) - Number(b.onGround) || a.distanceNm - b.distanceNm)
         .slice(0, MAX_ROWS)
       setResult({ rows, total: candidates.length })
     }

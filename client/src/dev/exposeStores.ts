@@ -1,3 +1,5 @@
+import { modelLightAnchors } from '../aircraft/detailState'
+import { cloudCoverStore } from '../clouds/cloudCoverStore'
 import { weatherStore } from '../data/weather'
 import { cameraModeStore } from '../state/cameraMode'
 import { qualityStore } from '../state/quality'
@@ -13,6 +15,8 @@ export function exposeStores(): void {
     resolutionStore,
     selectionStore,
     settingsStore,
-    weatherStore
+    weatherStore,
+    modelLightAnchors,
+    cloudCover: cloudCoverStore
   }
 }

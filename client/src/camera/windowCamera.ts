@@ -36,7 +36,8 @@ export function seatFor(params: AirframeParams, side: 'left' | 'right'): SeatGeo
   const r = params.fuselageRadius
   const isHeli = params.rotorDiameter != null
   return {
-    x: sign * Math.max(0.3, r - 0.4),
+    // Head close to the window: just inside the cabin wall.
+    x: sign * Math.max(0.3, r - 0.15),
     // Seated eye height relative to the fuselage axis.
     y: isHeli ? 0.1 : r * 0.3,
     z: isHeli ? params.length * 0.15 : params.wingRootZ - params.wingRootChord * 0.55,

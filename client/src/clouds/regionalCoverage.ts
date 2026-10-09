@@ -17,8 +17,8 @@ import { gridKey } from '../data/weather'
  * - The texture is re-centered when the view moves RECENTER_DISTANCE from
  *   its anchor; contents are geographic, so re-centering doesn't move
  *   clouds.
- * - Where no cell is known, the fallback cover (the view-center sample) is
- *   used.
+ * - Where no cell is known (beyond the grid), the nearest known cell's
+ *   cover extends outward, so nothing snaps to a single reading.
  */
 
 const SIZE = 64
@@ -28,7 +28,7 @@ const RECENTER_DISTANCE = 150_000
 const CELL_TIME_CONSTANT = 90
 const UPDATE_INTERVAL = 0.5
 
-interface Cover {
+export interface Cover {
   low: number
   mid: number
   high: number
@@ -57,16 +57,8 @@ export class RegionalCoverage {
     this.texture = texture
   }
 
-  /**
-   * Call every frame with the view center (ECEF), the received grid and the
-   * fallback cover (0…1 per layer).
-   */
-  update(
-    dt: number,
-    center: Vector3,
-    grid: ReadonlyMap<string, WeatherGridCell>,
-    fallback: [number, number, number]
-  ): void {
+  /** Call every frame with the view center (ECEF) and the received grid. */
+  update(dt: number, center: Vector3, grid: ReadonlyMap<string, WeatherGridCell>): void {
     this.sinceUpdate += dt
     if (this.sinceUpdate < UPDATE_INTERVAL) return
     const elapsed = Math.min(this.sinceUpdate, 5)
@@ -98,16 +90,71 @@ export class RegionalCoverage {
       this.north.set(basis.north.x, basis.north.y, basis.north.z)
       this.anchored = true
     }
-    this.rebuild(fallback)
+    this.rebuild()
     this.hasData = true
   }
 
-  private cover(lat: number, lon: number, fallback: Cover): Cover {
-    return this.displayed.get(gridKey(lat, normalizeLongitude(lon))) ?? fallback
+  /** Known cell bounds (integer degrees), for extending edges outward. */
+  private bounds = { minLat: 0, maxLat: 0, minLon: 0, maxLon: 0 }
+  private mean: Cover = { low: 0, mid: 0, high: 0 }
+
+  private updateBounds(): void {
+    let minLat = Infinity
+    let maxLat = -Infinity
+    let minLon = Infinity
+    let maxLon = -Infinity
+    const mean = { low: 0, mid: 0, high: 0 }
+    for (const [key, c] of this.displayed) {
+      const [lat, lon] = key.split(',').map(Number) as [number, number]
+      minLat = Math.min(minLat, lat)
+      maxLat = Math.max(maxLat, lat)
+      minLon = Math.min(minLon, lon)
+      maxLon = Math.max(maxLon, lon)
+      mean.low += c.low
+      mean.mid += c.mid
+      mean.high += c.high
+    }
+    const n = Math.max(1, this.displayed.size)
+    this.mean = { low: mean.low / n, mid: mean.mid / n, high: mean.high / n }
+    this.bounds = { minLat, maxLat, minLon, maxLon }
   }
 
-  private rebuild(fallbackArray: [number, number, number]): void {
-    const fallback = { low: fallbackArray[0], mid: fallbackArray[1], high: fallbackArray[2] }
+  /** A cell's cover; unknown cells take the nearest known cell (clamped to the grid). */
+  private cover(lat: number, lon: number): Cover {
+    const lonN = normalizeLongitude(lon)
+    const exact = this.displayed.get(gridKey(lat, lonN))
+    if (exact != null) return exact
+    const b = this.bounds
+    const clampedLat = Math.min(b.maxLat, Math.max(b.minLat, lat))
+    const clampedLon = Math.min(b.maxLon, Math.max(b.minLon, lonN))
+    return this.displayed.get(gridKey(clampedLat, clampedLon)) ?? this.mean
+  }
+
+  /**
+   * Cover (0…1 per layer) at a point, bilinear between the four surrounding
+   * cell centers; null before any grid data.
+   */
+  coverAt(lat: number, lon: number): Cover | null {
+    if (this.displayed.size === 0) return null
+    const lat0 = Math.floor(lat)
+    const lon0 = Math.floor(lon)
+    const fy = lat - lat0
+    const fx = lon - lon0
+    const c00 = this.cover(lat0, lon0)
+    const c10 = this.cover(lat0, lon0 + 1)
+    const c01 = this.cover(lat0 + 1, lon0)
+    const c11 = this.cover(lat0 + 1, lon0 + 1)
+    const mix = (a: number, b: number, c: number, d: number): number =>
+      (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
+    return {
+      low: mix(c00.low, c10.low, c01.low, c11.low),
+      mid: mix(c00.mid, c10.mid, c01.mid, c11.mid),
+      high: mix(c00.high, c10.high, c01.high, c11.high)
+    }
+  }
+
+  private rebuild(): void {
+    this.updateBounds()
     const { data, point } = this
     for (let j = 0; j < SIZE; ++j) {
       const y = ((j + 0.5) / SIZE - 0.5) * 2 * REGION_RADIUS
@@ -115,21 +162,11 @@ export class RegionalCoverage {
         const x = ((i + 0.5) / SIZE - 0.5) * 2 * REGION_RADIUS
         point.copy(this.anchor).addScaledVector(this.east, x).addScaledVector(this.north, y)
         const g = ecefToGeodetic(point.x, point.y, point.z)
-        // Bilinear between the four surrounding 1° cell centers.
-        const lat0 = Math.floor(g.lat)
-        const lon0 = Math.floor(g.lon)
-        const fy = g.lat - lat0
-        const fx = g.lon - lon0
-        const c00 = this.cover(lat0, lon0, fallback)
-        const c10 = this.cover(lat0, lon0 + 1, fallback)
-        const c01 = this.cover(lat0 + 1, lon0, fallback)
-        const c11 = this.cover(lat0 + 1, lon0 + 1, fallback)
-        const mix = (a: number, b: number, c: number, d: number): number =>
-          (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
+        const c = this.coverAt(g.lat, g.lon)!
         const o = (j * SIZE + i) * 4
-        data[o] = Math.round(255 * mix(c00.low, c10.low, c01.low, c11.low))
-        data[o + 1] = Math.round(255 * mix(c00.mid, c10.mid, c01.mid, c11.mid))
-        data[o + 2] = Math.round(255 * mix(c00.high, c10.high, c01.high, c11.high))
+        data[o] = Math.round(255 * c.low)
+        data[o + 1] = Math.round(255 * c.mid)
+        data[o + 2] = Math.round(255 * c.high)
         data[o + 3] = 255
       }
     }
