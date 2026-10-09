@@ -3,8 +3,8 @@ import type { CloudsEffect } from '@takram/three-clouds'
 import { Clouds } from '@takram/three-clouds/r3f'
 import {
   cloudLayersFromWeather,
+  ecefToGeodetic,
   geoidHeight,
-  WGS84_A,
   type CloudWeatherSpec
 } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, type FC } from 'react'
@@ -23,11 +23,13 @@ import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTextur
 import { RegionalCoverageController } from './regionalShader'
 
 /**
- * Above this camera altitude the clouds are skipped: takram's clouds don't
- * support views from space yet (no global coverage), and from orbit they'd
- * only cost frame time.
+ * Volumetric clouds fade out between these camera altitudes and aren't
+ * rendered above: they're built from a fine noise texture tiled over the
+ * globe, which from high up reads as a uniform blanket of repeating blobs
+ * (and takram's clouds don't support views from space).
  */
-const MAX_CAMERA_ALTITUDE = 120_000
+const FADE_START_ALTITUDE = 25_000
+const FADE_END_ALTITUDE = 70_000
 /**
  * New weather blends in slowly, the way real cloud fields build and thin:
  * fast blends made clouds visibly pop in and dissolve whenever a new sample
@@ -114,7 +116,10 @@ export const VolumetricClouds: FC = () => {
     cloudDepth.texture =
       (effect as CloudsPassInternals | null)?.cloudsPass?.currentRenderTarget?.depthVelocity ?? null
     if (effect == null) return
-    effect.skipRendering = camera.position.length() - WGS84_A > MAX_CAMERA_ALTITUDE
+    const altitude = ecefToGeodetic(camera.position.x, camera.position.y, camera.position.z).height
+    const t = Math.min(1, Math.max(0, (altitude - FADE_START_ALTITUDE) / (FADE_END_ALTITUDE - FADE_START_ALTITUDE)))
+    cloudDepth.fade = 1 - t * t * (3 - 2 * t)
+    effect.skipRendering = cloudDepth.fade <= 0
 
     // Temporal upscaling reprojects cloud history from previous frames. An
     // aircraft moving relative to the clouds (followed, taxiing, passing

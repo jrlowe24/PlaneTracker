@@ -121,7 +121,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   const shader = source
     .replace(
       'void mainImage(',
-      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\n${CLOUD_DEPTH_TEST}\nvoid mainImage(`
+      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\nuniform float cloudFade;\n${CLOUD_DEPTH_TEST}\nvoid mainImage(`
     )
     // Light shafts are half resolution too: the shadow length behind an
     // aircraft (rays reaching the ground) bleeds onto its pixels as in-
@@ -129,7 +129,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     // shafts in front of it are negligible.
     .replace(
       'shadowLength = texture(shadowLengthBuffer, uv).r;',
-      'shadowLength = texture(shadowLengthBuffer, uv).r;\n  if (isAircraftPixel(uv)) shadowLength = 0.0;'
+      'shadowLength = texture(shadowLengthBuffer, uv).r * cloudFade;\n  if (isAircraftPixel(uv)) shadowLength = 0.0;'
     )
     // Clouds get no light at night from takram (sun and sky only), so they
     // render as black slabs cutting through the scene. Light them with the
@@ -137,7 +137,13 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     // ~0.9 albedo so they read as moonlit, not overcast day), by opacity.
     .replace(
       'vec4 overlay = texture(overlayBuffer, uv);',
-      'vec4 overlay = texture(overlayBuffer, uv);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
+      'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
+    )
+    // Volumetric clouds fade out with camera altitude (and stop rendering,
+    // leaving stale buffers): fade their overlay, shadows and shafts too.
+    .replace(
+      'float sunTransmittance = exp(-opticalDepth);',
+      'float sunTransmittance = mix(1.0, exp(-opticalDepth), cloudFade);'
     )
     .replace(
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
@@ -151,8 +157,8 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
     )
   if (
-    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)/g) ?? [])
-      .length < 12
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)|cloudFade/g) ?? [])
+      .length < 16
   ) {
     // takram's shader changed: night light only partly applied.
     console.warn('[night] AerialPerspective shader patch did not fully apply')
@@ -161,6 +167,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   effect.uniforms.set('nightSky', new Uniform(nightState.sky))
   effect.uniforms.set('cloudDepthBuffer', new Uniform(null))
   effect.uniforms.set('hasCloudDepth', new Uniform(0))
+  effect.uniforms.set('cloudFade', new Uniform(1))
   ;(effect as unknown as { setFragmentShader: (s: string) => void }).setFragmentShader(shader)
 }
 
@@ -238,6 +245,8 @@ export const PostEffects: FC = () => {
       if (depth != null) depth.value = cloudDepth.texture
       const has = uniforms.get('hasCloudDepth')
       if (has != null) has.value = cloudDepth.texture != null ? 1 : 0
+      const fade = uniforms.get('cloudFade')
+      if (fade != null) fade.value = cloudsEnabled ? cloudDepth.fade : 0
     }
     if (transientStates != null) {
       updateNightLighting(

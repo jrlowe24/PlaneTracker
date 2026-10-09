@@ -322,8 +322,11 @@ start. The committed `sea` fixture covers ~10 min of SEA/BFI/PAE traffic
   `Stars`. We keep `<Sky/>` + `<Stars/>` in the scene and switch
   `AerialPerspective sky` on only while the sun is up (stars aren't visible
   then and there are no light shafts at night).
-- Clouds are skipped above 120 km camera altitude (takram's clouds don't
-  support views from space yet).
+- Volumetric clouds fade out between 25 and 70 km camera altitude and
+  aren't rendered above: they're built from fine noise tiled over the globe,
+  which from high up reads as a uniform blanket. Their overlay, shadows and
+  light shafts fade with them (skipped rendering otherwise left stale
+  buffers composited). The globe view is cloud-free.
 - Shape, shape-detail and turbulence textures are self-hosted copies of
   takram's (MIT) in `client/public/clouds/`; the blue-noise (STBN) texture is
   still fetched from takram's GitHub media at runtime.

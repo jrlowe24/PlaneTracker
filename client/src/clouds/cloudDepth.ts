@@ -6,4 +6,12 @@ import type { Texture } from 'three'
  * resolution. AerialPerspective uses it to keep upsampled cloud overlay
  * off aircraft that are in front of the clouds.
  */
-export const cloudDepth: { texture: Texture | null } = { texture: null }
+export const cloudDepth: {
+  texture: Texture | null
+  /**
+   * 1 below ~25 km camera altitude, fading to 0 by ~70 km: volumetric
+   * clouds (their overlay, shadows and light shafts) only exist up close;
+   * from higher up the tiled cloud noise reads as a uniform blanket.
+   */
+  fade: number
+} = { texture: null, fade: 1 }
