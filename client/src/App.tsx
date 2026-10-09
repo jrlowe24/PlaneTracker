@@ -2,6 +2,7 @@ import { Canvas } from '@react-three/fiber'
 import type { FC } from 'react'
 
 import { Scene } from './scene/Scene'
+import { AircraftList } from './ui/AircraftList'
 import { AircraftPanel } from './ui/AircraftPanel'
 import { Attribution } from './ui/Attribution'
 import { DevPanel } from './ui/DevPanel'
@@ -21,7 +22,10 @@ export const App: FC = () => (
     </Canvas>
     <WindowFrame />
     <TileErrorBanner />
-    <AircraftPanel />
+    <div className='left-stack'>
+      <AircraftList />
+      <AircraftPanel />
+    </div>
     <DevPanel />
     <QualityMenu />
     <Attribution />

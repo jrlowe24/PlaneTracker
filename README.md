@@ -56,6 +56,11 @@ tracked.
 
 ### Using it
 
+- **Nearby aircraft** (top left): the 40 aircraft closest to what you're
+  looking at (or to the plane you're following), with altitude and distance,
+  refreshed every second. Type to search callsign, registration, type or
+  ICAO hex; <kbd>Enter</kbd> follows the first match. Click a row to fly to
+  that aircraft and follow it (also works while following another one).
 - Click an aircraft to select it; the panel shows callsign, registration,
   type, altitude (barometric and GNSS), ground speed, vertical rate, track,
   squawk and data age.
