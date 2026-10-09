@@ -67,6 +67,11 @@ export class AircraftCache {
     this.entries.clear()
   }
 
+  /** All entries. */
+  values(): IterableIterator<CacheEntry> {
+    return this.entries.values()
+  }
+
   /** Entries within `radiusMeters` of a point. */
   *within(lat: number, lon: number, radiusMeters: number): Generator<CacheEntry> {
     // Cheap latitude band rejection before the haversine.

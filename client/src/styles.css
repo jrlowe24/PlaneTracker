@@ -416,7 +416,39 @@ body,
 }
 
 .aircraft-list-empty {
-  padding: 4px 12px 12px;
+  padding: 4px 8px 8px;
+}
+
+.aircraft-section {
+  padding: 8px 8px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hub-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
+.hub-chip {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.hub-chip:hover,
+.hub-chip:focus-visible {
+  background: rgba(242, 120, 30, 0.28);
+  outline: none;
 }
 
 .aircraft-rows {

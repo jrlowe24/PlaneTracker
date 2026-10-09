@@ -61,6 +61,13 @@ tracked.
   `SEA → ATL`), altitude and distance, refreshed every second. Type to search
   callsign, airport (code or city), registration, type or ICAO hex; <kbd>Enter</kbd> follows the first match. Click a row to fly to
   that aircraft and follow it (also works while following another one).
+- **Worldwide search**: the view only receives traffic around the camera,
+  so searches also run on the server against the whole world: callsign
+  (ICAO form, e.g. `UAE1`, `ASA1`), registration or hex via adsb.fi, and
+  ICAO type (`A388`, `B738`) via adsb.lol. Results appear under
+  *Worldwide*; clicking one jumps the camera there and follows the
+  aircraft as soon as its data arrives (up to 45 s). With nothing in view,
+  the list offers busy airports (SEA, LAX, LHR, DXB, …) to jump to.
 - Click an aircraft to select it; the panel shows callsign, registration,
   type, altitude (barometric and GNSS), ground speed, vertical rate, track,
   squawk and data age.
@@ -136,6 +143,16 @@ clients ──viewport──▶ Hub ──merged regions──▶ FlightSource �
   reused) or a paid feed can be swapped in. Everything is normalized into
   `AircraftState`; units stay as on the wire (ft, kt, ft/min, degrees) and
   are converted only in `shared/src/units.ts`.
+
+### Worldwide search (`GET /api/search?q=`)
+
+`server/src/search.ts`. Upstream lookups share the existing rate-limited
+slots instead of adding traffic: adsb.fi callsign/registration/hex
+lookups go first in the follow feed's 1.1 s slot, and adsb.lol type
+lookups take the region poller's next slot. Results also include a
+substring match over everything the server already tracks, are cached for
+20 s per query, and found aircraft are fed into the cache so they show up
+immediately when the camera arrives.
 
 ### Followed aircraft: adsb.fi at ~1 Hz
 

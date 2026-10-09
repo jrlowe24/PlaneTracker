@@ -117,6 +117,11 @@ export class RegionPoller {
   private requestIntervalMs: number
   private onData: ((states: AircraftState[], receivedAt: number) => void) | null =
     null
+  /** One-off requests (e.g. search) served in the poll slot before regions. */
+  private readonly extra: Array<{
+    run: (signal: AbortSignal) => Promise<AircraftState[]>
+    resolve: (states: AircraftState[]) => void
+  }> = []
 
   constructor(
     private readonly fetchRegion: (
@@ -147,6 +152,18 @@ export class RegionPoller {
     }
   }
 
+  /**
+   * Runs a one-off upstream request in the next poll slot (ahead of region
+   * polls, same spacing and backoff). Resolves empty on failure or when a
+   * few are already queued.
+   */
+  request(run: (signal: AbortSignal) => Promise<AircraftState[]>): Promise<AircraftState[]> {
+    if (this.extra.length >= 4) return Promise.resolve([])
+    return new Promise(resolve => {
+      this.extra.push({ run, resolve })
+    })
+  }
+
   start(onData: (states: AircraftState[], receivedAt: number) => void): void {
     this.onData = onData
     if (this.timer != null) return
@@ -165,14 +182,12 @@ export class RegionPoller {
   private tick(): void {
     const now = Date.now()
     if (this.inFlight != null || now < this.nextRequestAt) return
-    const schedule = pickNextRegion(
-      this.schedules,
-      now,
-      this.options.minRegionIntervalMs
-    )
-    if (schedule == null) return
+    const extra = this.extra.shift()
+    const schedule =
+      extra == null ? pickNextRegion(this.schedules, now, this.options.minRegionIntervalMs) : null
+    if (extra == null && schedule == null) return
 
-    schedule.lastPolledAt = now
+    if (schedule != null) schedule.lastPolledAt = now
     this.nextRequestAt = now + this.requestIntervalMs
     const controller = new AbortController()
     this.inFlight = controller
@@ -180,8 +195,11 @@ export class RegionPoller {
       controller.abort()
     }, this.options.requestTimeoutMs)
 
-    this.fetchRegion(schedule.region, controller.signal)
+    const request =
+      extra != null ? extra.run(controller.signal) : this.fetchRegion(schedule!.region, controller.signal)
+    request
       .then(states => {
+        extra?.resolve(states)
         this.backoffMs = 0
         this.requestIntervalMs = adaptRequestInterval(
           this.requestIntervalMs,
@@ -191,6 +209,7 @@ export class RegionPoller {
         this.onData?.(states, Date.now())
       })
       .catch((error: unknown) => {
+        extra?.resolve([])
         if (controller.signal.aborted && this.timer == null) return
         const rateLimited = error instanceof UpstreamError && error.status === 429
         if (rateLimited) {
@@ -203,7 +222,7 @@ export class RegionPoller {
         this.backoffMs = nextBackoff(this.backoffMs, error, this.options)
         this.nextRequestAt = Date.now() + this.backoffMs
         // Let the region be retried right after the backoff.
-        schedule.lastPolledAt = 0
+        if (schedule != null) schedule.lastPolledAt = 0
         const message = error instanceof Error ? error.message : String(error)
         console.warn(
           `[poller] ${message}; backing off ${Math.round(this.backoffMs / 1000)} s, request interval now ${(this.requestIntervalMs / 1000).toFixed(1)} s`

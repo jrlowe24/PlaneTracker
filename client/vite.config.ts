@@ -11,7 +11,9 @@ export default defineConfig({
       '/ws': {
         target: 'ws://localhost:8787',
         ws: true
-      }
+      },
+      // Worldwide aircraft search (server-side upstream lookups).
+      '/api': 'http://localhost:8787'
     }
   },
   optimizeDeps: {

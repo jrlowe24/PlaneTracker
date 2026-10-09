@@ -8,6 +8,7 @@ import { AircraftCache } from './cache'
 import { readFixture } from './fixtures'
 import { Hub } from './hub'
 import { RouteResolver } from './routes'
+import { SearchService } from './search'
 import { AdsbLolSource } from './sources/adsbLol'
 import { FollowFeed } from './sources/followFeed'
 import { WeatherService } from './weather'
@@ -63,6 +64,8 @@ const followFeed = followEnabled
 // Current weather (Open-Meteo) for the clouds; WEATHER=0 disables.
 const weather = process.env.WEATHER === '0' ? null : new WeatherService()
 const hub = new Hub(cache, source, {}, routes, followFeed, weather)
+// Worldwide search (live lookups only with live data).
+const search = new SearchService(cache, followFeed, source instanceof AdsbLolSource ? source : null)
 
 const http = createServer((req, res) => {
   if (req.url === '/health') {
@@ -75,6 +78,15 @@ const http = createServer((req, res) => {
         clients: hub.clientCount
       })
     )
+    return
+  }
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  if (url.pathname === '/api/search') {
+    const query = (url.searchParams.get('q') ?? '').slice(0, 32)
+    void search.search(query).then(response => {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(response))
+    })
     return
   }
   res.writeHead(404)

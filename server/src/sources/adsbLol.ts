@@ -119,7 +119,20 @@ export async function fetchAdsbLolPoint(
     ADSB_LOL_MAX_RADIUS_NM,
     Math.max(1, Math.ceil(region.radiusNm))
   )
-  const url = `${baseUrl}/v2/point/${region.lat.toFixed(4)}/${region.lon.toFixed(4)}/${radius}`
+  return fetchAdsbLolPath(
+    `/v2/point/${region.lat.toFixed(4)}/${region.lon.toFixed(4)}/${radius}`,
+    signal,
+    baseUrl
+  )
+}
+
+/** GET an adsb.lol v2 path returning readsb JSON. */
+export async function fetchAdsbLolPath(
+  path: string,
+  signal: AbortSignal,
+  baseUrl = ADSB_LOL_BASE_URL
+): Promise<AircraftState[]> {
+  const url = `${baseUrl}${path}`
   const response = await fetch(url, {
     signal,
     headers: { accept: 'application/json', 'user-agent': USER_AGENT }
@@ -152,6 +165,11 @@ export class AdsbLolSource implements FlightSource {
 
   setRegions(regions: Region[]): void {
     this.poller.setRegions(regions)
+  }
+
+  /** Worldwide lookup by ICAO type (`/v2/type/A388`), in the poll slot. */
+  lookupType(type: string): Promise<AircraftState[]> {
+    return this.poller.request(signal => fetchAdsbLolPath(`/v2/type/${encodeURIComponent(type)}`, signal))
   }
 
   start(listener: FlightSourceListener): void {

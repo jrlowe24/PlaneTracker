@@ -1,6 +1,13 @@
+import {
+  ecefToGeodetic,
+  greatCircleDistance,
+  type SearchResponse,
+  type SearchResult
+} from '@windowseat/shared'
 import { useEffect, useState, type FC } from 'react'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
+import { jumpTo } from '../camera/jump'
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { flightConnection } from '../data/flightConnection'
 import { routeFor } from '../data/routeDisplay'
@@ -24,6 +31,72 @@ interface Row {
 }
 
 const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
+const SEARCH_DEBOUNCE_MS = 450
+const FEET_TO_METERS = 0.3048
+
+/** Busy airports to jump to when there's no traffic in view. */
+const HUBS: Array<{ code: string; lat: number; lon: number }> = [
+  { code: 'SEA', lat: 47.449, lon: -122.309 },
+  { code: 'LAX', lat: 33.942, lon: -118.408 },
+  { code: 'ORD', lat: 41.978, lon: -87.905 },
+  { code: 'ATL', lat: 33.64, lon: -84.427 },
+  { code: 'JFK', lat: 40.641, lon: -73.778 },
+  { code: 'LHR', lat: 51.47, lon: -0.454 },
+  { code: 'FRA', lat: 50.037, lon: 8.562 },
+  { code: 'DXB', lat: 25.253, lon: 55.365 },
+  { code: 'SIN', lat: 1.364, lon: 103.991 },
+  { code: 'HND', lat: 35.549, lon: 139.78 },
+  { code: 'SYD', lat: -33.946, lon: 151.177 }
+]
+
+function jumpToHub(hub: { lat: number; lon: number }): void {
+  jumpTo({ lat: hub.lat, lon: hub.lon, distance: 60_000, pitch: -40 })
+}
+
+/** Jumps the camera over a search result and follows it once its data arrives. */
+function jumpToResult(result: SearchResult): void {
+  const height = (result.altitude ?? 0) * FEET_TO_METERS
+  jumpTo({ lat: result.lat, lon: result.lon, height, distance: 15_000, pitch: -30 }, result.hex)
+}
+
+/** Distance (nm) from the view center to a point. */
+function distanceFromViewNm(lat: number, lon: number): number {
+  const here = ecefToGeodetic(lightAnchor.x, lightAnchor.y, lightAnchor.z)
+  return greatCircleDistance(here.lat, here.lon, lat, lon) / METERS_PER_NM
+}
+
+type WorldSearch =
+  | { status: 'idle' }
+  | { status: 'loading'; query: string }
+  | { status: 'done'; query: string; response: SearchResponse }
+
+/** Worldwide search on the server (debounced; only for 2+ characters). */
+function useWorldSearch(query: string): WorldSearch {
+  const [last, setLast] = useState<SearchResponse | null>(null)
+  const q = query.trim()
+  useEffect(() => {
+    if (q.length < 2) return
+    const controller = new AbortController()
+    const id = setTimeout(() => {
+      fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal })
+        .then(async response => {
+          if (!response.ok) throw new Error(String(response.status))
+          const body = (await response.json()) as SearchResponse
+          setLast({ ...body, query: q })
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setLast({ query: q, results: [], localOnly: true })
+        })
+    }, SEARCH_DEBOUNCE_MS)
+    return () => {
+      clearTimeout(id)
+      controller.abort()
+    }
+  }, [q])
+  if (q.length < 2) return { status: 'idle' }
+  if (last?.query !== q) return { status: 'loading', query: q }
+  return { status: 'done', query: q, response: last }
+}
 
 function toRow(aircraft: TrackedAircraft): Row {
   const { state } = aircraft
@@ -82,12 +155,19 @@ function useRows(query: string): { rows: Row[]; total: number } {
 
 /**
  * List of nearby aircraft with search. Clicking a row selects the aircraft
- * and flies the camera into follow mode behind it.
+ * and flies the camera into follow mode behind it. Searches also run
+ * worldwide on the server; picking a far-away result jumps the camera there
+ * and follows it once its data arrives. With nothing in view, busy airports
+ * are offered as jump targets.
  */
 export const AircraftList: FC = () => {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(true)
   const { rows, total } = useRows(query)
+  const world = useWorldSearch(query)
+  const localHexes = new Set(rows.map(r => r.hex))
+  const worldRows =
+    world.status === 'done' ? world.response.results.filter(r => !localHexes.has(r.hex)) : []
   const selectedHex = useStore(selectionStore, s => s.selectedHex)
   const followedHex = useStore(cameraModeStore, s => (s.mode === 'globe' ? null : s.targetHex))
 
@@ -120,7 +200,7 @@ export const AircraftList: FC = () => {
           <input
             className='aircraft-search'
             type='search'
-            placeholder='Search flight, airport, registration, type…'
+            placeholder='Search callsign (ASA1), registration, type, airport…'
             value={query}
             onChange={e => {
               setQuery(e.target.value)
@@ -128,57 +208,116 @@ export const AircraftList: FC = () => {
             onKeyDown={e => {
               // Keep F/W/S/Esc shortcuts from firing while typing.
               e.stopPropagation()
-              if (e.key === 'Enter' && rows[0] != null) {
+              if (e.key !== 'Enter') return
+              if (rows[0] != null) {
                 selectionStore.set({ selectedHex: rows[0].hex })
                 followAircraft(rows[0].hex)
+              } else if (worldRows[0] != null) {
+                jumpToResult(worldRows[0])
               }
             }}
           />
-          {rows.length === 0 ? (
-            <div className='aircraft-list-empty muted'>
-              {total === 0 && query === '' ? 'Waiting for flight data…' : 'No matching aircraft in view.'}
-            </div>
-          ) : (
-            <ul className='aircraft-rows'>
-              {rows.map(row => (
-                <li key={row.hex}>
+          <ul className='aircraft-rows'>
+            {rows.map(row => (
+              <li key={row.hex}>
+                <button
+                  type='button'
+                  className={`aircraft-row${row.hex === selectedHex ? ' selected' : ''}`}
+                  title='Follow this aircraft'
+                  onClick={() => {
+                    selectionStore.set({ selectedHex: row.hex })
+                    followAircraft(row.hex)
+                  }}
+                >
+                  <span className='row-main'>
+                    <span className='row-label'>
+                      {row.label}
+                      {row.route != null && (
+                        <span
+                          className={`row-route${row.routePlausible ? '' : ' doubtful'}`}
+                          title={row.routeTitle ?? undefined}
+                        >
+                          {row.route}
+                          {row.routePlausible ? '' : '?'}
+                        </span>
+                      )}
+                    </span>
+                    <span className='row-detail muted'>{row.detail}</span>
+                  </span>
+                  <span className='row-numbers'>
+                    <span>{row.altitude}</span>
+                    <span className='muted'>
+                      {row.hex === followedHex
+                        ? 'following'
+                        : `${row.distanceNm < 10 ? row.distanceNm.toFixed(1) : fmt.format(row.distanceNm)} nm`}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+            {rows.length === 0 && (
+              <li className='aircraft-list-empty muted'>
+                {query.trim() !== ''
+                  ? 'No matching aircraft in view.'
+                  : total === 0
+                    ? 'No aircraft in view. Search worldwide above, or jump to a busy airport:'
+                    : 'Waiting for positions…'}
+              </li>
+            )}
+            {query.trim() === '' && rows.length === 0 && (
+              <li className='hub-chips'>
+                {HUBS.map(hub => (
                   <button
+                    key={hub.code}
                     type='button'
-                    className={`aircraft-row${row.hex === selectedHex ? ' selected' : ''}`}
-                    title='Follow this aircraft'
+                    className='hub-chip'
+                    title={`Jump to ${hub.code}`}
                     onClick={() => {
-                      selectionStore.set({ selectedHex: row.hex })
-                      followAircraft(row.hex)
+                      jumpToHub(hub)
                     }}
                   >
-                    <span className='row-main'>
-                      <span className='row-label'>
-                        {row.label}
-                        {row.route != null && (
-                          <span
-                            className={`row-route${row.routePlausible ? '' : ' doubtful'}`}
-                            title={row.routeTitle ?? undefined}
-                          >
-                            {row.route}
-                            {row.routePlausible ? '' : '?'}
-                          </span>
-                        )}
-                      </span>
-                      <span className='row-detail muted'>{row.detail}</span>
-                    </span>
-                    <span className='row-numbers'>
-                      <span>{row.altitude}</span>
-                      <span className='muted'>
-                        {row.hex === followedHex
-                          ? 'following'
-                          : `${row.distanceNm < 10 ? row.distanceNm.toFixed(1) : fmt.format(row.distanceNm)} nm`}
-                      </span>
-                    </span>
+                    {hub.code}
                   </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                ))}
+              </li>
+            )}
+            {world.status !== 'idle' && (
+              <li className='aircraft-section muted'>
+                Worldwide
+                {world.status === 'loading' && ' · searching…'}
+                {world.status === 'done' && worldRows.length === 0 && ' · nothing else found'}
+              </li>
+            )}
+            {worldRows.map(result => (
+              <li key={`world-${result.hex}`}>
+                <button
+                  type='button'
+                  className='aircraft-row'
+                  title='Jump there and follow this aircraft'
+                  onClick={() => {
+                    jumpToResult(result)
+                  }}
+                >
+                  <span className='row-main'>
+                    <span className='row-label'>
+                      {result.callsign ?? result.registration ?? result.hex.toUpperCase()}
+                    </span>
+                    <span className='row-detail muted'>
+                      {[result.typeCode, result.registration !== result.callsign ? result.registration : null]
+                        .filter(v => v != null)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                  <span className='row-numbers'>
+                    <span>
+                      {result.onGround ? 'GND' : result.altitude == null ? '—' : `${fmt.format(result.altitude)} ft`}
+                    </span>
+                    <span className='muted'>{fmt.format(distanceFromViewNm(result.lat, result.lon))} nm</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </>
       )}
     </div>

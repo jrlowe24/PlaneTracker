@@ -14,6 +14,7 @@ import {
   setClipPlanes,
   type Orbit
 } from './cameraMath'
+import { applyJump, takeJump, updatePendingFollow } from './jump'
 import { windowCameraPose, type WindowLook } from './windowCamera'
 
 const DEFAULT_FOV = 50
@@ -81,6 +82,26 @@ class CameraRigController {
   }
 
   update(camera: PerspectiveCamera, dt: number): void {
+    // A jump (search result, airport shortcut) cuts straight to the globe
+    // view over the target, dropping any attachment or transition.
+    const jump = takeJump()
+    if (jump != null) {
+      this.transition = null
+      this.activeMode = 'globe'
+      this.activeHex = null
+      const state = cameraModeStore.get()
+      if (state.mode !== 'globe' || state.transitioning) {
+        cameraModeStore.set({ mode: 'globe', transitioning: false })
+      }
+      if (camera.fov !== DEFAULT_FOV) {
+        camera.fov = DEFAULT_FOV
+        camera.updateProjectionMatrix()
+      }
+      applyJump(camera, jump)
+      return
+    }
+    updatePendingFollow()
+
     const { mode, targetHex } = cameraModeStore.get()
     const aircraft = targetHex == null ? undefined : flightConnection.registry.byHex.get(targetHex)
     const pose = aircraft?.pose ?? this.lastPose

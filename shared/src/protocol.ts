@@ -139,3 +139,23 @@ export function decodeAircraft(t: AircraftTuple): AircraftState {
     positionTimestamp: t[14]
   }
 }
+
+/** `GET /api/search?q=` result: aircraft found anywhere in the world. */
+export interface SearchResult {
+  hex: string
+  callsign: string | null
+  registration: string | null
+  typeCode: string | null
+  lat: number
+  lon: number
+  /** Feet; null on the ground or unknown. */
+  altitude: number | null
+  onGround: boolean
+}
+
+export interface SearchResponse {
+  query: string
+  results: SearchResult[]
+  /** True when only already-tracked traffic was searched (no live lookups). */
+  localOnly: boolean
+}
