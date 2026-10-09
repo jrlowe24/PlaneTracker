@@ -4,6 +4,7 @@ import {
   Matrix4,
   Mesh,
   Vector3,
+  type InterleavedBufferAttribute,
   type Object3D,
   type Texture
 } from 'three'
@@ -42,21 +43,19 @@ class NormalsWorkerPool {
     }
   }
 
-  compute(
-    position: Float32Array,
-    creaseAngle: number,
-    skirt?: CreasedNormalsRequest['skirt']
-  ): Promise<CreasedNormalsResponse> {
+  compute(request: Omit<CreasedNormalsRequest, 'id'>): Promise<CreasedNormalsResponse> {
     const id = this.nextId++
     const worker = this.workers[this.nextWorker++ % this.workers.length]!
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
-      const request: CreasedNormalsRequest = { id, position, creaseAngle, skirt }
-      const transfer: Transferable[] = [position.buffer]
-      if (skirt != null) transfer.push(skirt.uv.buffer)
-      worker.postMessage(request, transfer)
+      const message: CreasedNormalsRequest = { ...request, id }
+      const transfer: Transferable[] = [message.position.buffer]
+      if (message.index != null) transfer.push(message.index.buffer)
+      if (message.uv != null) transfer.push(message.uv.buffer)
+      worker.postMessage(message, transfer)
     })
   }
+
 }
 
 const SKIRT_FRACTION = 0.015
@@ -74,10 +73,7 @@ const inverse = new Matrix4()
  */
 function skirtParameters(mesh: Mesh, geometry: BufferGeometry): CreasedNormalsRequest['skirt'] {
   const names = Object.keys(geometry.attributes)
-  const uv = geometry.getAttribute('uv')
-  if (!(uv instanceof BufferAttribute) || names.some(n => n !== 'position' && n !== 'uv')) {
-    return undefined
-  }
+  if (names.some(n => n !== 'position' && n !== 'uv')) return undefined
   mesh.updateWorldMatrix(true, false)
   geometry.computeBoundingSphere()
   const sphere = geometry.boundingSphere!
@@ -88,12 +84,22 @@ function skirtParameters(mesh: Mesh, geometry: BufferGeometry): CreasedNormalsRe
   down.copy(center).normalize().negate().transformDirection(inverse)
   const worldRadius = sphere.radius * scale
   const lengthWorld = Math.min(SKIRT_MAX_M, Math.max(SKIRT_MIN_M, worldRadius * 2 * SKIRT_FRACTION))
-  const uvCopy = new Float32Array(uv.count * 2)
-  for (let i = 0; i < uv.count; ++i) {
-    uvCopy[i * 2] = uv.getX(i)
-    uvCopy[i * 2 + 1] = uv.getY(i)
+  return { down: [down.x, down.y, down.z], length: lengthWorld / Math.max(scale, 1e-9) }
+}
+
+/** Float32 copy of an attribute (fast slice when it's already plain float data). */
+function floatCopy(attribute: BufferAttribute | InterleavedBufferAttribute | undefined, size: number): Float32Array | null {
+  if (attribute == null) return null
+  if (attribute instanceof BufferAttribute && attribute.array instanceof Float32Array && attribute.itemSize === size && !attribute.normalized) {
+    return attribute.array.slice()
   }
-  return { uv: uvCopy, down: [down.x, down.y, down.z], length: lengthWorld / Math.max(scale, 1e-9) }
+  const out = new Float32Array(attribute.count * size)
+  for (let i = 0; i < attribute.count; ++i) {
+    out[i * size] = attribute.getX(i)
+    out[i * size + 1] = attribute.getY(i)
+    if (size > 2) out[i * size + 2] = attribute.getZ(i)
+  }
+  return out
 }
 
 let pool: NormalsWorkerPool | undefined
@@ -138,12 +144,6 @@ export class TileNormalsPlugin {
     const meshes: Mesh[] = []
     scene.traverse(object => {
       if (object instanceof Mesh && object.geometry instanceof BufferGeometry) {
-        // toCreasedNormals works on triangle soups.
-        const geometry = object.geometry
-        if (geometry.index != null) {
-          object.geometry = geometry.toNonIndexed()
-          geometry.dispose()
-        }
         meshes.push(object)
         this.applyAnisotropy(object)
       }
@@ -152,31 +152,25 @@ export class TileNormalsPlugin {
     await Promise.all(
       meshes.map(async mesh => {
         const geometry = mesh.geometry as BufferGeometry
-        const position = geometry.getAttribute('position')
-        if (!(position instanceof BufferAttribute)) return
-        // Copy: the original stays attached for rendering/raycasting.
-        const copy = new Float32Array(position.count * 3)
-        for (let i = 0; i < position.count; ++i) {
-          copy[i * 3] = position.getX(i)
-          copy[i * 3 + 1] = position.getY(i)
-          copy[i * 3 + 2] = position.getZ(i)
-        }
-        const skirt = skirtParameters(mesh, geometry)
-        const result = await getPool().compute(copy, this.creaseAngle, skirt)
-        if (result.position != null && result.uv != null) {
-          // Skirted geometry replaces the original (same attributes, more
-          // triangles); the old one is disposed.
-          const skirted = new BufferGeometry()
-          skirted.setAttribute('position', new BufferAttribute(result.position, 3))
-          skirted.setAttribute('uv', new BufferAttribute(result.uv, 2))
-          skirted.setAttribute('normal', new BufferAttribute(result.normal!, 3))
-          skirted.boundingBox = geometry.boundingBox
-          skirted.boundingSphere = geometry.boundingSphere
-          mesh.geometry = skirted
-          geometry.dispose()
-        } else {
-          geometry.setAttribute('normal', new BufferAttribute(result.normal!, 3))
-        }
+        const position = floatCopy(geometry.getAttribute('position'), 3)
+        if (position == null) return
+        const uvAttribute = geometry.getAttribute('uv')
+        const uv = uvAttribute == null ? undefined : (floatCopy(uvAttribute, 2) ?? undefined)
+        const index = geometry.index == null ? undefined : geometry.index.array.slice() as Uint16Array | Uint32Array
+        const skirt = uv == null ? undefined : skirtParameters(mesh, geometry)
+        const result = await getPool().compute({ position, index, uv, creaseAngle: this.creaseAngle, skirt })
+        // Non-indexed (and skirted) geometry replaces the original: wrapping
+        // the worker's arrays is all the main thread does.
+        const prepared = new BufferGeometry()
+        prepared.setAttribute('position', new BufferAttribute(result.position!, 3))
+        if (result.uv != null) prepared.setAttribute('uv', new BufferAttribute(result.uv, 2))
+        prepared.setAttribute('normal', new BufferAttribute(result.normal!, 3))
+        geometry.computeBoundingBox()
+        geometry.computeBoundingSphere()
+        prepared.boundingBox = geometry.boundingBox
+        prepared.boundingSphere = geometry.boundingSphere
+        mesh.geometry = prepared
+        geometry.dispose()
       })
     )
   }

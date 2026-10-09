@@ -97,10 +97,12 @@ class GroundClampController {
       this.raycaster.far = top - guess + RAY_START_HEIGHT * 3
       const hit = this.raycaster.intersectObject(ground, true)[0]
       if (hit != null) {
-        flightConnection.registry.setGroundHeight(
-          aircraft.hex,
-          heightAlongNormal(hit.point, state.lat)
-        )
+        const height = heightAlongNormal(hit.point, state.lat)
+        // Rays can slip through a crack between tiles and hit something far
+        // below; ignore hits well below sea level (Dead Sea shore ≈ −430 m).
+        if (height > geoidHeight(state.lat, state.lon) - 450) {
+          flightConnection.registry.setGroundHeight(aircraft.hex, height)
+        }
       }
     }
   }

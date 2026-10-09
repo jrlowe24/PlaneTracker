@@ -193,6 +193,10 @@ export function computePose(
     }
     lat += attitude.errorN / m.north / DEG
     lon += attitude.errorE / m.east / DEG
+    // On the ground the height comes from the terrain, not noisy reports:
+    // no vertical smoothing (it let parked aircraft drift off the surface
+    // when the ground height was re-measured).
+    if (k.onGround) attitude.errorU = 0
     height += attitude.errorU
     if (aircraft.groundHeight != null) {
       height = Math.max(height, aircraft.groundHeight + clearance)

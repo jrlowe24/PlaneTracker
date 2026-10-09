@@ -115,15 +115,18 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
 const TILE_CACHE_BYTES = 800e6
 
 /**
- * Tiles parsed at once. Each finished tile builds geometry on the main
- * thread and uploads its texture on first draw; the default (5) let bursts
- * of arrivals stack into frame hitches.
+ * Tiles parsed at once. Mesh preparation (de-indexing, normals, skirts) runs
+ * in workers, so a parse slot mostly waits; more slots fill a new view
+ * faster without loading the main thread.
  */
-const PARSE_JOBS = 2
+const PARSE_JOBS = 6
 
 function tuneTileLoading(tiles: TilesRenderer): void {
   tiles.lruCache.maxBytesSize = TILE_CACHE_BYTES
-  ;(tiles as unknown as { parseQueue: { maxJobs: number } }).parseQueue.maxJobs = PARSE_JOBS
+  const queues = tiles as unknown as { parseQueue: { maxJobs: number }; downloadQueue: { maxJobsPerOrigin: number } }
+  queues.parseQueue.maxJobs = PARSE_JOBS
+  // HTTP/2 to one origin: more concurrent tile requests keep the pipe full.
+  queues.downloadQueue.maxJobsPerOrigin = 48
   ;(tiles as unknown as { loadSiblings: boolean }).loadSiblings = false
 }
 

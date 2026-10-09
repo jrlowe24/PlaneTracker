@@ -156,6 +156,7 @@ export class NavLights {
       // The camera sits inside the followed aircraft in window view; its own
       // wingtip light is still visible, which is right.
       const p = AIRFRAMES[aircraft.cls]
+      const isDetailedEarly = detailedHexes.has(aircraft.hex)
       const ls = aircraft.scale.length
       const halfSpan = (p.wingSpan > 0 ? p.wingSpan / 2 : p.fuselageRadius * 1.2) * aircraft.scale.span
       const sweep = Math.tan((p.wingSweep * Math.PI) / 180) * Math.max(0, halfSpan - p.fuselageRadius * ls)
@@ -163,10 +164,15 @@ export class NavLights {
       const tipZ = p.wingRootZ * ls - sweep - p.wingTipChord * ls * 0.5
       const r = p.fuselageRadius * ls
       const { left, up, forward } = pose
+      // Simplified (non-detailed) models rest on their bellies on the ground
+      // (see aircraftInstances); their lights follow.
+      const sink = isDetailedEarly
+        ? 0
+        : aircraft.attitude.ground * Math.max(0, p.groundClearance * ls - p.fuselageRadius * ls)
       const at = (bx: number, by: number, bz: number): [number, number, number] => [
-        dx + left.x * bx + up.x * by + forward.x * bz,
-        dy + left.y * bx + up.y * by + forward.y * bz,
-        dz + left.z * bx + up.z * by + forward.z * bz
+        dx + left.x * bx + up.x * (by - sink) + forward.x * bz,
+        dy + left.y * bx + up.y * (by - sink) + forward.y * bz,
+        dz + left.z * bx + up.z * (by - sink) + forward.z * bz
       ]
       const phase = phaseOf(aircraft.hex)
       const t = time + phase * 3

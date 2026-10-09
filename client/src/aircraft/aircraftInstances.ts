@@ -247,6 +247,16 @@ export class AircraftInstances {
       const { batch, index } = this.slot(aircraft.cls)
       const m = batch.matrices
       const { left, up, forward } = pose
+      // These simplified models have no landing gear: on the ground, lower
+      // the fuselage axis from gear height to resting on its belly (else the
+      // aircraft hovers a gear-length above the apron).
+      const params = AIRFRAMES[aircraft.cls]
+      const sink =
+        aircraft.attitude.ground *
+        Math.max(0, params.groundClearance * aircraft.scale.length - params.fuselageRadius * lengthScale)
+      const px = x - up.x * sink
+      const py = y - up.y * sink
+      const pz = z - up.z * sink
       const o = index * 16
       m[o + 0] = left.x * spanScale
       m[o + 1] = left.y * spanScale
@@ -260,9 +270,9 @@ export class AircraftInstances {
       m[o + 9] = forward.y * lengthScale
       m[o + 10] = forward.z * lengthScale
       m[o + 11] = 0
-      m[o + 12] = x
-      m[o + 13] = y
-      m[o + 14] = z
+      m[o + 12] = px
+      m[o + 13] = py
+      m[o + 14] = pz
       m[o + 15] = 1
 
       const color = selected ? COLOR_SELECTED : COLOR_DEFAULT
