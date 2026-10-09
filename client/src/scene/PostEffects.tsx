@@ -150,6 +150,14 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);\n    radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient;\n    radiance += cityLight(inputColor.a);'
     )
+    // Aircraft are lit forward (sun/sky lights) and kept as rendered, but
+    // three.js lights don't know about cloud shadows: darken aircraft
+    // pixels by the cloud shadow at their own position (sunTransmittance,
+    // already computed here from the shadow maps), keeping some sky light.
+    .replace(
+      'radiance = mix(inputColor.rgb, radiance, lightingMask);',
+      'radiance = mix(inputColor.rgb * mix(1.0, sunTransmittance, 0.8), radiance, lightingMask);'
+    )
     // City lights arrive in the alpha channel (NightLightsEffect); terrain
     // is opaque, so restore it.
     .replace('outputColor = vec4(radiance, inputColor.a);', 'outputColor = vec4(radiance, 1.0);')
@@ -158,8 +166,8 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
     )
   if (
-    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)|cloudFade/g) ?? [])
-      .length < 16
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.8/g) ?? [])
+      .length < 17
   ) {
     // takram's shader changed: night light only partly applied.
     console.warn('[night] AerialPerspective shader patch did not fully apply')
