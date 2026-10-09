@@ -157,7 +157,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     // already computed here from the shadow maps), keeping some sky light.
     .replace(
       'radiance = mix(inputColor.rgb, radiance, lightingMask);',
-      'radiance = mix(inputColor.rgb * mix(1.0, sunTransmittance, 0.8), radiance, lightingMask);'
+      'radiance = mix(inputColor.rgb * mix(1.0, max(sunTransmittance, 0.35), 0.7), radiance, lightingMask);'
     )
     // City lights arrive in the alpha channel (NightLightsEffect); terrain
     // is opaque, so restore it.
@@ -167,7 +167,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
     )
   if (
-    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.8/g) ?? [])
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.35/g) ?? [])
       .length < 17
   ) {
     // takram's shader changed: night light only partly applied.

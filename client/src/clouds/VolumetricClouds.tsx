@@ -8,7 +8,7 @@ import {
   type CloudWeatherSpec
 } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, type FC } from 'react'
-import type { ShaderMaterial, Texture } from 'three'
+import { Vector3, type ShaderMaterial, type Texture } from 'three'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { smoothingFactor } from '../aircraft/motion'
@@ -29,6 +29,33 @@ import { patchCloudsResolve, RegionalCoverageController } from './regionalShader
  */
 const FADE_START_ALTITUDE = 25_000
 const FADE_END_ALTITUDE = 70_000
+const SHADOW_MAX_FAR = 40_000
+
+/**
+ * Drops the clouds' temporal history after a camera cut (window seat,
+ * search jump) or a resolution change: blending the stale history made the
+ * first seconds after a cut a smear of the previous view's clouds.
+ */
+class CloudHistoryReset {
+  private readonly last = new Vector3()
+  private lastWidth = 0
+  private framesLeft = 0
+  private defaultAlpha: number | null = null
+
+  update(effect: CloudsEffect, position: Vector3): void {
+    const pass = (effect as unknown as CloudsPassInternals).cloudsPass
+    const alpha = pass?.resolveMaterial?.uniforms.temporalAlpha as { value: number } | undefined
+    const width = pass?.currentRenderTarget?.width ?? 0
+    if (alpha == null) return
+    this.defaultAlpha ??= alpha.value
+    const cut = this.last.lengthSq() > 0 && position.distanceTo(this.last) > 2000
+    if (cut || width !== this.lastWidth) this.framesLeft = 8
+    this.last.copy(position)
+    this.lastWidth = width
+    alpha.value = this.framesLeft > 0 ? 1 : this.defaultAlpha
+    if (this.framesLeft > 0) --this.framesLeft
+  }
+}
 /**
  * New weather blends in slowly, the way real cloud fields build and thin:
  * fast blends made clouds visibly pop in and dissolve whenever a new sample
@@ -83,7 +110,7 @@ const CIRRUS_DENSITY = 0.004
  */
 interface CloudsPassInternals {
   cloudsPass?: {
-    currentRenderTarget?: { depthVelocity?: Texture | null }
+    currentRenderTarget?: { depthVelocity?: Texture | null; width?: number }
     currentMaterial?: ShaderMaterial
     resolveMaterial?: ShaderMaterial
   }
@@ -96,6 +123,7 @@ export const VolumetricClouds: FC = () => {
   const preset = QUALITY_PRESETS[level]
   const coverageTexture = useMemo(() => new CoverageTexture(), [])
   const regional = useMemo(() => new RegionalCoverageController(), [])
+  const historyReset = useMemo(() => new CloudHistoryReset(), [])
   useEffect(
     () => () => {
       coverageTexture.dispose()
@@ -126,6 +154,7 @@ export const VolumetricClouds: FC = () => {
     // instead (invisible: overlay, shadows and shafts are multiplied by the
     // fade), which costs next to nothing.
     effect.skipRendering = false
+    historyReset.update(effect, camera.position)
     const scale = cloudDepth.fade > 0 ? 0.5 : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
@@ -200,6 +229,14 @@ export const VolumetricClouds: FC = () => {
         }
         // Slow drift of the coverage pattern (wind).
         effect.localWeatherVelocity.set(0.00002, 0.000005)
+        // Cloud shadow cascades span 40 km, not the whole view (180 km+):
+        // spread over the far plane, the far cascades were ~200 m per texel
+        // and painted blocky smudges over distant terrain and aircraft.
+        effect.shadow.maxFar = SHADOW_MAX_FAR
+        effect.shadow.splitLambda = 0.8
+        if (QUALITY_PRESETS[qualityStore.get().level].clouds === 'high') {
+          effect.shadow.mapSize.set(1024, 1024)
+        }
         const passes = effect as unknown as CloudsPassInternals
         for (const material of [passes.cloudsPass?.currentMaterial, passes.shadowPass?.currentMaterial]) {
           if (material != null && !regional.patch(material)) {
