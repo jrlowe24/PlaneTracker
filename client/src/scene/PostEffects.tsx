@@ -191,6 +191,16 @@ export const PostEffects: FC = () => {
   // would replace the stars, and there are no light shafts at night).
   const [sunUp, setSunUp] = useState(true)
   const composerRef = useRef<EffectComposerImpl>(null)
+  // The composer is only resized when the canvas size changes, not when
+  // the quality preset changes the pixel ratio. Left alone, the effect chain
+  // kept rendering at the old (larger) resolution while the canvas and the
+  // aircraft lighting mask used the new one: wasted pixels, and the
+  // stretched mask blurred into a glow around aircraft.
+  const size = useThree(({ size }) => size)
+  const dpr = useThree(({ viewport }) => viewport.dpr)
+  useEffect(() => {
+    composerRef.current?.setSize(size.width, size.height)
+  }, [size.width, size.height, dpr])
   const lightingMaskRef = useRef<LightingMaskPass>(null)
   const aerialRef = useRef<AerialPerspectiveEffect>(null)
 
