@@ -1,6 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { AtmosphereContext, type AtmosphereTransientStates } from '@takram/three-atmosphere/r3f'
 import { ecefToGeodetic, WGS84_A } from '@windowseat/shared'
+import { BlendFunction } from 'postprocessing'
 import { useContext, useEffect, useMemo, type FC } from 'react'
 import type { Camera } from 'three'
 
@@ -19,6 +20,7 @@ class NightLightsController {
   readonly tiles = new NightLightTiles()
   readonly effect: NightLightsEffect
   private ready = false
+  private active = true
   private sinceFlush = 0
 
   constructor(camera: Camera) {
@@ -35,6 +37,24 @@ class NightLightsController {
     const { effect, tiles } = this
     effect.mainCamera = camera
     effect.setSun(states.sunDirection)
+    // Skip the whole pass (a full-screen draw) when nothing in view can be
+    // at night: the sun is higher above the camera's horizon than the
+    // visible ground extends beyond it, with margin for twilight.
+    const radius = camera.position.length()
+    const reach = Math.acos(Math.min(1, WGS84_A / Math.max(radius, WGS84_A)))
+    const elevation = Math.asin(
+      Math.max(-1, Math.min(1, states.sunDirection.dot(camera.position) / radius))
+    )
+    const margin = this.active ? 0.2 : 0.15 // radians; hysteresis
+    const active = elevation < reach + margin
+    if (active !== this.active) {
+      this.active = active
+      effect.blendMode.blendFunction = active ? BlendFunction.NORMAL : BlendFunction.DST
+    }
+    if (!active) {
+      if (nightLightsStore.get().credit != null) nightLightsStore.set({ credit: null })
+      return
+    }
 
     const altitude = camera.position.length() - WGS84_A
     const detail = altitude < DETAIL_MAX_ALTITUDE && qualityStore.get().level !== 'low'

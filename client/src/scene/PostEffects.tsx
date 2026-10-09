@@ -299,8 +299,11 @@ export const PostEffects: FC = () => {
       />
       <>{lensFlare ? <LensFlare /> : null}</>
       <ToneMapping mode={ToneMappingMode.AGX} />
-      <SMAA />
+      {/* Before SMAA so it merges into the tone-mapping pass (one fewer
+          full-screen pass); its ±½ LSB noise is far below SMAA's edge
+          threshold. */}
       <Dithering />
+      <SMAA />
     </EffectComposer>
   )
 }

@@ -14,7 +14,7 @@ import { WINDOW_TILES } from './nightLightTiles'
 
 const drawingBuffer = new Vector2()
 /** Street-lamp grid spacing, meters. */
-const LAMP_SPACING = 32
+const LAMP_SPACING = 24
 
 /**
  * Emission is handed to AerialPerspective in the alpha channel as alpha =
@@ -144,7 +144,7 @@ float lamps(const vec3 offset, const vec3 up, const float footprint) {
   d -= up * dot(d, up);
   float d2 = dot(d, d);
   float radius = max(1.5 * footprint, 0.6);
-  float spot = exp(-d2 / (radius * radius)) * min(1.0, 0.6 / radius) * 14.0;
+  float spot = exp(-d2 / (radius * radius)) * min(1.0, 0.6 / radius) * 30.0;
   float pool = exp(-d2 / 64.0) * 0.6;
   return step(0.35, r.y) * (spot + pool);
 }
@@ -175,7 +175,10 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
   float night = smoothstep(0.06, -0.08, dot(up, sunDirection));
   if (night <= 0.0) return;
   float value = lightMap(p);
-  if (value <= 0.03) return;
+  // The NASA map's dim floor (rural scatter, airglow, blur halo around
+  // cities) stays dark: only genuinely lit areas emit.
+  float lit = smoothstep(0.28, 0.85, value);
+  if (lit <= 0.0) return;
 
   // Close up, light follows the streets and built surfaces in the imagery,
   // with individual lamps along streets; from far away (coarse tiles,
@@ -186,8 +189,10 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
   // Streets glow, roofs barely; contrast curves keep it from reading as a
   // tinted photo. Districts vary (some blocks much brighter than others).
   float district = districtVariation(offset);
-  float near = district * (0.7 * pow(surface.x, 1.6) + 0.05 * surface.y * surface.y);
-  float lampWeight = smoothstep(14.0, 4.0, footprint);
+  // Thin street lines (only strongly street-like pixels), dim; the lamps
+  // below carry most of the light, so ground between them stays dark.
+  float near = district * (0.11 * smoothstep(0.4, 0.8, surface.x) + 0.01 * surface.y);
+  float lampWeight = smoothstep(28.0, 6.0, footprint);
   if (lampWeight > 0.0) {
     // Only where the imagery shows real street structure: coarse tiles
     // still loading are smooth, and a lamp grid on them reads as dots.
@@ -201,9 +206,9 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
   float windowWeight = facade * smoothstep(2.0, 0.6, footprint);
   if (windowWeight > 0.0) near += windowWeight * 1.6 * windows(offset, footprint);
   float far = smoothstep(120.0, 1200.0, footprint);
-  float shape = mix(near, 0.5 * (1.0 - waterScore(inputColor.rgb)), far);
+  float shape = mix(near, 0.3 * (1.0 - waterScore(inputColor.rgb)), far);
   // Steep curve on the map so cores dominate and suburbs stay dim.
-  float emission = intensity * pow(value, 2.2) * shape * night;
+  float emission = intensity * lit * lit * shape * night;
   outputColor.a = 1.0 - min(emission / ${NIGHT_LIGHT_MAX_EMISSION.toFixed(3)}, 1.0);
 }
 `
