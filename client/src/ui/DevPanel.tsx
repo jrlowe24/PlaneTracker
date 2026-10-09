@@ -2,6 +2,7 @@ import { useEffect, useState, type FC } from 'react'
 
 import { config } from '../config'
 import { flightStatusStore } from '../data/flightConnection'
+import { weatherStore } from '../data/weather'
 import { tileStatusStore } from '../globe/tileStatus'
 import { useStore } from '../state/createStore'
 import { getSimulatedDate, settingsStore } from '../state/settings'
@@ -31,6 +32,8 @@ export const DevPanel: FC = () => {
   const exposure = useStore(settingsStore, s => s.exposure)
   const delayMs = useStore(settingsStore, s => s.interpolationDelayMs)
   const coverage = useStore(settingsStore, s => s.cloudCoverage)
+  const cloudSource = useStore(settingsStore, s => s.cloudSource)
+  const weather = useStore(weatherStore, s => s.sample)
   const aircraftCount = useStore(flightStatusStore, s => s.aircraftCount)
   const source = useStore(flightStatusStore, s => s.source)
   const connection = useStore(flightStatusStore, s => s.status)
@@ -122,21 +125,39 @@ export const DevPanel: FC = () => {
         />
       </label>
 
-      <label className='dev-row'>
-        <span>
-          Cloud coverage <b>{coverage.toFixed(2)}</b>
-        </span>
+      <label className='dev-row dev-inline'>
+        <span>Clouds from live weather</span>
         <input
-          type='range'
-          min={0}
-          max={1}
-          step={0.05}
-          value={coverage}
+          type='checkbox'
+          checked={cloudSource === 'weather'}
           onChange={e => {
-            settingsStore.set({ cloudCoverage: Number(e.target.value) })
+            settingsStore.set({ cloudSource: e.target.checked ? 'weather' : 'manual' })
           }}
         />
       </label>
+      {cloudSource === 'weather' ? (
+        <div className='dev-row muted'>
+          {weather == null
+            ? 'Waiting for weather…'
+            : `Cloud cover low ${weather.cloudCoverLow}% · mid ${weather.cloudCoverMid}% · high ${weather.cloudCoverHigh}% · ${weather.temperature.toFixed(0)}/${weather.dewPoint.toFixed(0)} °C`}
+        </div>
+      ) : (
+        <label className='dev-row'>
+          <span>
+            Cloud coverage <b>{coverage.toFixed(2)}</b>
+          </span>
+          <input
+            type='range'
+            min={0}
+            max={1}
+            step={0.05}
+            value={coverage}
+            onChange={e => {
+              settingsStore.set({ cloudCoverage: Number(e.target.value) })
+            }}
+          />
+        </label>
+      )}
 
       <div className='dev-row muted'>
         Flights: {source ?? '—'} ({connection}), {aircraftCount} aircraft

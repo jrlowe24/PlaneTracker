@@ -7,7 +7,8 @@ import {
   type HelloMessage,
   type RouteInfo,
   type RoutesMessage,
-  type Viewport
+  type Viewport,
+  type WeatherMessage
 } from '@windowseat/shared'
 import type { WebSocket } from 'ws'
 
@@ -15,6 +16,7 @@ import type { AircraftCache } from './cache'
 import { mergeViewports } from './regions'
 import type { RouteResolver } from './routes'
 import { ADSB_FI_ATTRIBUTION, type FollowFeed } from './sources/followFeed'
+import { OPEN_METEO_ATTRIBUTION, weatherCell, type WeatherService } from './weather'
 import type { FlightSource } from './sources/types'
 
 export interface HubOptions {
@@ -47,6 +49,9 @@ interface ClientSession {
   sentRoutes: Set<string>
   /** Aircraft this client follows (fast updates), if any. */
   followHex: string | null
+  /** Weather cell last sent and when. */
+  weatherCell: string | null
+  weatherSentAt: number
   resetPending: boolean
 }
 
@@ -104,7 +109,8 @@ export class Hub {
     private readonly source: FlightSource,
     options: Partial<HubOptions> = {},
     private readonly routes: RouteResolver | null = null,
-    private readonly followFeed: FollowFeed | null = null
+    private readonly followFeed: FollowFeed | null = null,
+    private readonly weather: WeatherService | null = null
   ) {
     this.options = { ...defaultHubOptions, ...options }
   }
@@ -148,6 +154,8 @@ export class Hub {
       sent: new Map(),
       sentRoutes: new Set(),
       followHex: null,
+      weatherCell: null,
+      weatherSentAt: 0,
       resetPending: false
     }
     this.clients.add(client)
@@ -202,7 +210,28 @@ export class Hub {
     this.cache.prune(now, this.options.staleAfterMs)
     for (const client of this.clients) {
       this.pushTo(client, now)
+      this.pushWeather(client, now)
     }
+  }
+
+  /** Sends weather for the client's view center when the cell changes or every 10 min. */
+  private pushWeather(client: ClientSession, now: number): void {
+    if (this.weather == null || client.viewport == null) return
+    const { lat, lon } = client.viewport
+    const cell = weatherCell(lat, lon)
+    if (cell === client.weatherCell && now - client.weatherSentAt < 10 * 60_000) return
+    client.weatherCell = cell
+    client.weatherSentAt = now
+    void this.weather.get(lat, lon).then(sample => {
+      if (sample == null || client.socket.readyState !== client.socket.OPEN) return
+      const message: WeatherMessage = {
+        type: 'weather',
+        serverTime: Date.now(),
+        weather: sample,
+        attribution: OPEN_METEO_ATTRIBUTION
+      }
+      client.socket.send(JSON.stringify(message))
+    })
   }
 
   private pushTo(client: ClientSession, now: number): void {

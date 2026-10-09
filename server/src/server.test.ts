@@ -16,6 +16,7 @@ import {
   viewportToRegions
 } from './regions'
 import { parseStandingDataRoute } from './routes'
+import { parseOpenMeteo, weatherCell } from './weather'
 import { normalizeReadsb } from './sources/adsbLol'
 import {
   adaptRequestInterval,
@@ -288,5 +289,28 @@ describe('parseStandingDataRoute', () => {
       parseStandingDataRoute('X', { _airports: [{ icao: 'KSEA', iata: '', lat: 47, lon: -122 }, { icao: 'EGLL', lat: 51, lon: 0 }] })
         ?.airports[0]?.iata
     ).toBeNull()
+  })
+})
+
+describe('Open-Meteo weather', () => {
+  it('parses current conditions and snaps cells', () => {
+    const sample = parseOpenMeteo({
+      latitude: 47.46,
+      longitude: -122.31,
+      elevation: 120,
+      current: {
+        time: '2026-10-09T06:15',
+        cloud_cover_low: 1,
+        cloud_cover_mid: 0,
+        cloud_cover_high: 100,
+        temperature_2m: 12.6,
+        dew_point_2m: 10,
+        freezing_level_height: 4150
+      }
+    })
+    expect(sample).toMatchObject({ cloudCoverHigh: 100, elevation: 120, freezingLevel: 4150 })
+    expect(sample?.time).toBe(Date.UTC(2026, 9, 9, 6, 15))
+    expect(weatherCell(47.46, -122.31)).toBe('47.50,-122.25')
+    expect(parseOpenMeteo({ latitude: 0, longitude: 0, elevation: 0 })).toBeNull()
   })
 })

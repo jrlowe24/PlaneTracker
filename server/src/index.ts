@@ -10,6 +10,7 @@ import { Hub } from './hub'
 import { RouteResolver } from './routes'
 import { AdsbLolSource } from './sources/adsbLol'
 import { FollowFeed } from './sources/followFeed'
+import { WeatherService } from './weather'
 import { ReplaySource } from './sources/replay'
 import { SyntheticSource } from './sources/synthetic'
 import type { FlightSource } from './sources/types'
@@ -59,7 +60,9 @@ const followEnabled = source instanceof AdsbLolSource && process.env.FOLLOW_FEED
 const followFeed = followEnabled
   ? new FollowFeed((states, receivedAt) => cache.upsert(states, receivedAt))
   : null
-const hub = new Hub(cache, source, {}, routes, followFeed)
+// Current weather (Open-Meteo) for the clouds; WEATHER=0 disables.
+const weather = process.env.WEATHER === '0' ? null : new WeatherService()
+const hub = new Hub(cache, source, {}, routes, followFeed, weather)
 
 const http = createServer((req, res) => {
   if (req.url === '/health') {

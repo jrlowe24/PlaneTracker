@@ -8,6 +8,7 @@ import type {
 
 import { createStore } from '../state/createStore'
 import { AircraftRegistry } from './aircraftRegistry'
+import { weatherStore } from './weather'
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
@@ -124,6 +125,8 @@ class FlightConnection {
           attributionUrl: message.attributionUrl,
           followAttribution: message.followAttribution
         })
+      } else if (message.type === 'weather') {
+        weatherStore.set({ sample: message.weather, attribution: message.attribution })
       } else if (message.type === 'routes') {
         for (const route of message.routes) this.routes.set(route.callsign, route)
       } else {

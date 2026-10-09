@@ -266,13 +266,25 @@ start. The committed `sea` fixture covers ~10 min of SEA/BFI/PAE traffic
   shadow maps to the terrain and their light shafts to the sky
   (`client/src/clouds/VolumetricClouds.tsx`). Layers are takram's defaults
   (cumulus at 750 m and 1,000 m, cirrus at 7,500 m).
-- **Coverage** comes from a `CloudWeather` provider
-  (`client/src/clouds/weather.ts`). Today: procedural (takram's tileable
-  curl/Perlin `LocalWeather`), global coverage from the dev slider (default
-  0.35), slowly drifting. This is the seam for real weather: a provider can
-  build a per-layer coverage texture for the area in view (satellite cloud
-  masks, or GFS/Open-Meteo low/mid/high cloud cover) without touching the
-  renderer.
+- **Live weather** (Open-Meteo, free, no key, CC BY 4.0): the server
+  fetches current low/mid/high cloud cover, 2 m temperature and dew point,
+  freezing level and ground elevation for the view center (0.25° cells,
+  cached 15 min; `server/src/weather.ts`, `WEATHER=0` disables) and sends
+  it to the client. `shared/src/weather.ts` maps it to layers: cumulus base
+  at the lifting condensation level (125 m per °C of temperature–dew point
+  spread above ground; Open-Meteo's `cloud_base` is null), thicker with more
+  cover; mid layer from ~3 km above the low tops; cirrus at freezing level
+  + 4.5 km (7–11 km). Changes blend over a few seconds.
+- **Per-layer coverage**: takram has one global coverage for all layers, so
+  cover is baked into our own coverage texture
+  (`client/src/clouds/coverageTexture.ts`): one tileable fBm channel per
+  layer (cumulus blobs, broad mid sheets, streaky cirrus), rank-transformed
+  to a uniform distribution and offset so exactly the forecast fraction of
+  texels crosses the cloud threshold at a fixed global coverage. Layer
+  shapes stay takram's defaults (re-applied per frame because `<Clouds>`
+  resets layers after mount).
+- The dev panel shows the current cover and can switch to a manual coverage
+  slider.
 - **Sky vs. stars**: the clouds story draws the sky in post
   (`AerialPerspective sky`) so light shafts reach it, but that replaces the
   `Stars`. We keep `<Sky/>` + `<Stars/>` in the scene and switch
@@ -401,6 +413,8 @@ page: N)`) show how many sessions the page has created.
   shown at all times while adsb.lol (or a replay of it) is the source.
 - **adsb.fi**: fast updates for followed aircraft, credited while
   following.
+- **Open-Meteo**: weather for the clouds ("Weather: Open-Meteo.com (CC BY
+  4.0)" shown while clouds use live weather).
 - **Routes**: vradarserver standing data (CC0), served by adsb.lol.
 - **EGM96**: geoid data from NGA (public domain), sampled via
   `egm96-universal` (MIT).

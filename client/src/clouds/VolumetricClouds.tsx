@@ -1,15 +1,22 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import type { CloudsEffect } from '@takram/three-clouds'
-import { CloudLayer, Clouds } from '@takram/three-clouds/r3f'
-import { WGS84_A } from '@windowseat/shared'
+import { Clouds } from '@takram/three-clouds/r3f'
+import {
+  cloudLayersFromWeather,
+  geoidHeight,
+  WGS84_A,
+  type CloudWeatherSpec
+} from '@windowseat/shared'
 import { useEffect, useMemo, useRef, type FC } from 'react'
 
 import { detailedHexes } from '../aircraft/detailState'
+import { smoothingFactor } from '../aircraft/motion'
+import { weatherStore } from '../data/weather'
 import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
-import { createProceduralWeather } from './weather'
+import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
 
 /**
  * Above this camera altitude the clouds are skipped: takram's clouds don't
@@ -17,35 +24,73 @@ import { createProceduralWeather } from './weather'
  * only cost frame time.
  */
 const MAX_CAMERA_ALTITUDE = 120_000
+/** Weather changes (new data, panning to another cell) blend over ~this many seconds. */
+const BLEND_TIME_CONSTANT = 4
+
+/** Manual mode: takram's default layer heights at the slider's coverage. */
+function manualSpec(coverage: number): CloudWeatherSpec {
+  return {
+    coverage,
+    low: { altitude: 750, height: 650, coverage },
+    mid: { altitude: 1000, height: 1200, coverage },
+    high: { altitude: 7500, height: 500, coverage: 0.5 }
+  }
+}
+
+/** Layer parameters the renderer blends toward. */
+interface LayerTarget {
+  altitude: number
+  height: number
+  /** 0 … 1, written into the coverage texture channel. */
+  coverage: number
+}
+
+function layerTargets(spec: CloudWeatherSpec, geoid: number): [LayerTarget, LayerTarget, LayerTarget] {
+  return [spec.low, spec.mid, spec.high].map(layer => ({
+    altitude: layer.altitude + geoid,
+    height: layer.height,
+    coverage: layer.coverage
+  })) as [LayerTarget, LayerTarget, LayerTarget]
+}
+
+/** Per-layer density (takram defaults; cirrus thickens a little with cover). */
+const LOW_MID_DENSITY = 0.2
+const CIRRUS_DENSITY = 0.004
 
 /**
  * Volumetric clouds (takram three-clouds), following its 3DTilesRenderer
  * story: placed in the EffectComposer before AerialPerspective, which
  * composites them (overlay), applies their shadows to the terrain and their
- * light shafts to the sky. Coverage comes from a CloudWeather provider.
+ * light shafts to the sky.
+ *
+ * Layer heights and amounts come from the current weather at the view
+ * center (Open-Meteo via the server: low/mid/high cloud cover, cumulus base
+ * from the temperature–dew point spread), blended smoothly as data or the
+ * view changes. The cover of each layer is baked into a per-layer coverage
+ * texture (see coverageTexture.ts). A dev toggle switches to manual
+ * coverage.
  */
 export const VolumetricClouds: FC = () => {
   const camera = useThree(({ camera }) => camera)
   const level = useStore(qualityStore, s => s.level)
-  const coverage = useStore(settingsStore, s => s.cloudCoverage)
   const preset = QUALITY_PRESETS[level]
-  const weather = useMemo(() => createProceduralWeather(), [])
+  const coverageTexture = useMemo(() => new CoverageTexture(), [])
   useEffect(
     () => () => {
-      weather.dispose()
+      coverageTexture.dispose()
     },
-    [weather]
+    [coverageTexture]
   )
 
   const ref = useRef<CloudsEffect>(null)
-  useEffect(() => {
-    ref.current?.localWeatherVelocity.set(weather.velocity[0], weather.velocity[1])
-  }, [weather])
+  const initialized = useRef(false)
+  const blended = useRef<[number, number, number]>([0, 0, 0])
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     const effect = ref.current
     if (effect == null) return
     effect.skipRendering = camera.position.length() - WGS84_A > MAX_CAMERA_ALTITUDE
+
     // Temporal upscaling reprojects cloud history from previous frames. An
     // aircraft moving relative to the clouds (followed, taxiing, passing
     // close by) breaks that history at its edges: halos and interlaced
@@ -57,6 +102,44 @@ export const VolumetricClouds: FC = () => {
       effect.temporalUpscale = !closeUp
       effect.resolutionScale = closeUp ? 0.5 : 1
     }
+
+    const settings = settingsStore.get()
+    const sample = weatherStore.get().sample
+    const live = settings.cloudSource === 'weather' && sample != null
+    const spec = live ? cloudLayersFromWeather(sample) : manualSpec(settings.cloudCoverage)
+    const geoid = live ? geoidHeight(sample.lat, sample.lon) : 0
+    const targets = layerTargets(spec, geoid)
+
+    // Blend toward the target (snap on the first frame).
+    const k = initialized.current ? smoothingFactor(Math.min(delta, 0.1), BLEND_TIME_CONSTANT) : 1
+    initialized.current = true
+    effect.coverage = GLOBAL_COVERAGE
+    const layers = effect.cloudLayers
+    const cover = blended.current
+    for (let i = 0; i < 3; ++i) {
+      const layer = layers[i]
+      const t = targets[i]!
+      if (layer == null) continue
+      layer.altitude += (t.altitude - layer.altitude) * k
+      layer.height += (t.height - layer.height) * k
+      cover[i] = cover[i]! + (t.coverage - cover[i]!) * k
+    }
+    // Static shape parameters are re-applied every frame: <Clouds> resets
+    // its layers to takram's defaults after mount.
+    for (let i = 0; i < 3; ++i) {
+      const layer = layers[i]
+      if (layer == null) continue
+      layer.weatherExponent = 1
+      layer.coverageFilterWidth = FILTER_WIDTH
+      layer.shapeAlteringBias = 0.35
+      layer.densityScale = i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : LOW_MID_DENSITY
+      layer.shapeAmount = i === 2 ? 0.4 : 1
+      layer.shapeDetailAmount = i === 2 ? 0 : 1
+      layer.shadow = i < 2 && QUALITY_PRESETS[qualityStore.get().level].cloudShadows
+    }
+    // Per-layer cover lives in the coverage texture (rewritten only when it
+    // changes by more than half a percent).
+    coverageTexture.setCoverage(cover[0]!, cover[1]!, cover[2]!)
   })
 
   if (preset.clouds === false) return null
@@ -64,52 +147,21 @@ export const VolumetricClouds: FC = () => {
     <Clouds
       ref={effect => {
         ref.current = effect
+        if (effect == null) {
+          initialized.current = false
+          return
+        }
+        // Slow drift of the coverage pattern (wind).
+        effect.localWeatherVelocity.set(0.00002, 0.000005)
       }}
       qualityPreset={preset.clouds}
-      coverage={coverage}
       lightShafts={preset.lightShafts}
-      localWeatherTexture={weather.localWeatherTexture}
+      localWeatherTexture={coverageTexture.texture}
       // Self-hosted copies of takram's textures (MIT); the STBN noise still
       // comes from takram's default URL.
       shapeTexture='/clouds/shape.bin'
       shapeDetailTexture='/clouds/shape_detail.bin'
       turbulenceTexture='/clouds/turbulence.png'
-      disableDefaultLayers
-    >
-      {/* takram's default layers, with shadows controlled by the preset. */}
-      <CloudLayer
-        channel='r'
-        altitude={750}
-        height={650}
-        densityScale={0.2}
-        shapeAmount={1}
-        shapeDetailAmount={1}
-        weatherExponent={1}
-        shapeAlteringBias={0.35}
-        coverageFilterWidth={0.6}
-        shadow={preset.cloudShadows}
-      />
-      <CloudLayer
-        channel='g'
-        altitude={1000}
-        height={1200}
-        densityScale={0.2}
-        shapeAmount={1}
-        shapeDetailAmount={1}
-        weatherExponent={1}
-        shapeAlteringBias={0.35}
-        coverageFilterWidth={0.6}
-        shadow={preset.cloudShadows}
-      />
-      <CloudLayer
-        channel='b'
-        altitude={7500}
-        height={500}
-        densityScale={0.003}
-        shapeAmount={0.4}
-        shapeDetailAmount={0}
-        coverageFilterWidth={0.5}
-      />
-    </Clouds>
+    />
   )
 }

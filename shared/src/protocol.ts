@@ -1,5 +1,6 @@
 import type { AircraftState } from './aircraft'
 import type { RouteInfo } from './routes'
+import type { WeatherSample } from './weather'
 
 /**
  * WebSocket protocol between client and server (JSON text frames).
@@ -61,7 +62,15 @@ export interface RoutesMessage {
   routes: RouteInfo[]
 }
 
-export type ServerMessage = HelloMessage | AircraftMessage | RoutesMessage
+/** Current weather for the client's view center (drives the clouds). */
+export interface WeatherMessage {
+  type: 'weather'
+  serverTime: number
+  weather: WeatherSample
+  attribution: Attribution
+}
+
+export type ServerMessage = HelloMessage | AircraftMessage | RoutesMessage | WeatherMessage
 
 export type AircraftTuple = [
   hex: string,

@@ -13,7 +13,9 @@ export interface Settings {
    * almost always a sample on each side to interpolate between.
    */
   interpolationDelayMs: number
-  /** Global cloud coverage, 0 (clear) … 1 (overcast). */
+  /** Clouds from live weather (Open-Meteo) or the manual coverage below. */
+  cloudSource: 'weather' | 'manual'
+  /** Manual cloud coverage, 0 (clear) … 1 (overcast). */
   cloudCoverage: number
   showDevPanel: boolean
 }
@@ -30,6 +32,7 @@ export const settingsStore = createStore<Settings>({
   timeOffsetMs: initialTimeOffsetMs(),
   exposure: 10,
   interpolationDelayMs: 12_000,
+  cloudSource: 'weather',
   cloudCoverage: 0.35,
   showDevPanel: import.meta.env.DEV
 })

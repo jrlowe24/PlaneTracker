@@ -3,7 +3,10 @@ import { useEffect, useState, type FC } from 'react'
 import { config } from '../config'
 import { flightStatusStore } from '../data/flightConnection'
 import { getGoogleTiles } from '../globe/googleTiles'
+import { weatherStore } from '../data/weather'
 import { cameraModeStore } from '../state/cameraMode'
+import { QUALITY_PRESETS, qualityStore } from '../state/quality'
+import { settingsStore } from '../state/settings'
 import { useStore } from '../state/createStore'
 
 /**
@@ -56,6 +59,26 @@ const GoogleAttribution: FC = () => {
   )
 }
 
+/** Open-Meteo (CC BY 4.0) while live weather drives the clouds. */
+const WeatherCredit: FC = () => {
+  const attribution = useStore(weatherStore, s => s.attribution)
+  const live = useStore(settingsStore, s => s.cloudSource === 'weather')
+  const clouds = useStore(qualityStore, s => QUALITY_PRESETS[s.level].clouds !== false)
+  if (attribution == null || !live || !clouds) return null
+  return (
+    <>
+      {' · '}
+      {attribution.url != null ? (
+        <a href={attribution.url} target='_blank' rel='noreferrer'>
+          {attribution.text}
+        </a>
+      ) : (
+        attribution.text
+      )}
+    </>
+  )
+}
+
 /** Attribution required by the active flight data source (adsb.lol: ODbL). */
 const FlightDataAttribution: FC = () => {
   const attribution = useStore(flightStatusStore, s => s.attribution)
@@ -72,6 +95,7 @@ const FlightDataAttribution: FC = () => {
       ) : (
         attribution
       )}
+      <WeatherCredit />
       {following && follow != null && (
         <>
           {' · '}
