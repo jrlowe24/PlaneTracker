@@ -30,6 +30,7 @@ export const DevPanel: FC = () => {
   const offset = useStore(settingsStore, s => s.timeOffsetMs)
   const exposure = useStore(settingsStore, s => s.exposure)
   const delayMs = useStore(settingsStore, s => s.interpolationDelayMs)
+  const coverage = useStore(settingsStore, s => s.cloudCoverage)
   const aircraftCount = useStore(flightStatusStore, s => s.aircraftCount)
   const source = useStore(flightStatusStore, s => s.source)
   const connection = useStore(flightStatusStore, s => s.status)
@@ -117,6 +118,22 @@ export const DevPanel: FC = () => {
           value={delayMs / 1000}
           onChange={e => {
             settingsStore.set({ interpolationDelayMs: Number(e.target.value) * 1000 })
+          }}
+        />
+      </label>
+
+      <label className='dev-row'>
+        <span>
+          Cloud coverage <b>{coverage.toFixed(2)}</b>
+        </span>
+        <input
+          type='range'
+          min={0}
+          max={1}
+          step={0.05}
+          value={coverage}
+          onChange={e => {
+            settingsStore.set({ cloudCoverage: Number(e.target.value) })
           }}
         />
       </label>

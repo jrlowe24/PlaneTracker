@@ -262,21 +262,26 @@ function fuselage(p: AirframeParams, segments: number): BufferGeometry {
   return geometry
 }
 
-/** A tapered, swept panel in the XZ plane, extruded along −Y by `thickness`. */
+/**
+ * A tapered, swept panel in the XZ plane, extruded along −Y by `thickness`.
+ * `from`/`to` select a chordwise strip (0 = leading edge, 1 = trailing edge).
+ */
 function panel(
   span: number,
   rootChord: number,
   tipChord: number,
   sweepDeg: number,
-  thickness: number
+  thickness: number,
+  from = 0,
+  to = 1
 ): BufferGeometry {
   const sweep = Math.tan(sweepDeg * RAD) * span
   const shape = new Shape()
   // Shape coordinates: x = spanwise, y = forward.
-  shape.moveTo(0, 0)
-  shape.lineTo(span, -sweep)
-  shape.lineTo(span, -sweep - tipChord)
-  shape.lineTo(0, -rootChord)
+  shape.moveTo(0, -from * rootChord)
+  shape.lineTo(span, -sweep - from * tipChord)
+  shape.lineTo(span, -sweep - to * tipChord)
+  shape.lineTo(0, -to * rootChord)
   shape.closePath()
   const geometry = new ExtrudeGeometry(shape, {
     depth: thickness,
@@ -319,6 +324,10 @@ function mirrored(make: () => BufferGeometry): BufferGeometry[] {
 const PAINT = {
   fuselage: 0xf1f1ef,
   wing: 0xc3c8ce,
+  // Bare-metal leading edge slats and lighter flaps give the wing structure
+  // in the window view.
+  leadingEdge: 0x8e949c,
+  flap: 0xd6d9dd,
   tail: 0xe6e7e8,
   engine: 0xa7abb1,
   propeller: 0x2f3134,
@@ -380,21 +389,30 @@ export function buildAirframe(
 
   if (p.wingSpan > 0) {
     const semiSpan = p.wingSpan / 2 - r * 0.6
-    add(
-      'wing',
-      ...mirrored(() => {
-        const wing = panel(
-          semiSpan,
-          p.wingRootChord,
-          p.wingTipChord,
-          p.wingSweep,
-          p.wingThickness
-        )
-        wing.rotateZ(p.wingDihedral * RAD)
-        wing.translate(r * 0.6, p.wingMount * r * 0.85, p.wingRootZ)
-        return wing
-      })
-    )
+    const strips: Array<[Paint, number, number]> = [
+      ['leadingEdge', 0, 0.12],
+      ['wing', 0.12, 0.78],
+      ['flap', 0.78, 1]
+    ]
+    for (const [paint, from, to] of strips) {
+      add(
+        paint,
+        ...mirrored(() => {
+          const wing = panel(
+            semiSpan,
+            p.wingRootChord,
+            p.wingTipChord,
+            p.wingSweep,
+            p.wingThickness,
+            from,
+            to
+          )
+          wing.rotateZ(p.wingDihedral * RAD)
+          wing.translate(r * 0.6, p.wingMount * r * 0.85, p.wingRootZ)
+          return wing
+        })
+      )
+    }
   }
 
   // Horizontal tail.

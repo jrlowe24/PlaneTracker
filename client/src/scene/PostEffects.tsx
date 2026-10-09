@@ -1,21 +1,38 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { SMAA, ToneMapping } from '@react-three/postprocessing'
 import type { LightingMaskPass } from '@takram/three-atmosphere'
-import { AerialPerspective, LightingMask } from '@takram/three-atmosphere/r3f'
+import {
+  AerialPerspective,
+  AtmosphereContext,
+  LightingMask
+} from '@takram/three-atmosphere/r3f'
 import { Dithering, LensFlare } from '@takram/three-geospatial-effects/r3f'
 import {
   EffectMaterial,
   ToneMappingMode,
   type EffectComposer as EffectComposerImpl
 } from 'postprocessing'
-import { useEffect, useRef, type FC } from 'react'
+import { useContext, useEffect, useRef, useState, type FC } from 'react'
+import { Vector3 } from 'three'
 
 import { AIRCRAFT_LAYER } from '../aircraft/layers'
+import { VolumetricClouds } from '../clouds/VolumetricClouds'
+import { useStore } from '../state/createStore'
+import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { EffectComposer } from './EffectComposer'
 
+const up = new Vector3()
+
 export const PostEffects: FC = () => {
   const camera = useThree(({ camera }) => camera)
+  const { transientStates } = useContext(AtmosphereContext)
+  const cloudsEnabled = useStore(qualityStore, s => QUALITY_PRESETS[s.level].clouds !== false)
+  const lensFlare = useStore(qualityStore, s => QUALITY_PRESETS[s.level].lensFlare)
+  // With clouds, the sky is drawn in post while the sun is up so cloud light
+  // shafts reach it; at night the scene Sky + Stars are kept (sky-in-post
+  // would replace the stars, and there are no light shafts at night).
+  const [sunUp, setSunUp] = useState(true)
   const composerRef = useRef<EffectComposerImpl>(null)
   const lightingMaskRef = useRef<LightingMaskPass>(null)
 
@@ -44,6 +61,11 @@ export const PostEffects: FC = () => {
     if (lightingMaskRef.current != null) {
       lightingMaskRef.current.mainCamera = camera
     }
+    if (transientStates != null) {
+      up.copy(camera.position).normalize()
+      const nextSunUp = transientStates.sunDirection.dot(up) > -0.05
+      if (nextSunUp !== sunUp) setSunUp(nextSunUp)
+    }
   })
 
   return (
@@ -56,13 +78,15 @@ export const PostEffects: FC = () => {
         perspective (transmittance + inscatter) still applies to both.
       */}
       <LightingMask ref={lightingMaskRef} selectionLayer={AIRCRAFT_LAYER} />
+      <VolumetricClouds />
       <AerialPerspective
+        sky={cloudsEnabled && sunUp}
         sunLight
         skyLight
         correctGeometricError
         albedoScale={2 / Math.PI}
       />
-      <LensFlare />
+      <>{lensFlare ? <LensFlare /> : null}</>
       <ToneMapping mode={ToneMappingMode.AGX} />
       <SMAA />
       <Dithering />

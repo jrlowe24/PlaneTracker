@@ -28,6 +28,7 @@ import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { getSimulatedDate } from '../state/settings'
 import { PostEffects } from './PostEffects'
+import { QualityApplier } from './QualityApplier'
 
 /** Default view: over Lake Washington, looking west across downtown Seattle to the Olympics. */
 const DEFAULT_VIEW = {
@@ -175,6 +176,7 @@ export const Scene: FC = () => {
       <AircraftSystem />
       <CameraRig />
       <PostEffects />
+      <QualityApplier />
       {import.meta.env.DEV && <DevBench />}
     </Atmosphere>
   )

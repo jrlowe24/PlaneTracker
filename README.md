@@ -5,8 +5,9 @@ air on a photorealistic globe (Google Photorealistic 3D Tiles), with physically
 based atmosphere and real sun position. Pick a plane, follow it, then look
 out of its window.
 
-> Status: milestones 1–4 (globe, data pipeline, motion + chase cam, window
-> view + models). Clouds and polish come in milestone 5.
+> Status: milestones 1–5 done (globe, data pipeline, motion + chase cam,
+> window view + models, volumetric clouds + quality presets). Night city
+> lights are proposed below, not built yet.
 
 ## Repository layout
 
@@ -218,6 +219,66 @@ start. The committed `sea` fixture covers ~10 min of SEA/BFI/PAE traffic
   down, ±35°/±20° mouse-look, FOV 60°. A CSS overlay draws the cabin wall,
   the rounded window, an inner shadow and a faint reflection.
 
+## Clouds
+
+- Volumetric clouds from `@takram/three-clouds`, following its
+  3DTilesRenderer story: `<Clouds>` sits in the EffectComposer before
+  `AerialPerspective`, which composites them (overlay), applies their Beer
+  shadow maps to the terrain and their light shafts to the sky
+  (`client/src/clouds/VolumetricClouds.tsx`). Layers are takram's defaults
+  (cumulus at 750 m and 1,000 m, cirrus at 7,500 m).
+- **Coverage** comes from a `CloudWeather` provider
+  (`client/src/clouds/weather.ts`). Today: procedural (takram's tileable
+  curl/Perlin `LocalWeather`), global coverage from the dev slider (default
+  0.35), slowly drifting. This is the seam for real weather: a provider can
+  build a per-layer coverage texture for the area in view (satellite cloud
+  masks, or GFS/Open-Meteo low/mid/high cloud cover) without touching the
+  renderer.
+- **Sky vs. stars**: the clouds story draws the sky in post
+  (`AerialPerspective sky`) so light shafts reach it, but that replaces the
+  `Stars`. We keep `<Sky/>` + `<Stars/>` in the scene and switch
+  `AerialPerspective sky` on only while the sun is up (stars aren't visible
+  then and there are no light shafts at night).
+- Clouds are skipped above 120 km camera altitude (takram's clouds don't
+  support views from space yet).
+- Shape, shape-detail and turbulence textures are self-hosted copies of
+  takram's (MIT) in `client/public/clouds/`; the blue-noise (STBN) texture is
+  still fetched from takram's GitHub media at runtime.
+
+## Quality presets
+
+`client/src/state/quality.ts`, picker at the bottom right (top right on
+phones), `?quality=low|medium|high`, remembered in localStorage.
+
+| Preset | Clouds | Cloud shadows | Light shafts | Lens flare | Tile error target | Max DPR |
+| ------ | ------ | ------------- | ------------ | ---------- | ----------------- | ------- |
+| Low    | off    | –             | –            | off        | 20 px             | 1       |
+| Medium | medium | on            | off          | off        | 12 px             | 1.5     |
+| High   | high   | on            | on           | on         | 6 px              | 2       |
+
+**Auto** picks Low on phones/tablets (coarse pointer + small screen; clouds
+off), High on Apple silicon and discrete GPUs, Medium otherwise, Low on
+software renderers.
+
+### Performance (Apple M3 Pro, Chrome, 1280×800 CSS px window, replay data)
+
+Measured with requestAnimationFrame in headless Chrome on the real GPU
+(capped at 60 by vsync):
+
+| View                       | Low | Medium | High  |
+| -------------------------- | --- | ------ | ----- |
+| Seattle overview, clouds   | 60  | 60     | 47–50 |
+| Chase cam through clouds   | –   | –      | 49    |
+| Window view                | 60  | **60** | 52    |
+| Phone (390×844, auto=Low)  | 60  | –      | –     |
+
+12,000 synthetic aircraft + tiles + post: ~12.7 ms/frame (GPU-synced
+benchmark). Profiling at High (2560×1600 px, GPU-synced, by subtraction):
+tiles ~5.5 ms, lens flare ~2 ms; the clouds cost is mostly hidden by their
+temporal upscaling (turning upscaling off drops Medium window view from 60 to
+34 fps, so it stays on). Fixes applied: lens flare only on High, DPR caps and
+coarser tile error targets per preset, all deep imports pre-bundled.
+
 ## Aircraft models
 
 - `client/src/aircraft/typeClasses.ts` maps ICAO type designators to a class
@@ -339,6 +400,33 @@ takram's storybook still pins `3d-tiles-renderer` 0.4.24. We use 0.5.3 for
 its traversal and fade fixes. Its published packages don't import
 3d-tiles-renderer, so the two are decoupled.
 
+## Night city lights (proposal, not built)
+
+Google's imagery is daytime only, so the night side is black. Plan:
+
+- **Where it slots in**: a custom postprocessing effect right after
+  `AerialPerspective` (post-lighting radiance, before lens flare and tone
+  mapping). It reconstructs ECEF position from depth (same camera uniforms
+  `AerialPerspective` uses via `adoptCameraSettings`), converts to
+  latitude/longitude, samples the light map, and adds emissive radiance
+  × a night factor from the sun elevation at that point (fading through
+  civil twilight). It must also apply the atmosphere's transmittance along
+  the view ray (takram exports its Bruneton shader functions) and attenuate
+  by the clouds' overlay alpha (available on the atmosphere context), since
+  `AerialPerspective` composites the clouds before our effect runs.
+- **Data**: NASA Black Marble 2016 grayscale (3 km, public domain with
+  credit) as one compressed equirectangular texture for cruise altitude
+  (~8k × 4k, R8/BC4, ~16–32 MB GPU); below ~50 km camera altitude, a tile
+  pyramid cut from the 500 m GeoTIFFs with GDAL (`gdal2tiles`), loaded like
+  raster tiles for the view. Our own color ramp (warm sodium for dim
+  areas, whiter LED for bright cores) instead of NASA's grading. Colorado
+  School of Mines VIIRS VNL v2.2 annual composites are the more recent
+  alternative (raw radiance, needs our own tone mapping, free account).
+- **Effort**: ~2–3 days for the global texture + effect; another 2–3 for the
+  GDAL pyramid and streaming. Proposed as the next milestone; it needs a
+  decision on hosting the texture/tile files (~100 MB–1 GB for the 500 m
+  pyramid) and adds NASA attribution on screen.
+
 ## Known limitations
 
 - **Coverage**: adsb.lol's free API is per-region (≤ 250 nm) and tightly
@@ -348,7 +436,16 @@ its traversal and fade fixes. Its published packages don't import
   (OpenSky `states/all` with an account, or a paid feed) can be added as a
   `FlightSource`. The 10,000+ aircraft path is exercised with `SYNTH`.
 - **Night side**: Google tiles carry daytime imagery only, so at night the
-  ground is dark. Night lights are planned (see milestone 5 notes).
+  ground is dark (see the night lights proposal).
+- Clouds: takram's temporal upscaling ghosts slightly on moving aircraft;
+  the cloud base sits at fixed ellipsoid altitudes (so clouds look low over
+  high terrain); no clouds from space; local weather tiling has seams
+  (all documented upstream).
+- From orbit the sky shows a bluish haze over part of the black space
+  background (atmosphere sky rendering; not the lens flare).
+- Window view: procedural placeholders have no cabin interior or window
+  geometry; the CSS frame hides that. Detailed glTF models with seat
+  positions per type would improve it.
 - The aerial perspective has a known faint horizon line artifact at some
   angles (documented upstream in takram's README).
 - Coarse tiles can be tens of meters off in height until finer tiles load;

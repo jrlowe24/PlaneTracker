@@ -1,9 +1,9 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { SkyLight, SunLight } from '@takram/three-atmosphere/r3f'
+import { AtmosphereContext, SkyLight, SunLight } from '@takram/three-atmosphere/r3f'
 import { ecefToGeodetic } from '@windowseat/shared'
 import type { SunDirectionalLight } from '@takram/three-atmosphere'
-import { useEffect, useMemo, useRef, type FC } from 'react'
-import { Vector3, type Group, type PerspectiveCamera } from 'three'
+import { useContext, useEffect, useMemo, useRef, type FC } from 'react'
+import { Vector3, type Group, type HemisphereLight, type PerspectiveCamera } from 'three'
 
 import { flightConnection } from '../data/flightConnection'
 import { computeViewState, type ViewState } from '../data/viewport'
@@ -14,6 +14,10 @@ import { DetailedAircraft } from './DetailedAircraft'
 import { GroundClamp } from './GroundClamp'
 import { lightAnchor } from './lightAnchor'
 import { pickAircraft } from './picking'
+
+/** Average ground albedo for the bounce light. */
+const GROUND_ALBEDO = 0.18
+const upScratch = new Vector3()
 
 /** How often the viewport is re-evaluated and, if it moved, sent. */
 const VIEWPORT_INTERVAL_S = 0.5
@@ -34,6 +38,7 @@ function viewportChanged(a: ViewState, b: ViewState | null): boolean {
 export const AircraftSystem: FC = () => {
   const camera = useThree(({ camera }) => camera as PerspectiveCamera)
   const gl = useThree(({ gl }) => gl)
+  const { transientStates } = useContext(AtmosphereContext)
 
   useEffect(() => {
     flightConnection.start()
@@ -65,6 +70,7 @@ export const AircraftSystem: FC = () => {
   // observer's position near the terminator; sky light on altitude).
   const sunRef = useRef<SunDirectionalLight>(null)
   const skyGroupRef = useRef<Group>(null)
+  const bounceRef = useRef<HemisphereLight>(null)
   useFrame(() => {
     const { mode, targetHex } = cameraModeStore.get()
     const followed =
@@ -91,6 +97,16 @@ export const AircraftSystem: FC = () => {
     if (group != null) {
       group.position.copy(lightAnchor)
       group.updateMatrixWorld()
+    }
+    // Sunlight reflected off the ground lights undersides (a high wing seen
+    // from the cabin, bellies from below): a hemisphere light whose ground
+    // color is the sun color × a typical ground albedo × sun elevation.
+    const bounce = bounceRef.current
+    if (sun != null && bounce != null && transientStates != null) {
+      upScratch.copy(lightAnchor).normalize()
+      const elevation = Math.max(0, transientStates.sunDirection.dot(upScratch))
+      bounce.position.copy(upScratch)
+      bounce.groundColor.copy(sun.color).multiplyScalar(GROUND_ALBEDO * elevation)
     }
   }, -1)
 
@@ -129,6 +145,7 @@ export const AircraftSystem: FC = () => {
   return (
     <>
       <SunLight ref={sunRef} />
+      <hemisphereLight ref={bounceRef} args={[0x000000, 0x000000, 1]} />
       <group ref={skyGroupRef}>
         <SkyLight />
       </group>

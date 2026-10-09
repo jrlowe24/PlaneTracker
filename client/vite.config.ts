@@ -23,7 +23,9 @@ export default defineConfig({
     include: [
       'three/addons/utils/BufferGeometryUtils.js',
       'three/addons/loaders/GLTFLoader.js',
-      'three/addons/loaders/DRACOLoader.js'
+      'three/addons/loaders/DRACOLoader.js',
+      '@takram/three-clouds',
+      '@takram/three-clouds/r3f'
     ]
   },
   worker: {

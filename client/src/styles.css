@@ -219,6 +219,12 @@ body,
 }
 
 @media (max-width: 640px) {
+  /* Keep the attribution line clear on narrow screens. */
+  .quality-menu {
+    top: max(10px, env(safe-area-inset-top));
+    bottom: auto;
+  }
+
   .aircraft-panel {
     top: auto;
     bottom: 56px;
@@ -325,4 +331,27 @@ body,
   .window-overlay {
     transition: none;
   }
+}
+
+.quality-menu {
+  position: absolute;
+  right: 12px;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  z-index: 101;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 4px 6px 4px 8px;
+  border-radius: 6px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(8px);
+}
+
+.quality-menu select {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: none;
 }

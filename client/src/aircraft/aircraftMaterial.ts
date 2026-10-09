@@ -40,6 +40,11 @@ vShading = ${instanced ? 'instanceShading' : 'aircraftShading'};`
         'getDirectionalLightInfo( directionalLight, directLight );\n\t\tdirectLight.color *= vShading.y;'
       )
       .replace(
+        // Ground bounce (hemisphere light) comes from sunlit ground.
+        'irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );',
+        'irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal ) * vShading.y;'
+      )
+      .replace(
         'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal );',
         'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal ) * vShading.z;'
       )
