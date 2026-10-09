@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, type FC } from 'react'
 import type { Object3D } from 'three'
 
 import { getGoogleTiles } from './googleTiles'
-import { TileLookahead } from './lookahead'
+import { TileLookahead, TileSurround } from './lookahead'
 import type { TileNormalsPlugin } from './TileNormalsPlugin'
 
 export interface GoogleTilesGlobeProps {
@@ -50,16 +50,19 @@ export const GoogleTilesGlobe: FC<GoogleTilesGlobeProps> = ({
   // Default priority: runs after the controls (-1) moved the camera and
   // before the effect composer (1) renders.
   const lookahead = useMemo(() => new TileLookahead(tiles), [tiles])
+  const surround = useMemo(() => new TileSurround(tiles), [tiles])
   useEffect(
     () => () => {
       lookahead.dispose()
+      surround.dispose()
     },
-    [lookahead]
+    [lookahead, surround]
   )
   useFrame(() => {
     camera.updateMatrixWorld()
     tiles.setResolutionFromRenderer(camera, gl)
     lookahead.update(camera, gl)
+    surround.update(camera, gl)
     tiles.update()
   })
 

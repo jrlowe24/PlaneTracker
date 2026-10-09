@@ -1,5 +1,5 @@
 import type { TilesRenderer } from '3d-tiles-renderer'
-import { PerspectiveCamera, Vector2, Vector3, type Camera, type WebGLRenderer } from 'three'
+import { PerspectiveCamera, Quaternion, Vector2, Vector3, type Camera, type WebGLRenderer } from 'three'
 
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
@@ -66,3 +66,59 @@ export class TileLookahead {
 }
 
 const drawingBuffer = new Vector2()
+
+/** Below this camera altitude (m) the surround ring is kept loaded. */
+const SURROUND_MAX_ALTITUDE = 50_000
+/** Surround cameras render tiles for this fraction of the screen resolution. */
+const SURROUND_RESOLUTION_SCALE = 0.3
+const SURROUND_YAWS = [Math.PI / 2, Math.PI, -Math.PI / 2]
+
+const up = new Vector3()
+const yawQuaternion = new Quaternion()
+
+/**
+ * Keeps terrain all around the camera loaded, like flight simulators do:
+ * three extra low-resolution cameras look left, right and behind (rotated
+ * about the local vertical from the main view). Tiles they need stay "in
+ * use", so they're neither evicted from the cache nor missing when you turn
+ * around: coarse terrain is there instantly and refines in view.
+ */
+export class TileSurround {
+  private readonly cameras = SURROUND_YAWS.map(() => new PerspectiveCamera(90, 1.5, 1, 1e7))
+  private active = false
+
+  constructor(private readonly tiles: TilesRenderer) {}
+
+  update(mainCamera: Camera, gl: WebGLRenderer): void {
+    const altitude = mainCamera.position.length() - 6_371_000
+    const wanted = mainCamera instanceof PerspectiveCamera && altitude < SURROUND_MAX_ALTITUDE
+    if (wanted !== this.active) {
+      this.active = wanted
+      for (const camera of this.cameras) {
+        if (wanted) this.tiles.setCamera(camera)
+        else this.tiles.deleteCamera(camera)
+      }
+    }
+    if (!wanted) return
+    const main = mainCamera as PerspectiveCamera
+    up.copy(main.position).normalize()
+    const size = gl.getDrawingBufferSize(drawingBuffer)
+    const width = Math.max(1, Math.round(size.x * SURROUND_RESOLUTION_SCALE))
+    const height = Math.max(1, Math.round(size.y * SURROUND_RESOLUTION_SCALE))
+    this.cameras.forEach((camera, i) => {
+      camera.near = main.near
+      camera.far = main.far
+      camera.position.copy(main.position)
+      yawQuaternion.setFromAxisAngle(up, SURROUND_YAWS[i]!)
+      camera.quaternion.copy(main.quaternion).premultiply(yawQuaternion)
+      camera.updateProjectionMatrix()
+      camera.updateMatrixWorld()
+      this.tiles.setResolution(camera, width, height)
+    })
+  }
+
+  dispose(): void {
+    if (this.active) for (const camera of this.cameras) this.tiles.deleteCamera(camera)
+    this.active = false
+  }
+}

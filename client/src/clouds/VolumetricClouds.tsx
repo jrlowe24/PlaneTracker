@@ -29,7 +29,6 @@ import { RegionalCoverageController } from './regionalShader'
  */
 const FADE_START_ALTITUDE = 25_000
 const FADE_END_ALTITUDE = 70_000
-const WARMUP_FRAMES = 3
 /**
  * New weather blends in slowly, the way real cloud fields build and thin:
  * fast blends made clouds visibly pop in and dissolve whenever a new sample
@@ -111,7 +110,6 @@ export const VolumetricClouds: FC = () => {
   // layers <Clouds> may reset to defaults).
   const heights = useRef<Array<{ altitude: number; height: number }>>([])
   const sinceDisplay = useRef(0)
-  const warmupFrames = useRef(0)
 
   useFrame((_, delta) => {
     const effect = ref.current
@@ -121,10 +119,14 @@ export const VolumetricClouds: FC = () => {
     const altitude = ecefToGeodetic(camera.position.x, camera.position.y, camera.position.z).height
     const t = Math.min(1, Math.max(0, (altitude - FADE_START_ALTITUDE) / (FADE_END_ALTITUDE - FADE_START_ALTITUDE)))
     cloudDepth.fade = 1 - t * t * (3 - 2 * t)
-    // Render the first few frames even when faded out (invisible), so the
-    // clouds' shaders compile at load instead of as a hitch mid-descent.
-    warmupFrames.current += 1
-    effect.skipRendering = cloudDepth.fade <= 0 && warmupFrames.current > WARMUP_FRAMES
+    // Never skip rendering: toggling it adds/removes the clouds' shadow data,
+    // which recompiles the atmosphere's effect pass (a ~90 ms hitch while
+    // descending through ~70 km). Faded out, render at a tiny resolution
+    // instead (invisible: overlay, shadows and shafts are multiplied by the
+    // fade), which costs next to nothing.
+    effect.skipRendering = false
+    const scale = cloudDepth.fade > 0 ? 0.5 : 0.1
+    if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
     const settings = settingsStore.get()
     const sample = weatherStore.get().sample

@@ -9,6 +9,7 @@ import {
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 
 import { TileNormalsPlugin } from './TileNormalsPlugin'
+import { isMobileDevice } from '../state/quality'
 import { tileStatusStore } from './tileStatus'
 
 /**
@@ -112,7 +113,7 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
  * measured to be worse (it fetched deep tiles that can't show until their
  * ancestors and siblings arrive: ~1.1 GB before anything sharpened).
  */
-const TILE_CACHE_BYTES = 800e6
+const TILE_CACHE_BYTES = isMobileDevice() ? 400e6 : 1.2e9
 
 /**
  * Tiles parsed at once. Mesh preparation (de-indexing, normals, skirts) runs
@@ -123,6 +124,11 @@ const PARSE_JOBS = 6
 
 function tuneTileLoading(tiles: TilesRenderer): void {
   tiles.lruCache.maxBytesSize = TILE_CACHE_BYTES
+  // The cache evicts unused tiles whenever it holds more than minBytesSize
+  // (default 300 MB), not only when full: tiles you looked away from were
+  // dropped and re-downloaded when you turned back. Keep them until the
+  // cache is actually near its limit.
+  tiles.lruCache.minBytesSize = TILE_CACHE_BYTES * 0.85
   const queues = tiles as unknown as { parseQueue: { maxJobs: number }; downloadQueue: { maxJobsPerOrigin: number } }
   queues.parseQueue.maxJobs = PARSE_JOBS
   // HTTP/2 to one origin: more concurrent tile requests keep the pipe full.
