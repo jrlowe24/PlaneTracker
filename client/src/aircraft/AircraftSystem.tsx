@@ -44,6 +44,16 @@ export const AircraftSystem: FC = () => {
     flightConnection.start()
   }, [])
 
+  // The server polls the followed aircraft at ~1 Hz (adsb.fi).
+  useEffect(() => {
+    const sync = (): void => {
+      const { mode, targetHex } = cameraModeStore.get()
+      flightConnection.setFollow(mode === 'globe' ? null : targetHex)
+    }
+    sync()
+    return cameraModeStore.subscribe(sync)
+  }, [])
+
   // Viewport reporting.
   const view = useMemo<ViewState>(
     () => ({ lat: 0, lon: 0, radiusNm: 0, center: new Vector3() }),

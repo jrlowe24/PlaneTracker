@@ -19,7 +19,15 @@ export interface Viewport {
   radiusNm: number
 }
 
-export type ClientMessage = { type: 'viewport'; viewport: Viewport }
+export type ClientMessage =
+  | { type: 'viewport'; viewport: Viewport }
+  /** The aircraft this client's camera is attached to (null = none). */
+  | { type: 'follow'; hex: string | null }
+
+export interface Attribution {
+  text: string
+  url: string | null
+}
 
 export interface HelloMessage {
   type: 'hello'
@@ -29,6 +37,11 @@ export interface HelloMessage {
   /** Attribution line the client must show for this source. */
   attribution: string
   attributionUrl: string | null
+  /**
+   * Extra source used for followed aircraft (fast updates), if any; shown
+   * while the client follows an aircraft.
+   */
+  followAttribution: Attribution | null
 }
 
 export interface AircraftMessage {

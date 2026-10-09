@@ -1,4 +1,5 @@
 import type {
+  Attribution,
   ClientMessage,
   RouteInfo,
   ServerMessage,
@@ -15,6 +16,8 @@ export interface FlightStatus {
   source: string | null
   attribution: string | null
   attributionUrl: string | null
+  /** Extra source for followed aircraft (shown while following). */
+  followAttribution: Attribution | null
   aircraftCount: number
 }
 
@@ -23,6 +26,7 @@ export const flightStatusStore = createStore<FlightStatus>({
   source: null,
   attribution: null,
   attributionUrl: null,
+  followAttribution: null,
   aircraftCount: 0
 })
 
@@ -50,6 +54,7 @@ class FlightConnection {
   readonly routes = new Map<string, RouteInfo>()
   private socket: WebSocket | null = null
   private viewport: Viewport | null = null
+  private followHex: string | null = null
   private retryMs = 1000
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private stopped = true
@@ -72,6 +77,13 @@ class FlightConnection {
     this.send({ type: 'viewport', viewport })
   }
 
+  /** Tells the server which aircraft the camera follows (fast updates). */
+  setFollow(hex: string | null): void {
+    if (hex === this.followHex) return
+    this.followHex = hex
+    this.send({ type: 'follow', hex })
+  }
+
   private send(message: ClientMessage): void {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message))
@@ -90,6 +102,9 @@ class FlightConnection {
       if (this.viewport != null) {
         this.send({ type: 'viewport', viewport: this.viewport })
       }
+      if (this.followHex != null) {
+        this.send({ type: 'follow', hex: this.followHex })
+      }
     })
     socket.addEventListener('message', event => {
       let message: ServerMessage
@@ -106,6 +121,7 @@ class FlightConnection {
           source: message.source,
           attribution: message.attribution,
           attributionUrl: message.attributionUrl,
+          followAttribution: message.followAttribution,
           aircraftCount: 0
         })
       } else if (message.type === 'routes') {

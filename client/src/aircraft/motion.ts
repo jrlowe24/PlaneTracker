@@ -276,3 +276,23 @@ export function pitchAngle(groundSpeed: number, verticalSpeed: number, onGround:
 export function smoothingFactor(dtSeconds: number, timeConstant: number): number {
   return 1 - Math.exp(-dtSeconds / Math.max(1e-3, timeConstant))
 }
+
+/**
+ * Interpolation delay that suits an aircraft's update rate: about two update
+ * intervals plus a margin for feed/push latency, never more than `maxDelayMs`.
+ * A followed aircraft polled at ~1 Hz is drawn ~4 s behind instead of 12 s.
+ */
+export function adaptiveDelayMs(
+  samples: readonly MotionSample[],
+  maxDelayMs: number,
+  minDelayMs = 2500
+): number {
+  if (samples.length < 3) return maxDelayMs
+  const gaps: number[] = []
+  for (let i = Math.max(1, samples.length - 6); i < samples.length; ++i) {
+    gaps.push(samples[i]!.t - samples[i - 1]!.t)
+  }
+  gaps.sort((a, b) => a - b)
+  const median = gaps[Math.floor(gaps.length / 2)]!
+  return Math.min(maxDelayMs, Math.max(minDelayMs, 2 * median + 2000))
+}

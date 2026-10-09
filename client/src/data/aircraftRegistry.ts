@@ -26,6 +26,8 @@ export interface Attitude {
   lastLat: number
   lastLon: number
   lastHeight: number
+  /** Current (eased) interpolation delay for this aircraft, ms. */
+  delayMs: number
   initialized: boolean
 }
 
@@ -97,6 +99,7 @@ export class AircraftRegistry {
           lastLat: 0,
           lastLon: 0,
           lastHeight: 0,
+          delayMs: -1,
           initialized: false
         },
         pose: null,

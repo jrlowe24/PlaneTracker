@@ -14,6 +14,7 @@ import type { WebSocket } from 'ws'
 import type { AircraftCache } from './cache'
 import { mergeViewports } from './regions'
 import type { RouteResolver } from './routes'
+import { ADSB_FI_ATTRIBUTION, type FollowFeed } from './sources/followFeed'
 import type { FlightSource } from './sources/types'
 
 export interface HubOptions {
@@ -44,6 +45,8 @@ interface ClientSession {
   sent: Map<string, number>
   /** Callsigns whose route this client already has. */
   sentRoutes: Set<string>
+  /** Aircraft this client follows (fast updates), if any. */
+  followHex: string | null
   resetPending: boolean
 }
 
@@ -56,6 +59,12 @@ export function parseClientMessage(data: unknown): ClientMessage | null {
   }
   if (typeof message !== 'object' || message == null) return null
   const m = message as { type?: unknown; viewport?: Partial<Viewport> }
+  if (m.type === 'follow') {
+    const hex = (message as { hex?: unknown }).hex
+    if (hex === null) return { type: 'follow', hex: null }
+    if (typeof hex === 'string' && /^~?[0-9a-f]{6}$/.test(hex)) return { type: 'follow', hex }
+    return null
+  }
   if (m.type === 'viewport' && m.viewport != null) {
     const { lat, lon, radiusNm } = m.viewport
     if (
@@ -94,13 +103,15 @@ export class Hub {
     private readonly cache: AircraftCache,
     private readonly source: FlightSource,
     options: Partial<HubOptions> = {},
-    private readonly routes: RouteResolver | null = null
+    private readonly routes: RouteResolver | null = null,
+    private readonly followFeed: FollowFeed | null = null
   ) {
     this.options = { ...defaultHubOptions, ...options }
   }
 
   start(): void {
     this.routes?.start()
+    this.followFeed?.start()
     this.source.start({
       onAircraft: (states, receivedAt) => {
         this.cache.upsert(states, receivedAt)
@@ -122,6 +133,7 @@ export class Hub {
     if (this.timer != null) clearInterval(this.timer)
     this.timer = null
     this.routes?.stop()
+    this.followFeed?.stop()
     this.source.stop()
   }
 
@@ -135,6 +147,7 @@ export class Hub {
       viewport: null,
       sent: new Map(),
       sentRoutes: new Set(),
+      followHex: null,
       resetPending: false
     }
     this.clients.add(client)
@@ -143,7 +156,8 @@ export class Hub {
       serverTime: Date.now(),
       source: this.source.name,
       attribution: this.source.attribution,
-      attributionUrl: this.source.attributionUrl
+      attributionUrl: this.source.attributionUrl,
+      followAttribution: this.followFeed == null ? null : ADSB_FI_ATTRIBUTION
     }
     socket.send(JSON.stringify(hello))
 
@@ -154,12 +168,25 @@ export class Hub {
         this.updateRegions()
         // Respond quickly with what the cache already has.
         this.pushTo(client, Date.now())
+      } else if (message?.type === 'follow') {
+        client.followHex = message.hex
+        this.updateFollowed()
       }
     })
     socket.on('close', () => {
       this.clients.delete(client)
       this.updateRegions()
+      this.updateFollowed()
     })
+  }
+
+  private updateFollowed(): void {
+    if (this.followFeed == null) return
+    const hexes: string[] = []
+    for (const client of this.clients) {
+      if (client.followHex != null) hexes.push(client.followHex)
+    }
+    this.followFeed.setHexes(hexes)
   }
 
   private updateRegions(): void {

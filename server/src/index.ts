@@ -9,6 +9,7 @@ import { readFixture } from './fixtures'
 import { Hub } from './hub'
 import { RouteResolver } from './routes'
 import { AdsbLolSource } from './sources/adsbLol'
+import { FollowFeed } from './sources/followFeed'
 import { ReplaySource } from './sources/replay'
 import { SyntheticSource } from './sources/synthetic'
 import type { FlightSource } from './sources/types'
@@ -21,7 +22,8 @@ import type { FlightSource } from './sources/types'
  * - SYNTH=<count>: synthetic worldwide traffic for stress tests
  *
  * Routes (origin/destination by callsign) are looked up unless ROUTES=0 or
- * the traffic is synthetic.
+ * the traffic is synthetic. With live data, followed aircraft get ~1 Hz
+ * updates from adsb.fi (FOLLOW_FEED=0 disables).
  */
 
 const PORT = Number(process.env.PORT ?? 8787)
@@ -53,7 +55,11 @@ const source = await createSource()
 const cache = new AircraftCache()
 const routesEnabled = process.env.ROUTES !== '0' && !source.name.startsWith('synthetic')
 const routes = routesEnabled ? new RouteResolver(resolve(here, '../.cache/routes.json')) : null
-const hub = new Hub(cache, source, {}, routes)
+const followEnabled = source instanceof AdsbLolSource && process.env.FOLLOW_FEED !== '0'
+const followFeed = followEnabled
+  ? new FollowFeed((states, receivedAt) => cache.upsert(states, receivedAt))
+  : null
+const hub = new Hub(cache, source, {}, routes, followFeed)
 
 const http = createServer((req, res) => {
   if (req.url === '/health') {

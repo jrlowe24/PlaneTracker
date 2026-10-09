@@ -19,6 +19,7 @@ import { AIRFRAMES, buildAirframe, type AircraftClass } from './airframes'
 import { detailedHexes } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
 import { lightAnchor } from './lightAnchor'
+import { adaptiveDelayMs, smoothingFactor } from './motion'
 import { computePose, createPose } from './pose'
 import { aircraftShading, skyBrightness } from './shading'
 
@@ -66,6 +67,9 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
   return t * t * (3 - 2 * t)
 }
+
+/** Time constant for easing an aircraft's interpolation delay, seconds. */
+const DELAY_TIME_CONSTANT = 3
 
 /** Simulated time aircraft are drawn at: behind the newest data by the buffer delay. */
 export function aircraftRenderTime(): number {
@@ -127,13 +131,20 @@ export class AircraftInstances {
   }
 
   updatePoses(dt: number): void {
-    const renderTime = aircraftRenderTime()
+    const now = serverNow()
+    const maxDelay = settingsStore.get().interpolationDelayMs
+    const ease = smoothingFactor(dt, DELAY_TIME_CONSTANT)
     const selectedHex = selectionStore.get().selectedHex
     for (const aircraft of flightConnection.registry.list) {
       aircraft.pose ??= createPose()
       const detailed =
         aircraft.cameraDistance < DETAIL_DISTANCE || aircraft.hex === selectedHex
-      computePose(aircraft, renderTime, dt, detailed, aircraft.pose)
+      // Per-aircraft delay: short for frequently updated (followed) aircraft,
+      // eased so the switch speeds playback up briefly instead of jumping.
+      const target = adaptiveDelayMs(aircraft.motion, maxDelay)
+      const attitude = aircraft.attitude
+      attitude.delayMs = attitude.delayMs < 0 ? target : attitude.delayMs + (target - attitude.delayMs) * ease
+      computePose(aircraft, now - attitude.delayMs, dt, detailed, aircraft.pose)
     }
   }
 

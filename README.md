@@ -137,6 +137,25 @@ clients ──viewport──▶ Hub ──merged regions──▶ FlightSource �
   `AircraftState`; units stay as on the wire (ft, kt, ft/min, degrees) and
   are converted only in `shared/src/units.ts`.
 
+### Followed aircraft: adsb.fi at ~1 Hz
+
+While a client follows an aircraft (chase or window view), the server
+polls that aircraft from adsb.fi's open data API
+(`opendata.adsb.fi/api/v2/hex/{hex}`, readsb format), one request at a time
+≥ 1.1 s apart, round-robin over all followed aircraft
+(`server/src/sources/followFeed.ts`). adsb.lol's hex endpoint shares its
+per-IP limit, so it can't do this. Measured: new positions every ~1.6 s for
+the followed plane vs. 6–10 s from region polling. Everything else stays on
+adsb.lol. Only with live data (not replay/synth); `FOLLOW_FEED=0` disables
+it. adsb.fi is credited on screen while following. Terms (via a third-party
+summary; adsb.fi's own docs weren't reachable): personal, non-commercial
+use with attribution and a link.
+
+On the client, each aircraft's interpolation delay adapts to its update
+rate (`adaptiveDelayMs`: ~2 update intervals + 2 s, between 2.5 s and the
+12 s setting), eased over a few seconds, so a followed aircraft is drawn
+~4–5 s behind real time instead of 12 s.
+
 ### Routes (origin → destination)
 
 ADS-B carries no origin or destination. The server looks up the scheduled
@@ -380,6 +399,8 @@ page: N)`) show how many sessions the page has created.
   18 px height (the guidelines require 16–19 px).
 - **adsb.lol**: "Flight data © adsb.lol contributors (ODbL)" with a link is
   shown at all times while adsb.lol (or a replay of it) is the source.
+- **adsb.fi**: fast updates for followed aircraft, credited while
+  following.
 - **Routes**: vradarserver standing data (CC0), served by adsb.lol.
 - **EGM96**: geoid data from NGA (public domain), sampled via
   `egm96-universal` (MIT).

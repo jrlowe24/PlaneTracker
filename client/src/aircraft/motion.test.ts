@@ -2,6 +2,7 @@ import { geoidHeight, greatCircleDistance, type AircraftState } from '@windowsea
 import { describe, expect, it } from 'vitest'
 
 import {
+  adaptiveDelayMs,
   bankAngle,
   evaluateMotion,
   hermite,
@@ -202,5 +203,20 @@ describe('altitude datum', () => {
     const d = greatCircleDistance(47, -122, 47.01, -122)
     // Mean-sphere vs ellipsoid: within 0.5 %.
     expect((0.01 * Math.PI) / 180 * m.north).toBeCloseTo(d, -1)
+  })
+})
+
+describe('adaptiveDelayMs', () => {
+  const samples = (gapMs: number, n = 8): MotionSample[] =>
+    Array.from({ length: n }, (_, i) => eastbound(i * gapMs, 0))
+
+  it('shortens the delay for frequently updated aircraft', () => {
+    expect(adaptiveDelayMs(samples(1000), 12_000)).toBe(4000)
+    expect(adaptiveDelayMs(samples(6000), 12_000)).toBe(12_000)
+    expect(adaptiveDelayMs(samples(200), 12_000)).toBe(2500)
+  })
+
+  it('uses the maximum until there is enough history', () => {
+    expect(adaptiveDelayMs(samples(1000, 2), 12_000)).toBe(12_000)
   })
 })

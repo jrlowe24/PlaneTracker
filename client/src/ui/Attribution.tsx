@@ -3,6 +3,7 @@ import { useEffect, useState, type FC } from 'react'
 import { config } from '../config'
 import { flightStatusStore } from '../data/flightConnection'
 import { getGoogleTiles } from '../globe/googleTiles'
+import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 
 /**
@@ -59,6 +60,8 @@ const GoogleAttribution: FC = () => {
 const FlightDataAttribution: FC = () => {
   const attribution = useStore(flightStatusStore, s => s.attribution)
   const url = useStore(flightStatusStore, s => s.attributionUrl)
+  const follow = useStore(flightStatusStore, s => s.followAttribution)
+  const following = useStore(cameraModeStore, s => s.mode !== 'globe')
   if (attribution == null) return null
   return (
     <div className='attribution-flight'>
@@ -68,6 +71,18 @@ const FlightDataAttribution: FC = () => {
         </a>
       ) : (
         attribution
+      )}
+      {following && follow != null && (
+        <>
+          {' · '}
+          {follow.url != null ? (
+            <a href={follow.url} target='_blank' rel='noreferrer'>
+              {follow.text}
+            </a>
+          ) : (
+            follow.text
+          )}
+        </>
       )}
     </div>
   )
