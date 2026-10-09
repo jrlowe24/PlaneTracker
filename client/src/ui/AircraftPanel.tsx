@@ -117,14 +117,14 @@ export const AircraftPanel: FC = () => {
         <dd>{state.groundSpeed == null ? '—' : `${fmt.format(state.groundSpeed)} kt`}</dd>
         <dt>Vertical rate</dt>
         <dd>{formatVerticalRate(state.verticalRate)}</dd>
-        <dt>Track</dt>
-        <dd>{state.track == null ? '—' : `${fmt.format(state.track)}°`}</dd>
-        <dt>Squawk</dt>
-        <dd>{state.squawk ?? '—'}</dd>
-        <dt>ICAO</dt>
-        <dd>{state.hex.toUpperCase()}</dd>
-        <dt>Position age</dt>
-        <dd>{ageS.toFixed(0)} s</dd>
+        <dt className='secondary'>Track</dt>
+        <dd className='secondary'>{state.track == null ? '—' : `${fmt.format(state.track)}°`}</dd>
+        <dt className='secondary'>Squawk</dt>
+        <dd className='secondary'>{state.squawk ?? '—'}</dd>
+        <dt className='secondary'>ICAO</dt>
+        <dd className='secondary'>{state.hex.toUpperCase()}</dd>
+        <dt className='secondary'>Position age</dt>
+        <dd className='secondary'>{ageS.toFixed(0)} s</dd>
       </dl>
       <div className='aircraft-actions'>
         {attached && mode === 'follow' ? (

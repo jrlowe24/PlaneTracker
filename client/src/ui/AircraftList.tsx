@@ -178,7 +178,8 @@ function useRows(query: string): { rows: Row[]; total: number } {
  */
 export const AircraftList: FC = () => {
   const [query, setQuery] = useState('')
-  const [open, setOpen] = useState(true)
+  // Collapsed by default on phones so the 3D view is visible.
+  const [open, setOpen] = useState(() => !window.matchMedia?.('(max-width: 640px)').matches)
   const { rows, total } = useRows(query)
   const world = useWorldSearch(query)
   const localHexes = new Set(rows.map(r => r.hex))

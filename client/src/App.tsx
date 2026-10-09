@@ -8,6 +8,7 @@ import { Attribution } from './ui/Attribution'
 import { DevPanel } from './ui/DevPanel'
 import { QualityMenu } from './ui/QualityMenu'
 import { TileErrorBanner } from './ui/TileErrorBanner'
+import { TopBar } from './ui/Welcome'
 import { WindowFrame } from './ui/WindowFrame'
 
 export const App: FC = () => (
@@ -27,7 +28,10 @@ export const App: FC = () => (
       <AircraftPanel />
     </div>
     <DevPanel />
-    <QualityMenu />
+    <TopBar />
+    <div className='corner-quality'>
+      <QualityMenu />
+    </div>
     <Attribution />
   </div>
 )
