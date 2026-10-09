@@ -113,7 +113,7 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
  * measured to be worse (it fetched deep tiles that can't show until their
  * ancestors and siblings arrive: ~1.1 GB before anything sharpened).
  */
-const TILE_CACHE_BYTES = isMobileDevice() ? 250e6 : 1.2e9
+const TILE_CACHE_BYTES = isMobileDevice() ? 300e6 : 1.5e9
 
 /**
  * Tiles parsed at once. Mesh preparation (de-indexing, normals, skirts) runs
