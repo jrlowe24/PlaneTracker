@@ -20,6 +20,7 @@ import { navLightsStore } from '../aircraft/navLightsStore'
 import { cloudDepth } from '../clouds/cloudDepth'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
 import { NightLights } from '../nightLights/NightLights'
+import { nightLightsPass } from '../nightLights/nightLightsStore'
 import { NIGHT_LIGHT_MAX_EMISSION } from '../nightLights/NightLightsEffect'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
@@ -209,6 +210,17 @@ function patchLightingMask(pass: LightingMaskPass): void {
   material.needsUpdate = true
 }
 
+/** Enables the night-lights pass only when NightLights says it's needed. */
+function applyNightLightsPass(composer: EffectComposerImpl | null): void {
+  if (composer == null) return
+  for (const pass of composer.passes) {
+    const effects = (pass as { effects?: Array<{ name: string }> }).effects
+    if (effects?.some(e => e.name === 'NightLightsEffect') === true) {
+      pass.enabled = nightLightsPass.enabled
+    }
+  }
+}
+
 const up = new Vector3()
 
 export const PostEffects: FC = () => {
@@ -248,6 +260,7 @@ export const PostEffects: FC = () => {
   // GlobeControls changes near/far every frame; effects reconstructing
   // positions from depth must use the same values.
   useFrame(({ gl }, delta) => {
+    applyNightLightsPass(composerRef.current)
     const aerial = aerialRef.current
     if (aerial != null) {
       // Our own uniforms, added by patchNightLight.

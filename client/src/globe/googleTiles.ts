@@ -66,7 +66,8 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
   // Keep mipmaps: they matter for the grazing angles of a window-seat view.
   tiles.registerPlugin(new TileCompressionPlugin({ disableMipmaps: false }))
   tiles.registerPlugin(new UpdateOnChangePlugin())
-  tiles.registerPlugin(new TilesFadePlugin())
+  // A longer cross-fade turns coarse-to-fine swaps into a blend, not a pop.
+  tiles.registerPlugin(new TilesFadePlugin({ fadeDuration: 600, maximumFadeOutTiles: 120 }))
 
   tiles.addEventListener('load-root-tileset', () => {
     const rootLoads = tileStatusStore.get().rootLoads + 1
@@ -113,8 +114,16 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
  */
 const TILE_CACHE_BYTES = 800e6
 
+/**
+ * Tiles parsed at once. Each finished tile builds geometry on the main
+ * thread and uploads its texture on first draw; the default (5) let bursts
+ * of arrivals stack into frame hitches.
+ */
+const PARSE_JOBS = 2
+
 function tuneTileLoading(tiles: TilesRenderer): void {
   tiles.lruCache.maxBytesSize = TILE_CACHE_BYTES
+  ;(tiles as unknown as { parseQueue: { maxJobs: number } }).parseQueue.maxJobs = PARSE_JOBS
   ;(tiles as unknown as { loadSiblings: boolean }).loadSiblings = false
 }
 

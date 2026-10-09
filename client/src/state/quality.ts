@@ -37,7 +37,9 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
   high: {
     clouds: 'high',
     cloudShadows: true,
-    lightShafts: true,
+    // Off: screen-space cascade limits showed as bright bands over the
+    // ground at some angles, and they cost frame time.
+    lightShafts: false,
     lensFlare: true,
     tileErrorTarget: 10,
     maxDpr: 2

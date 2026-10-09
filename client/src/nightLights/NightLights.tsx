@@ -1,7 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { AtmosphereContext, type AtmosphereTransientStates } from '@takram/three-atmosphere/r3f'
 import { ecefToGeodetic, WGS84_A } from '@windowseat/shared'
-import { BlendFunction } from 'postprocessing'
 import { useContext, useEffect, useMemo, type FC } from 'react'
 import type { Camera } from 'three'
 
@@ -9,7 +8,7 @@ import { lightAnchor } from '../aircraft/lightAnchor'
 import { nightState } from '../scene/nightLighting'
 import { qualityStore } from '../state/quality'
 import { NightLightsEffect } from './NightLightsEffect'
-import { nightLightsStore } from './nightLightsStore'
+import { nightLightsPass, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
 
 /** Detail tiles stream only below this camera altitude (horizon ~2,800 km). */
@@ -49,7 +48,9 @@ class NightLightsController {
     const active = elevation < reach + margin
     if (active !== this.active) {
       this.active = active
-      effect.blendMode.blendFunction = active ? BlendFunction.NORMAL : BlendFunction.DST
+      // Toggle the pass, not the blend function: changing the blend
+      // function recompiles the pass (a hitch at every day/night change).
+      nightLightsPass.enabled = active
     }
     if (!active) {
       if (nightLightsStore.get().credit != null) nightLightsStore.set({ credit: null })

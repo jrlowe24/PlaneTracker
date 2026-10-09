@@ -26,7 +26,7 @@ uniform float regionalRadius;
 uniform float regionalEnabled;
 uniform vec3 coverageFallback;
 
-vec4 applyRegionalCoverage(vec4 weather, const vec3 position) {
+vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLevel) {
   vec3 cover = coverageFallback;
   if (regionalEnabled > 0.5) {
     // Positions here are globe-centered (ECEF plus a small, mostly radial
@@ -37,7 +37,18 @@ vec4 applyRegionalCoverage(vec4 weather, const vec3 position) {
     vec3 regional = texture(regionalCoverage, clamp(st, 0.0, 1.0)).rgb;
     cover = mix(coverageFallback, regional, smoothstep(0.0, 0.08, edge));
   }
-  weather.rgb = clamp(weather.rgb + (${COVERAGE_THRESHOLD.toFixed(6)} - (1.0 - cover)), 0.0, 1.0);
+  vec3 offset = clamp(${COVERAGE_THRESHOLD.toFixed(6)} - (1.0 - cover), -1.0, 1.0);
+  vec3 direct = clamp(weather.rgb + offset, 0.0, 1.0);
+  // Distant samples read blurred mips of the noise (all ~0.5), and
+  // thresholding a blurred value turns far clouds into a uniform translucent
+  // wall. Use the expected value of clamp(u + offset) over the uniform noise
+  // instead, which is what blurring the thresholded field would give.
+  vec3 expected = mix(
+    0.5 * (1.0 + offset) * (1.0 + offset),
+    1.0 - 0.5 * (1.0 - offset) * (1.0 - offset),
+    step(0.0, offset)
+  );
+  weather.rgb = mix(direct, expected, smoothstep(0.5, 3.0, mipLevel));
   return weather;
 }
 `
@@ -77,7 +88,7 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
       signature,
       `${CHUNK}\nWeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel, const vec3 weatherPosition) {`
     )
-    .replace(apply, `  localWeather = applyRegionalCoverage(localWeather, weatherPosition);\n${apply}`)
+    .replace(apply, `  localWeather = applyRegionalCoverage(localWeather, weatherPosition, mipLevel);\n${apply}`)
     .replaceAll('sampleWeather(uv, height, mipLevel)', 'sampleWeather(uv, height, mipLevel, position)')
   Object.assign(material.uniforms, uniforms)
   material.needsUpdate = true
