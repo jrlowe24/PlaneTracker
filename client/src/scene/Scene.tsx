@@ -171,7 +171,9 @@ export const Scene: FC = () => {
   return (
     <Atmosphere ref={atmosphereRef} correctAltitude>
       <Sky />
-      <Stars data='/atmosphere/stars.bin' />
+      {/* Brighter than takram's default so the night sky reads at our
+          (reduced) night exposure. */}
+      <Stars data='/atmosphere/stars.bin' intensity={6} pointSize={1.5} />
       <GlobeAndControls />
       <AircraftSystem />
       <CameraRig />

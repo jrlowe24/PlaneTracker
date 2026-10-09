@@ -19,6 +19,7 @@ import { AIRCRAFT_LAYER } from '../aircraft/layers'
 import { cloudDepth } from '../clouds/cloudDepth'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
 import { NightLights } from '../nightLights/NightLights'
+import { NIGHT_LIGHT_MAX_EMISSION } from '../nightLights/NightLightsEffect'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
@@ -35,6 +36,16 @@ import { nightState, updateNightLighting } from './nightLighting'
  * that hit no cloud store the scene's view Z and fail it.
  */
 const CLOUD_DEPTH_TEST = /* glsl */ `
+/**
+ * City light radiance passed in the alpha channel by NightLightsEffect
+ * (alpha = 1 − emission / max): warm sodium where dim, whiter LED where
+ * bright.
+ */
+vec3 cityLight(const float alpha) {
+  float emission = (1.0 - clamp(alpha, 0.0, 1.0)) * ${NIGHT_LIGHT_MAX_EMISSION.toFixed(3)};
+  return emission * mix(vec3(1.0, 0.42, 0.1), vec3(1.0, 0.82, 0.6), smoothstep(0.006, 0.03, emission));
+}
+
 bool isAircraftPixel(const vec2 uv) {
   #ifdef HAS_LIGHTING_MASK
   return texture(lightingMaskBuffer, uv).LIGHTING_MASK_CHANNEL_ < 0.5;
@@ -130,15 +141,18 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     )
     .replace(
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
-      'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);\n    radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient;'
+      'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);\n    radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient;\n    radiance += cityLight(inputColor.a);'
     )
+    // City lights arrive in the alpha channel (NightLightsEffect); terrain
+    // is opaque, so restore it.
+    .replace('outputColor = vec4(radiance, inputColor.a);', 'outputColor = vec4(radiance, 1.0);')
     .replace(
       '#else // SKY\n    outputColor = inputColor;',
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
     )
   if (
-    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft/g) ?? [])
-      .length < 9
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)/g) ?? [])
+      .length < 12
   ) {
     // takram's shader changed: night light only partly applied.
     console.warn('[night] AerialPerspective shader patch did not fully apply')
@@ -268,6 +282,7 @@ export const PostEffects: FC = () => {
         }}
         selectionLayer={AIRCRAFT_LAYER}
       />
+      <NightLights />
       <VolumetricClouds />
       <AerialPerspective
         ref={effect => {
@@ -280,7 +295,6 @@ export const PostEffects: FC = () => {
         correctGeometricError
         albedoScale={2 / Math.PI}
       />
-      <NightLights />
       <>{lensFlare ? <LensFlare /> : null}</>
       <ToneMapping mode={ToneMappingMode.AGX} />
       <SMAA />

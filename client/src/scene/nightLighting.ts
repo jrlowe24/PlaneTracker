@@ -32,12 +32,12 @@ const FULL_MOON = 0.012
  * adaptation a moonless night reads at ~1/30 of daylight, so terrain stays
  * faintly legible.
  */
-const STARLIGHT = 0.005
+const STARLIGHT = 0.002
 const MOON_TINT = new Vector3(0.82, 0.9, 1.0)
 const STAR_TINT = new Vector3(0.6, 0.72, 1.0)
 const SKY_GLOW = new Vector3(0.00008, 0.00013, 0.0003)
 /** Exposure multiplier at full night. */
-const MAX_GAIN = 10
+const MAX_GAIN = 4
 const ADAPTATION_TIME = 1.5
 
 const up = new Vector3()

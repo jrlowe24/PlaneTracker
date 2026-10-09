@@ -35,7 +35,6 @@ class NightLightsController {
     const { effect, tiles } = this
     effect.mainCamera = camera
     effect.setSun(states.sunDirection)
-    effect.setMasks(states.lightingMask?.map ?? null, states.overlay?.map ?? null)
 
     const altitude = camera.position.length() - WGS84_A
     const detail = altitude < DETAIL_MAX_ALTITUDE && qualityStore.get().level !== 'low'
@@ -65,7 +64,8 @@ class NightLightsController {
  * City lights at night (NASA Black Marble 2016), resolution by distance:
  * global ~5 km/px base everywhere, ~610 m/px detail tiles streamed into a
  * window around the view when the camera is within a few hundred km of the
- * ground. Rendered as a post effect after the atmosphere's lighting.
+ * ground, shaped up close by the urban surfaces in the imagery. Must sit
+ * before AerialPerspective, which turns its output into light.
  */
 export const NightLights: FC = () => {
   const camera = useThree(({ camera }) => camera)
