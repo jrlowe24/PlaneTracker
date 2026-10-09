@@ -61,6 +61,11 @@ tracked.
   `SEA → ATL`), altitude and distance, refreshed every second. Type to search
   callsign, airport (code or city), registration, type or ICAO hex; <kbd>Enter</kbd> follows the first match. Click a row to fly to
   that aircraft and follow it (also works while following another one).
+- **Near you**: with location permission (asked once, browser
+  geolocation), the list is sorted by distance from you rather than from
+  the view, and the server keeps traffic within 100 nm of you live
+  wherever the camera is. Without it, the list uses the view center (or
+  the followed aircraft).
 - **Worldwide search**: the view only receives traffic around the camera,
   so searches also run on the server against the whole world: callsign
   (ICAO form, e.g. `UAE1`, `ASA1`), registration or hex via adsb.fi, and

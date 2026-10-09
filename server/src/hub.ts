@@ -1,6 +1,7 @@
 import {
   encodeAircraft,
   greatCircleDistance,
+  HOME_RADIUS_NM,
   nauticalMilesToMeters,
   type AircraftMessage,
   type AircraftTuple,
@@ -58,6 +59,8 @@ interface ClientSession {
   gridAt: { lat: number; lon: number } | null
   gridSentAt: number
   resetPending: boolean
+  /** The user's own location, if shared: traffic around it stays live. */
+  home: { lat: number; lon: number } | null
 }
 
 export function parseClientMessage(data: unknown): ClientMessage | null {
@@ -73,6 +76,15 @@ export function parseClientMessage(data: unknown): ClientMessage | null {
     const hex = (message as { hex?: unknown }).hex
     if (hex === null) return { type: 'follow', hex: null }
     if (typeof hex === 'string' && /^~?[0-9a-f]{6}$/.test(hex)) return { type: 'follow', hex }
+    return null
+  }
+  if (m.type === 'home') {
+    const home = (message as { home?: unknown }).home
+    if (home === null) return { type: 'home', home: null }
+    const { lat, lon } = (home ?? {}) as { lat?: unknown; lon?: unknown }
+    if (typeof lat === 'number' && typeof lon === 'number' && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+      return { type: 'home', home: { lat, lon } }
+    }
     return null
   }
   if (m.type === 'viewport' && m.viewport != null) {
@@ -163,6 +175,7 @@ export class Hub {
       weatherSentAt: 0,
       gridAt: null,
       gridSentAt: 0,
+      home: null,
       resetPending: false
     }
     this.clients.add(client)
@@ -186,6 +199,10 @@ export class Hub {
       } else if (message?.type === 'follow') {
         client.followHex = message.hex
         this.updateFollowed()
+      } else if (message?.type === 'home') {
+        client.home = message.home
+        this.updateRegions()
+        this.pushTo(client, Date.now())
       }
     })
     socket.on('close', () => {
@@ -208,6 +225,7 @@ export class Hub {
     const viewports: Viewport[] = []
     for (const client of this.clients) {
       if (client.viewport != null) viewports.push(client.viewport)
+      if (client.home != null) viewports.push({ ...client.home, radiusNm: HOME_RADIUS_NM })
     }
     this.source.setRegions(mergeViewports(viewports))
   }
@@ -277,8 +295,14 @@ export class Hub {
     const upserts: AircraftTuple[] = []
     const newRoutes: RouteInfo[] = []
     const inView = new Set<string>()
-    for (const entry of this.cache.within(viewport.lat, viewport.lon, radius)) {
+    // The view, plus the area around the user's own location (if shared).
+    const areas = [this.cache.within(viewport.lat, viewport.lon, radius)]
+    if (client.home != null) {
+      areas.push(this.cache.within(client.home.lat, client.home.lon, nauticalMilesToMeters(HOME_RADIUS_NM)))
+    }
+    for (const entry of areas.flatMap(area => [...area])) {
       const hex = entry.state.hex
+      if (inView.has(hex)) continue
       inView.add(hex)
       const callsign = entry.state.callsign
       if (this.routes != null && callsign != null && !client.sentRoutes.has(callsign)) {

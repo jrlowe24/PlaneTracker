@@ -10,6 +10,7 @@ import { lightAnchor } from '../aircraft/lightAnchor'
 import { jumpTo } from '../camera/jump'
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { flightConnection } from '../data/flightConnection'
+import { startUserLocation, userLocationStore } from '../data/userLocation'
 import { routeFor } from '../data/routeDisplay'
 import { cameraModeStore, followAircraft } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
@@ -59,10 +60,19 @@ function jumpToResult(result: SearchResult): void {
   jumpTo({ lat: result.lat, lon: result.lon, height, distance: 15_000, pitch: -30 }, result.hex)
 }
 
-/** Distance (nm) from the view center to a point. */
-function distanceFromViewNm(lat: number, lon: number): number {
-  const here = ecefToGeodetic(lightAnchor.x, lightAnchor.y, lightAnchor.z)
-  return greatCircleDistance(here.lat, here.lon, lat, lon) / METERS_PER_NM
+/**
+ * Where "nearby" is measured from: the user's own location when shared,
+ * else the view center (or the followed aircraft).
+ */
+function origin(): { lat: number; lon: number } {
+  return (
+    userLocationStore.get().position ?? ecefToGeodetic(lightAnchor.x, lightAnchor.y, lightAnchor.z)
+  )
+}
+
+/** Distance (nm) from the origin to a point. */
+function distanceFromOriginNm(lat: number, lon: number, from = origin()): number {
+  return greatCircleDistance(from.lat, from.lon, lat, lon) / METERS_PER_NM
 }
 
 type WorldSearch =
@@ -98,9 +108,10 @@ function useWorldSearch(query: string): WorldSearch {
   return { status: 'done', query: q, response: last }
 }
 
-function toRow(aircraft: TrackedAircraft): Row {
+function toRow(aircraft: TrackedAircraft, from: { lat: number; lon: number }): Row {
   const { state } = aircraft
-  const distance = aircraft.pose?.position.distanceTo(lightAnchor) ?? Infinity
+  const pose = aircraft.pose
+  const distanceNm = pose == null ? Infinity : distanceFromOriginNm(pose.lat, pose.lon, from)
   const route = routeFor(aircraft)
   return {
     route: route?.short ?? null,
@@ -116,7 +127,7 @@ function toRow(aircraft: TrackedAircraft): Row {
       : (state.altGeom ?? state.altBaro) == null
         ? '—'
         : `${fmt.format((state.altGeom ?? state.altBaro)!)} ft`,
-    distanceNm: distance / METERS_PER_NM
+    distanceNm
   }
 }
 
@@ -129,7 +140,7 @@ function matches(aircraft: TrackedAircraft, query: string): boolean {
   )
 }
 
-/** Nearest aircraft (to the view center, or to the followed aircraft). */
+/** Nearest aircraft to the user's location (else the view / followed aircraft). */
 function useRows(query: string): { rows: Row[]; total: number } {
   const [result, setResult] = useState<{ rows: Row[]; total: number }>({ rows: [], total: 0 })
   useEffect(() => {
@@ -137,9 +148,10 @@ function useRows(query: string): { rows: Row[]; total: number } {
       const q = query.trim().toLowerCase()
       const list = flightConnection.registry.list
       const candidates = q === '' ? list : list.filter(a => matches(a, q))
+      const from = origin()
       const rows = candidates
         .filter(a => a.pose != null)
-        .map(toRow)
+        .map(a => toRow(a, from))
         .sort((a, b) => a.distanceNm - b.distanceNm)
         .slice(0, MAX_ROWS)
       setResult({ rows, total: candidates.length })
@@ -170,6 +182,10 @@ export const AircraftList: FC = () => {
     world.status === 'done' ? world.response.results.filter(r => !localHexes.has(r.hex)) : []
   const selectedHex = useStore(selectionStore, s => s.selectedHex)
   const followedHex = useStore(cameraModeStore, s => (s.mode === 'globe' ? null : s.targetHex))
+  const nearUser = useStore(userLocationStore, s => s.position != null)
+  useEffect(() => {
+    startUserLocation()
+  }, [])
 
   // Collapse while a plane is selected so its info panel has room; the
   // header stays to reopen it.
@@ -190,7 +206,11 @@ export const AircraftList: FC = () => {
         }}
       >
         <span>
-          {followedHex != null ? 'Aircraft near the followed plane' : 'Nearby aircraft'}{' '}
+          {nearUser
+            ? 'Near you'
+            : followedHex != null
+              ? 'Aircraft near the followed plane'
+              : 'Nearby aircraft'}{' '}
           <span className='muted'>({total})</span>
         </span>
         <span className='chevron'>{open ? '▴' : '▾'}</span>
@@ -312,7 +332,7 @@ export const AircraftList: FC = () => {
                     <span>
                       {result.onGround ? 'GND' : result.altitude == null ? '—' : `${fmt.format(result.altitude)} ft`}
                     </span>
-                    <span className='muted'>{fmt.format(distanceFromViewNm(result.lat, result.lon))} nm</span>
+                    <span className='muted'>{fmt.format(distanceFromOriginNm(result.lat, result.lon))} nm</span>
                   </span>
                 </button>
               </li>

@@ -24,6 +24,14 @@ export type ClientMessage =
   | { type: 'viewport'; viewport: Viewport }
   /** The aircraft this client's camera is attached to (null = none). */
   | { type: 'follow'; hex: string | null }
+  /**
+   * The user's own location (browser geolocation), or null: traffic around
+   * it is kept live for the "near you" list wherever the camera is.
+   */
+  | { type: 'home'; home: { lat: number; lon: number } | null }
+
+/** Radius around the user's location that stays live, nautical miles. */
+export const HOME_RADIUS_NM = 100
 
 export interface Attribution {
   text: string

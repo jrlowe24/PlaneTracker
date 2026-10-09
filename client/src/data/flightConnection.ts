@@ -56,6 +56,7 @@ class FlightConnection {
   private socket: WebSocket | null = null
   private viewport: Viewport | null = null
   private followHex: string | null = null
+  private home: { lat: number; lon: number } | null = null
   private retryMs = 1000
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private stopped = true
@@ -76,6 +77,12 @@ class FlightConnection {
   setViewport(viewport: Viewport): void {
     this.viewport = viewport
     this.send({ type: 'viewport', viewport })
+  }
+
+  /** The user's own location (or null): the server keeps traffic around it live. */
+  setHome(home: { lat: number; lon: number } | null): void {
+    this.home = home
+    this.send({ type: 'home', home })
   }
 
   /** Tells the server which aircraft the camera follows (fast updates). */
@@ -105,6 +112,9 @@ class FlightConnection {
       }
       if (this.followHex != null) {
         this.send({ type: 'follow', hex: this.followHex })
+      }
+      if (this.home != null) {
+        this.send({ type: 'home', home: this.home })
       }
     })
     socket.addEventListener('message', event => {
