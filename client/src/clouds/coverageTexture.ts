@@ -26,7 +26,7 @@ export const GLOBAL_COVERAGE = 0.5
  * decide where cloud survives there (broken, cellular edges and fragments)
  * instead of a crisp outline traced by the 2D coverage map.
  */
-export const FILTER_WIDTH = 0.55
+export const FILTER_WIDTH = 0.4
 /** Weather value where clouds begin mid-layer: mix(v, 1, w) = 1 − coverage. */
 export const COVERAGE_THRESHOLD = (1 - GLOBAL_COVERAGE - FILTER_WIDTH) / (1 - FILTER_WIDTH)
 
