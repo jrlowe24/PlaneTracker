@@ -41,7 +41,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     // ground at some angles, and they cost frame time.
     lightShafts: false,
     lensFlare: true,
-    tileErrorTarget: 10,
+    tileErrorTarget: 6,
     maxDpr: 2
   }
 }

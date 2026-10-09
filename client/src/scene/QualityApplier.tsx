@@ -9,17 +9,23 @@ import { resolutionStore } from '../state/resolution'
 
 /** Frame time budget: 60 fps with a little slack. */
 const TARGET_MS = 1000 / 60
-const SLOW_MS = TARGET_MS * 1.12
-const MIN_SCALE = 0.5
-const STEP_DOWN = 0.85
+/**
+ * Only sustained slowness (below ~48 fps) costs sharpness: brief dips and
+ * 50-55 fps aren't worth a visibly softer image.
+ */
+const SLOW_MS = TARGET_MS * 1.25
+const MIN_SCALE = 0.6
+const STEP_DOWN = 0.9
 const STEP_UP = 1.08
 /** Below this scale, coarser terrain is traded in before more resolution. */
 const TILE_TRADE_SCALE = 0.7
-const MAX_TILE_FACTOR = 2
+const MAX_TILE_FACTOR = 1.5
 const TILE_STEP = 1.25
 /** Seconds of averaging before a decision; going up needs longer. */
-const WINDOW_DOWN_S = 0.75
+const WINDOW_DOWN_S = 1.5
 const WINDOW_UP_S = 3
+/** Auto quality steps down a preset after this long at the floor and still slow. */
+const FLOOR_DOWNGRADE_S = 4
 
 /**
  * Adaptive resolution: keeps the frame rate at 60 by scaling the render
@@ -33,6 +39,10 @@ const WINDOW_UP_S = 3
 class ResolutionGovernor {
   scale = 1
   tileFactor = 1
+  /** Seconds spent at the lowest settings while still too slow. */
+  floorSeconds = 0
+  /** Smoothed frame time, ms. */
+  private averageMs = TARGET_MS
   private sum = 0
   private count = 0
   private elapsed = 0
@@ -42,6 +52,9 @@ class ResolutionGovernor {
     const ms = deltaS * 1000
     // Ignore stalls (tab hidden, debugger, page load hitches).
     if (ms > 250) return false
+    const atFloor = this.scale <= MIN_SCALE + 1e-6 && this.tileFactor >= MAX_TILE_FACTOR - 1e-6
+    this.averageMs += (ms - this.averageMs) * 0.03
+    this.floorSeconds = atFloor && this.averageMs > TARGET_MS * 1.1 ? this.floorSeconds + deltaS : 0
     this.sum += ms
     this.count += 1
     this.elapsed += deltaS
@@ -76,9 +89,17 @@ class ResolutionGovernor {
     return changed
   }
 
+  /** True (once) when it has sat at the floor and still been slow long enough. */
+  takeDowngrade(): boolean {
+    if (this.floorSeconds <= FLOOR_DOWNGRADE_S) return false
+    this.floorSeconds = 0
+    return true
+  }
+
   reset(): void {
     this.scale = 1
     this.tileFactor = 1
+    this.floorSeconds = 0
     this.sum = 0
     this.count = 0
     this.elapsed = 0
@@ -108,6 +129,13 @@ export const QualityApplier: FC = () => {
     if (resolutionStore.get().locked) return
     if (governor.sample(delta)) {
       resolutionStore.set({ scale: governor.scale, tileFactor: governor.tileFactor })
+    }
+    // Auto quality that still can't keep up at the lowest resolution steps
+    // down a preset: a lighter preset at full sharpness looks better than a
+    // heavy one rendered blurry.
+    const quality = qualityStore.get()
+    if (quality.choice === 'auto' && quality.level !== 'low' && governor.takeDowngrade()) {
+      qualityStore.set({ level: quality.level === 'high' ? 'medium' : 'low' })
     }
   })
 
