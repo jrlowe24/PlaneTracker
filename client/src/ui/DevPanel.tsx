@@ -141,7 +141,7 @@ export const DevPanel: FC = () => {
         <div className='dev-row muted'>
           {weather == null
             ? 'Waiting for weather…'
-            : `Cloud cover here low ${Math.round(cover.low * 100)}% · mid ${Math.round(cover.mid * 100)}% · high ${Math.round(cover.high * 100)}%${cover.regional ? ' (blended grid)' : ''} · ${weather.temperature.toFixed(0)}/${weather.dewPoint.toFixed(0)} °C`}
+            : `Cloud cover here low ${Math.round(cover.low * 100)}% · mid ${Math.round(cover.mid * 100)}% · high ${Math.round(cover.high * 100)}%${cover.conv > 0.005 ? ` · towers ${Math.round(cover.conv * 100)}%` : ''}${cover.regional ? ' (blended grid)' : ''} · ${weather.temperature.toFixed(0)}/${weather.dewPoint.toFixed(0)} °C`}
         </div>
       ) : (
         <label className='dev-row'>

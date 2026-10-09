@@ -1,5 +1,6 @@
 import { ecefToGeodetic, type WeatherGridCell } from '@windowseat/shared'
-import { Uniform, Vector3, type ShaderMaterial, type Texture } from 'three'
+import type { Vector3} from 'three';
+import { Uniform, Vector4, type ShaderMaterial, type Texture } from 'three'
 
 import { COVERAGE_THRESHOLD } from './coverageTexture'
 import { REGION_RADIUS, RegionalCoverage, type Cover } from './regionalCoverage'
@@ -24,31 +25,31 @@ uniform vec3 regionalEast;
 uniform vec3 regionalNorth;
 uniform float regionalRadius;
 uniform float regionalEnabled;
-uniform vec3 coverageFallback;
+uniform vec4 coverageFallback;
 
 vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLevel) {
-  vec3 cover = coverageFallback;
+  vec4 cover = coverageFallback;
   if (regionalEnabled > 0.5) {
     // Positions here are globe-centered (ECEF plus a small, mostly radial
     // altitude correction), so the east/north projection is unaffected.
     vec3 d = position - regionalAnchor;
     vec2 st = vec2(dot(d, regionalEast), dot(d, regionalNorth)) / (2.0 * regionalRadius) + 0.5;
     float edge = min(min(st.x, st.y), min(1.0 - st.x, 1.0 - st.y));
-    vec3 regional = texture(regionalCoverage, clamp(st, 0.0, 1.0)).rgb;
+    vec4 regional = texture(regionalCoverage, clamp(st, 0.0, 1.0));
     cover = mix(coverageFallback, regional, smoothstep(0.0, 0.08, edge));
   }
-  vec3 offset = clamp(${COVERAGE_THRESHOLD.toFixed(6)} - (1.0 - cover), -1.0, 1.0);
-  vec3 direct = clamp(weather.rgb + offset, 0.0, 1.0);
+  vec4 offset = clamp(${COVERAGE_THRESHOLD.toFixed(6)} - (1.0 - cover), -1.0, 1.0);
+  vec4 direct = clamp(weather + offset, 0.0, 1.0);
   // Distant samples read blurred mips of the noise (all ~0.5), and
   // thresholding a blurred value turns far clouds into a uniform translucent
   // wall. Use the expected value of clamp(u + offset) over the uniform noise
   // instead, which is what blurring the thresholded field would give.
-  vec3 expected = mix(
+  vec4 expected = mix(
     0.5 * (1.0 + offset) * (1.0 + offset),
     1.0 - 0.5 * (1.0 - offset) * (1.0 - offset),
     step(0.0, offset)
   );
-  weather.rgb = mix(direct, expected, smoothstep(0.5, 3.0, mipLevel));
+  weather = mix(direct, expected, smoothstep(0.5, 3.0, mipLevel));
   return weather;
 }
 `
@@ -60,7 +61,7 @@ export interface RegionalUniforms {
   regionalNorth: Uniform<Vector3>
   regionalRadius: Uniform<number>
   regionalEnabled: Uniform<number>
-  coverageFallback: Uniform<Vector3>
+  coverageFallback: Uniform<Vector4>
 }
 
 export function createRegionalUniforms(regional: RegionalCoverage): RegionalUniforms {
@@ -71,7 +72,7 @@ export function createRegionalUniforms(regional: RegionalCoverage): RegionalUnif
     regionalNorth: new Uniform(regional.north),
     regionalRadius: new Uniform(REGION_RADIUS),
     regionalEnabled: new Uniform(0),
-    coverageFallback: new Uniform(new Vector3())
+    coverageFallback: new Uniform(new Vector4())
   }
 }
 
@@ -110,7 +111,7 @@ export class RegionalCoverageController {
     live: boolean,
     center: Vector3,
     grid: ReadonlyMap<string, WeatherGridCell>,
-    fallback: [number, number, number]
+    fallback: [number, number, number, number]
   ): void {
     this.uniforms.coverageFallback.value.set(...fallback)
     if (live) this.coverage.update(dt, center, grid)

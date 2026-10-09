@@ -71,7 +71,8 @@ function manualSpec(coverage: number): CloudWeatherSpec {
     coverage,
     low: { altitude: 750, height: 650, coverage },
     mid: { altitude: 1000, height: 1200, coverage },
-    high: { altitude: 7500, height: 500, coverage: 0.5 }
+    high: { altitude: 7500, height: 500, coverage: 0.5 },
+    convective: { altitude: 750, height: 0, coverage: 0 }
   }
 }
 
@@ -83,17 +84,19 @@ interface LayerTarget {
   coverage: number
 }
 
-function layerTargets(spec: CloudWeatherSpec, geoid: number): [LayerTarget, LayerTarget, LayerTarget] {
-  return [spec.low, spec.mid, spec.high].map(layer => ({
+function layerTargets(spec: CloudWeatherSpec, geoid: number): LayerTarget[] {
+  return [spec.low, spec.mid, spec.high, spec.convective].map(layer => ({
     altitude: layer.altitude + geoid,
     height: layer.height,
     coverage: layer.coverage
-  })) as [LayerTarget, LayerTarget, LayerTarget]
+  }))
 }
 
 /** Per-layer density (takram defaults; cirrus thickens a little with cover). */
 const LOW_MID_DENSITY = 0.2
 const CIRRUS_DENSITY = 0.004
+/** Towering cumulus / cumulonimbus: denser than fair-weather cumulus. */
+const CONVECTIVE_DENSITY = 0.3
 
 /**
  * Volumetric clouds (takram three-clouds), following its 3DTilesRenderer
@@ -134,7 +137,7 @@ export const VolumetricClouds: FC = () => {
 
   const ref = useRef<CloudsEffect>(null)
   const initialized = useRef(false)
-  const blended = useRef<[number, number, number]>([0, 0, 0])
+  const blended = useRef<[number, number, number, number]>([0, 0, 0, 0])
   // Our own blended layer heights (not read back from the effect, whose
   // layers <Clouds> may reset to defaults).
   const heights = useRef<Array<{ altitude: number; height: number }>>([])
@@ -170,6 +173,7 @@ export const VolumetricClouds: FC = () => {
       spec.low = { ...spec.low, coverage: gridCover.low }
       spec.mid = { ...spec.mid, coverage: gridCover.mid }
       spec.high = { ...spec.high, coverage: gridCover.high }
+      spec.convective = { ...spec.convective, coverage: gridCover.conv }
     }
     const geoid = live ? geoidHeight(sample.lat, sample.lon) : 0
     const targets = layerTargets(spec, geoid)
@@ -183,7 +187,7 @@ export const VolumetricClouds: FC = () => {
     effect.coverage = GLOBAL_COVERAGE
     const layers = effect.cloudLayers
     const cover = blended.current
-    for (let i = 0; i < 3; ++i) {
+    for (let i = 0; i < 4; ++i) {
       const t = targets[i]!
       const h = (heights.current[i] ??= { altitude: t.altitude, height: t.height })
       h.altitude += (t.altitude - h.altitude) * kHeight
@@ -192,29 +196,33 @@ export const VolumetricClouds: FC = () => {
       const layer = layers[i]
       if (layer == null) continue
       layer.altitude = h.altitude
-      layer.height = h.height
+      // An empty layer (no towers forecast) costs no ray marching.
+      layer.height = i === 3 && cover[3]! < 0.005 ? 0 : h.height
     }
     // Static shape parameters are re-applied every frame: <Clouds> resets
     // its layers to takram's defaults after mount.
-    for (let i = 0; i < 3; ++i) {
+    const shadows = QUALITY_PRESETS[qualityStore.get().level].cloudShadows
+    for (let i = 0; i < 4; ++i) {
       const layer = layers[i]
       if (layer == null) continue
       layer.weatherExponent = 1
       layer.coverageFilterWidth = FILTER_WIDTH
-      layer.shapeAlteringBias = 0.35
-      layer.densityScale = i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : LOW_MID_DENSITY
+      // Towers stay wide most of the way up (lower bias), cumulus round off.
+      layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35
+      layer.densityScale =
+        i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : i === 3 ? CONVECTIVE_DENSITY : LOW_MID_DENSITY
       layer.shapeAmount = i === 2 ? 0.4 : 1
       layer.shapeDetailAmount = i === 2 ? 0 : 1
-      layer.shadow = i < 2 && QUALITY_PRESETS[qualityStore.get().level].cloudShadows
+      layer.shadow = i !== 2 && shadows
     }
     // Cover per layer: from the regional grid at each sample's position
     // when there is weather data (patched shader), else the blended
     // view-center / manual cover everywhere.
-    regional.update(dt, live, lightAnchor, weatherStore.get().grid, [cover[0]!, cover[1]!, cover[2]!])
+    regional.update(dt, live, lightAnchor, weatherStore.get().grid, [cover[0]!, cover[1]!, cover[2]!, cover[3]!])
     sinceDisplay.current += dt
     if (sinceDisplay.current > 0.5) {
       sinceDisplay.current = 0
-      cloudCoverStore.set({ low: cover[0]!, mid: cover[1]!, high: cover[2]!, regional: gridCover != null })
+      cloudCoverStore.set({ low: cover[0]!, mid: cover[1]!, high: cover[2]!, conv: cover[3]!, regional: gridCover != null })
     }
   })
 

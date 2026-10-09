@@ -5,6 +5,8 @@ export const cloudCoverStore = createStore({
   low: 0,
   mid: 0,
   high: 0,
+  /** Convective towers. */
+  conv: 0,
   /** True when it comes from the blended weather grid. */
   regional: false
 })

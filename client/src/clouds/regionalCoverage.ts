@@ -1,4 +1,10 @@
-import { ecefToGeodetic, enuBasis, normalizeLongitude, type WeatherGridCell } from '@windowseat/shared'
+import {
+  convectiveCoverage,
+  ecefToGeodetic,
+  enuBasis,
+  normalizeLongitude,
+  type WeatherGridCell
+} from '@windowseat/shared'
 import { DataTexture, LinearFilter, NoColorSpace, RGBAFormat, UnsignedByteType, Vector3 } from 'three'
 
 import { gridKey } from '../data/weather'
@@ -32,6 +38,8 @@ export interface Cover {
   low: number
   mid: number
   high: number
+  /** Convective tower coverage (0 … 1). */
+  conv: number
 }
 
 export class RegionalCoverage {
@@ -68,7 +76,12 @@ export class RegionalCoverage {
     // Ease displayed cells toward the data; new cells snap.
     const k = 1 - Math.exp(-elapsed / CELL_TIME_CONSTANT)
     for (const [key, cell] of grid) {
-      const target = { low: cell.low / 100, mid: cell.mid / 100, high: cell.high / 100 }
+      const target = {
+        low: cell.low / 100,
+        mid: cell.mid / 100,
+        high: cell.high / 100,
+        conv: convectiveCoverage(cell.cape, cell.code)
+      }
       const shown = this.displayed.get(key)
       if (shown == null) {
         this.displayed.set(key, target)
@@ -76,6 +89,7 @@ export class RegionalCoverage {
         shown.low += (target.low - shown.low) * k
         shown.mid += (target.mid - shown.mid) * k
         shown.high += (target.high - shown.high) * k
+        shown.conv += (target.conv - shown.conv) * k
       }
     }
     for (const key of this.displayed.keys()) {
@@ -96,14 +110,14 @@ export class RegionalCoverage {
 
   /** Known cell bounds (integer degrees), for extending edges outward. */
   private bounds = { minLat: 0, maxLat: 0, minLon: 0, maxLon: 0 }
-  private mean: Cover = { low: 0, mid: 0, high: 0 }
+  private mean: Cover = { low: 0, mid: 0, high: 0, conv: 0 }
 
   private updateBounds(): void {
     let minLat = Infinity
     let maxLat = -Infinity
     let minLon = Infinity
     let maxLon = -Infinity
-    const mean = { low: 0, mid: 0, high: 0 }
+    const mean = { low: 0, mid: 0, high: 0, conv: 0 }
     for (const [key, c] of this.displayed) {
       const [lat, lon] = key.split(',').map(Number) as [number, number]
       minLat = Math.min(minLat, lat)
@@ -113,9 +127,10 @@ export class RegionalCoverage {
       mean.low += c.low
       mean.mid += c.mid
       mean.high += c.high
+      mean.conv += c.conv
     }
     const n = Math.max(1, this.displayed.size)
-    this.mean = { low: mean.low / n, mid: mean.mid / n, high: mean.high / n }
+    this.mean = { low: mean.low / n, mid: mean.mid / n, high: mean.high / n, conv: mean.conv / n }
     this.bounds = { minLat, maxLat, minLon, maxLon }
   }
 
@@ -149,7 +164,8 @@ export class RegionalCoverage {
     return {
       low: mix(c00.low, c10.low, c01.low, c11.low),
       mid: mix(c00.mid, c10.mid, c01.mid, c11.mid),
-      high: mix(c00.high, c10.high, c01.high, c11.high)
+      high: mix(c00.high, c10.high, c01.high, c11.high),
+      conv: mix(c00.conv, c10.conv, c01.conv, c11.conv)
     }
   }
 
@@ -167,7 +183,7 @@ export class RegionalCoverage {
         data[o] = Math.round(255 * c.low)
         data[o + 1] = Math.round(255 * c.mid)
         data[o + 2] = Math.round(255 * c.high)
-        data[o + 3] = 255
+        data[o + 3] = Math.round(255 * c.conv)
       }
     }
     this.texture.needsUpdate = true

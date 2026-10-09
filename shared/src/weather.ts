@@ -20,6 +20,10 @@ export interface WeatherSample {
   dewPoint: number
   /** Height of the 0 °C level, meters MSL (null if unknown). */
   freezingLevel: number | null
+  /** Convective available potential energy, J/kg (null if unknown). */
+  cape: number | null
+  /** WMO weather code (95–99 thunderstorm, 80–82 showers), if known. */
+  weatherCode: number | null
 }
 
 /** Cloud cover of one cell of the regional weather grid (1° cells). */
@@ -31,6 +35,10 @@ export interface WeatherGridCell {
   low: number
   mid: number
   high: number
+  /** Convective available potential energy, J/kg. */
+  cape: number
+  /** WMO weather code. */
+  code: number
 }
 
 export interface CloudLayerSpec {
@@ -48,6 +56,36 @@ export interface CloudWeatherSpec {
   low: CloudLayerSpec
   mid: CloudLayerSpec
   high: CloudLayerSpec
+  /** Towering cumulus / cumulonimbus (sparse cells), coverage 0 when none. */
+  convective: CloudLayerSpec
+}
+
+/**
+ * How much of an area towering convective cells cover (0 … 1, sparse by
+ * design): thunderstorms (WMO 95–99) give scattered cumulonimbus; showers
+ * (80–82) or high CAPE give fewer, smaller towers.
+ */
+export function convectiveCoverage(cape: number | null, code: number | null): number {
+  const c = Math.max(0, cape ?? 0)
+  const instability = clampValue((c - 300) / 1700, 0, 1)
+  let coverage = 0
+  if (code != null && code >= 95) coverage = 0.3 + 0.15 * instability
+  else if (code != null && code >= 80 && code <= 82) coverage = 0.08 + 0.12 * instability
+  return Math.max(coverage, 0.12 * clampValue((c - 1500) / 1500, 0, 1))
+}
+
+/** Top of convective towers above their base, meters, from CAPE. */
+export function convectiveDepth(cape: number | null): number {
+  return clampValue(3500 + Math.max(0, cape ?? 0) * 3, 3500, 10_000)
+}
+
+function smoothstep01(x: number): number {
+  const t = Math.min(1, Math.max(0, x))
+  return t * t * (3 - 2 * t)
+}
+
+function clampValue(x: number, a: number, b: number): number {
+  return Math.min(b, Math.max(a, x))
 }
 
 const clamp = (x: number, a: number, b: number): number => Math.min(b, Math.max(a, x))
@@ -76,7 +114,10 @@ export function cloudLayersFromWeather(sample: WeatherSample): CloudWeatherSpec 
 
   const ground = Math.max(0, sample.elevation)
   const lowBase = ground + clamp(cumulusBaseAboveGround(sample.temperature, sample.dewPoint), 300, 3000)
-  const lowHeight = 400 + 1400 * low
+  // Scattered cumulus build tall; near overcast, low cloud is a flatter
+  // stratocumulus sheet (thick decks read as walls of cotton).
+  const deck = smoothstep01((low - 0.55) / 0.35)
+  const lowHeight = (400 + 1400 * low) * (1 - deck) + 600 * deck
   const midBase = Math.max(lowBase + lowHeight + 300, 3000)
   const midHeight = 600 + 1200 * mid
   const freezing = sample.freezingLevel ?? 3000
@@ -86,6 +127,11 @@ export function cloudLayersFromWeather(sample: WeatherSample): CloudWeatherSpec 
     coverage: clamp(Math.max(low, mid * 0.9), 0, 1),
     low: { altitude: lowBase, height: lowHeight, coverage: low },
     mid: { altitude: midBase, height: midHeight, coverage: mid },
-    high: { altitude: highBase, height: 500, coverage: high }
+    high: { altitude: highBase, height: 500, coverage: high },
+    convective: {
+      altitude: lowBase,
+      height: convectiveDepth(sample.cape),
+      coverage: convectiveCoverage(sample.cape, sample.weatherCode)
+    }
   }
 }

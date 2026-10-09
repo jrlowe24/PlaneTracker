@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { cloudLayersFromWeather, cumulusBaseAboveGround, type WeatherSample } from './weather'
+import {
+  cloudLayersFromWeather,
+  convectiveCoverage,
+  cumulusBaseAboveGround,
+  type WeatherSample
+} from './weather'
 
 const base: WeatherSample = {
   lat: 47.45,
@@ -12,7 +17,9 @@ const base: WeatherSample = {
   cloudCoverHigh: 0,
   temperature: 20,
   dewPoint: 10,
-  freezingLevel: 3500
+  freezingLevel: 3500,
+  cape: 0,
+  weatherCode: 0
 }
 
 describe('cloud layers from weather', () => {
@@ -36,5 +43,15 @@ describe('cloud layers from weather', () => {
     const clear = cloudLayersFromWeather(base)
     expect(clear.coverage).toBe(0)
     expect(clear.low.coverage + clear.mid.coverage + clear.high.coverage).toBe(0)
+  })
+
+  it('adds towering convective cells only for storms or strong instability', () => {
+    expect(cloudLayersFromWeather(base).convective.coverage).toBe(0)
+    expect(convectiveCoverage(500, 3)).toBe(0)
+    const storm = cloudLayersFromWeather({ ...base, cape: 2000, weatherCode: 95 })
+    expect(storm.convective.coverage).toBeGreaterThan(0.3)
+    expect(storm.convective.altitude).toBe(storm.low.altitude)
+    expect(storm.convective.height).toBeGreaterThan(8000)
+    expect(convectiveCoverage(3000, 2)).toBeGreaterThan(0)
   })
 })

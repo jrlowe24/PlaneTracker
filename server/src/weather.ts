@@ -30,6 +30,8 @@ interface OpenMeteoResponse {
     temperature_2m?: number
     dew_point_2m?: number
     freezing_level_height?: number | null
+    cape?: number | null
+    weather_code?: number | null
   }
 }
 
@@ -51,7 +53,9 @@ export function parseOpenMeteo(body: OpenMeteoResponse): WeatherSample | null {
     cloudCoverHigh: c.cloud_cover_high ?? 0,
     temperature: c.temperature_2m ?? 15,
     dewPoint: c.dew_point_2m ?? 5,
-    freezingLevel: c.freezing_level_height ?? null
+    freezingLevel: c.freezing_level_height ?? null,
+    cape: c.cape ?? null,
+    weatherCode: c.weather_code ?? null
   }
 }
 
@@ -89,7 +93,7 @@ export class WeatherService {
       latitude: lat.toFixed(2),
       longitude: lon.toFixed(2),
       current:
-        'cloud_cover_low,cloud_cover_mid,cloud_cover_high,temperature_2m,dew_point_2m,freezing_level_height',
+        'cloud_cover_low,cloud_cover_mid,cloud_cover_high,temperature_2m,dew_point_2m,freezing_level_height,cape,weather_code',
       timezone: 'GMT'
     })
     try {
@@ -121,7 +125,13 @@ export const GRID_RADIUS_CELLS = 3
 interface OpenMeteoGridItem {
   latitude: number
   longitude: number
-  current?: { cloud_cover_low?: number; cloud_cover_mid?: number; cloud_cover_high?: number }
+  current?: {
+    cloud_cover_low?: number
+    cloud_cover_mid?: number
+    cloud_cover_high?: number
+    cape?: number | null
+    weather_code?: number | null
+  }
 }
 
 const gridKey = (lat: number, lon: number): string => `${lat},${lon}`
@@ -171,7 +181,7 @@ export class WeatherGrid {
     const params = new URLSearchParams({
       latitude: cells.map(c => c[0]).join(','),
       longitude: cells.map(c => c[1]).join(','),
-      current: 'cloud_cover_low,cloud_cover_mid,cloud_cover_high',
+      current: 'cloud_cover_low,cloud_cover_mid,cloud_cover_high,cape,weather_code',
       timezone: 'GMT'
     })
     try {
@@ -196,7 +206,9 @@ export class WeatherGrid {
             lon,
             low: c.cloud_cover_low ?? 0,
             mid: c.cloud_cover_mid ?? 0,
-            high: c.cloud_cover_high ?? 0
+            high: c.cloud_cover_high ?? 0,
+            cape: c.cape ?? 0,
+            code: c.weather_code ?? 0
           },
           fetchedAt: now
         })

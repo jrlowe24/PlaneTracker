@@ -10,7 +10,7 @@ import {
 
 /**
  * Cloud noise for takram's clouds ("local weather": r = low cumulus, g =
- * mid, b = cirrus), tiled over the globe.
+ * mid, b = cirrus, a = convective towers), tiled over the globe.
  *
  * Each channel holds tileable fBm noise rank-transformed to a uniform
  * distribution u ∈ [0, 1). The patched clouds shader (regionalShader.ts)
@@ -63,15 +63,19 @@ interface NoiseStyle {
   periodY: number
   octaves: number
   seed: number
+  /** Amplitude ratio between octaves (0.5 default; higher = rougher edges). */
+  persistence?: number
 }
 
-const STYLES: [NoiseStyle, NoiseStyle, NoiseStyle] = [
+const STYLES: [NoiseStyle, NoiseStyle, NoiseStyle, NoiseStyle] = [
   // Low: cumulus blobs, a few km across.
-  { periodX: 12, periodY: 12, octaves: 4, seed: 11 },
+  { periodX: 12, periodY: 12, octaves: 5, seed: 11, persistence: 0.6 },
   // Mid: broader sheets (altostratus/altocumulus).
   { periodX: 5, periodY: 5, octaves: 4, seed: 23 },
   // High: streaky cirrus.
-  { periodX: 16, periodY: 3, octaves: 3, seed: 37 }
+  { periodX: 16, periodY: 3, octaves: 3, seed: 37 },
+  // Convective: isolated towers, fewer and larger than cumulus cells.
+  { periodX: 7, periodY: 7, octaves: 2, seed: 53 }
 ]
 
 /** Rank-transforms values to a uniform distribution over [0, 1). */
@@ -91,7 +95,7 @@ function fbmChannel(style: NoiseStyle): Float32Array {
       for (let o = 0; o < style.octaves; ++o) {
         const f = 2 ** o
         sum += amplitude * valueNoise(x / SIZE, y / SIZE, style.periodX * f, style.periodY * f, style.seed + o)
-        amplitude *= 0.5
+        amplitude *= style.persistence ?? 0.5
       }
       values[y * SIZE + x] = sum
     }
@@ -103,9 +107,9 @@ export class CoverageTexture {
   readonly texture: DataTexture
 
   constructor() {
-    const channels = [fbmChannel(STYLES[0]), fbmChannel(STYLES[1]), fbmChannel(STYLES[2])]
+    const channels = STYLES.map(fbmChannel)
     const data = new Uint8Array(SIZE * SIZE * 4)
-    for (let channel = 0; channel < 3; ++channel) {
+    for (let channel = 0; channel < 4; ++channel) {
       const u = channels[channel]!
       for (let i = 0; i < u.length; ++i) data[i * 4 + channel] = Math.round(u[i]! * 255)
     }
