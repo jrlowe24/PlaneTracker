@@ -1,6 +1,18 @@
-import type { Object3D } from 'three'
+/**
+ * Nav light positions for the glow post effect, refilled every frame by
+ * NavLights: camera-relative position (m), distance, and color (radiance,
+ * already scaled for exposure and visibility).
+ */
+export interface GlowLight {
+  x: number
+  y: number
+  z: number
+  distance: number
+  r: number
+  g: number
+  b: number
+}
 
-import { createStore } from '../state/createStore'
-
-/** The nav lights mesh, for the post effect that gives only it a glow. */
-export const navLightsStore = createStore<{ mesh: Object3D | null }>({ mesh: null })
+export const glowLights: GlowLight[] = []
+/** Number of valid entries in glowLights this frame. */
+export const glowState = { count: 0 }

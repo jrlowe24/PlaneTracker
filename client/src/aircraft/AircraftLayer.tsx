@@ -5,7 +5,6 @@ import type { PerspectiveCamera } from 'three'
 
 import { AircraftInstances } from './aircraftInstances'
 import { NavLights } from './navLights'
-import { navLightsStore } from './navLightsStore'
 import { FRAME_PRIORITY } from './framePriority'
 
 export const AircraftLayer: FC = () => {
@@ -14,14 +13,13 @@ export const AircraftLayer: FC = () => {
   const { transientStates } = useContext(AtmosphereContext)
   const instances = useMemo(() => new AircraftInstances(), [])
   const navLights = useMemo(() => new NavLights(), [])
-  useEffect(() => {
-    navLightsStore.set({ mesh: navLights.mesh })
-    return () => {
-      navLightsStore.set({ mesh: null })
+  useEffect(
+    () => () => {
       instances.dispose()
       navLights.dispose()
-    }
-  }, [instances, navLights])
+    },
+    [instances, navLights]
+  )
 
   useFrame((_, delta) => {
     instances.updatePoses(Math.min(delta, 0.25))

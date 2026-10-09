@@ -1,5 +1,5 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { SelectiveBloom, SMAA, ToneMapping } from '@react-three/postprocessing'
+import { SMAA, ToneMapping } from '@react-three/postprocessing'
 import type { AerialPerspectiveEffect, LightingMaskPass } from '@takram/three-atmosphere'
 import {
   AerialPerspective,
@@ -12,11 +12,11 @@ import {
   ToneMappingMode,
   type EffectComposer as EffectComposerImpl
 } from 'postprocessing'
-import { useContext, useEffect, useRef, useState, type FC } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState, type FC } from 'react'
 import { Uniform, Vector3 } from 'three'
 
-import { AIRCRAFT_LAYER, GLOW_LAYER } from '../aircraft/layers'
-import { navLightsStore } from '../aircraft/navLightsStore'
+import { AIRCRAFT_LAYER } from '../aircraft/layers'
+import { NavGlowEffect } from '../aircraft/NavGlowEffect'
 import { cloudDepth } from '../clouds/cloudDepth'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
 import { NightLights } from '../nightLights/NightLights'
@@ -228,8 +228,13 @@ export const PostEffects: FC = () => {
   const { transientStates } = useContext(AtmosphereContext)
   const cloudsEnabled = useStore(qualityStore, s => QUALITY_PRESETS[s.level].clouds !== false)
   const lensFlare = useStore(qualityStore, s => QUALITY_PRESETS[s.level].lensFlare)
-  const bloom = useStore(qualityStore, s => s.level !== 'low')
-  const navLightsMesh = useStore(navLightsStore, s => s.mesh)
+  const navGlow = useMemo(() => new NavGlowEffect(camera), [camera])
+  useEffect(
+    () => () => {
+      navGlow.dispose()
+    },
+    [navGlow]
+  )
   // With clouds, the sky is drawn in post while the sun is up so cloud light
   // shafts reach it; at night the scene Sky + Stars are kept (sky-in-post
   // would replace the stars, and there are no light shafts at night).
@@ -330,21 +335,8 @@ export const PostEffects: FC = () => {
         correctGeometricError
         albedoScale={2 / Math.PI}
       />
-      {/* Glow on aircraft lights only: selective, so bright surfaces (sunlit
-          snow, cloud tops) never bloom. */}
-      <>
-        {bloom && navLightsMesh != null ? (
-          <SelectiveBloom
-            selection={navLightsMesh}
-            selectionLayer={GLOW_LAYER}
-            lights={[navLightsMesh]}
-            mipmapBlur
-            luminanceThreshold={0}
-            intensity={1.1}
-            radius={0.45}
-          />
-        ) : null}
-      </>
+      {/* Glow halos around aircraft nav lights only. */}
+      <primitive object={navGlow} dispose={null} />
       <>{lensFlare ? <LensFlare /> : null}</>
       <ToneMapping mode={ToneMappingMode.AGX} />
       {/* Before SMAA so it merges into the tone-mapping pass (one fewer

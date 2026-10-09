@@ -64,21 +64,25 @@ export interface AirframeScale {
   length: number
 }
 
-const UNIT: AirframeScale = { span: 1, length: 1 }
+/**
+ * Display size relative to real dimensions. True scale read as oversized
+ * against the photogrammetry (whose buildings and runways look smaller than
+ * their nominal size from the air).
+ */
+export const AIRCRAFT_SIZE_SCALE = 0.75
 
-/** Real [length, span] in meters: the type's, else the class placeholder's. */
+/** Displayed [length, span] in meters: the type's, else the class placeholder's. */
 export function typeDimensions(typeCode: string | null, cls: AircraftClass): [number, number] {
   const dims = typeCode == null ? undefined : DIMENSIONS[typeCode.toUpperCase()]
-  if (dims != null) return dims
   const params = AIRFRAMES[cls]
-  return [params.length, params.rotorDiameter ?? params.wingSpan]
+  const [length, span] = dims ?? [params.length, params.rotorDiameter ?? params.wingSpan]
+  return [length * AIRCRAFT_SIZE_SCALE, span * AIRCRAFT_SIZE_SCALE]
 }
 
 /** Scale from the class placeholder to the real type (1, 1 if unknown). */
 export function airframeScale(typeCode: string | null, cls: AircraftClass): AirframeScale {
-  const dims = typeCode == null ? undefined : DIMENSIONS[typeCode.toUpperCase()]
-  if (dims == null) return UNIT
   const params = AIRFRAMES[cls]
+  const dims = typeDimensions(typeCode, cls)
   const length = dims[0] / params.length
   // Helicopters: "span" is the rotor; the placeholder's rotor diameter.
   const classSpan = params.rotorDiameter ?? params.wingSpan

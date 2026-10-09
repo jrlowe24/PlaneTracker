@@ -12,6 +12,7 @@ import { nightState } from '../scene/nightLighting'
 import { AIRFRAMES } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
+import { glowLights, glowState } from './navLightsStore'
 
 /**
  * Aircraft navigation lights: red left wingtip, green right wingtip, white
@@ -29,6 +30,8 @@ const LIGHT_RADIUS = 0.09
 const MIN_PIXELS = 1.1
 /** Lights further than this aren't drawn (icons/markers take over). */
 const MAX_DISTANCE = 120_000
+/** Lights get a glow halo (NavGlowEffect) within this distance. */
+const GLOW_MAX_DISTANCE = 40_000
 
 // Displayed brightness (radiance × exposure): bright enough to read as
 // emitters (selective bloom adds the glow) but not so far past white that
@@ -128,7 +131,19 @@ export class NavLights {
       colors[n * 3 + 1] = color[1] * k
       colors[n * 3 + 2] = color[2] * k
       ++n
+      if (distance < GLOW_MAX_DISTANCE) {
+        const g = (glowLights[glowState.count] ??= { x: 0, y: 0, z: 0, distance: 0, r: 0, g: 0, b: 0 })
+        g.x = x
+        g.y = y
+        g.z = z
+        g.distance = distance
+        g.r = color[0] * k
+        g.g = color[1] * k
+        g.b = color[2] * k
+        ++glowState.count
+      }
     }
+    glowState.count = 0
 
     for (const aircraft of list) {
       const pose = aircraft.pose

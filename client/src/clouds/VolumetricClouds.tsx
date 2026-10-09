@@ -10,11 +10,9 @@ import {
 import { useEffect, useMemo, useRef, type FC } from 'react'
 import type { ShaderMaterial, Texture } from 'three'
 
-import { detailedHexes } from '../aircraft/detailState'
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { smoothingFactor } from '../aircraft/motion'
 import { weatherStore } from '../data/weather'
-import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
@@ -128,18 +126,6 @@ export const VolumetricClouds: FC = () => {
     warmupFrames.current += 1
     effect.skipRendering = cloudDepth.fade <= 0 && warmupFrames.current > WARMUP_FRAMES
 
-    // Temporal upscaling reprojects cloud history from previous frames. An
-    // aircraft moving relative to the clouds (followed, taxiing, passing
-    // close by) breaks that history at its edges: halos and interlaced
-    // stripes across the plane. Whenever an aircraft is on screen at full
-    // detail, render clouds without it at half resolution (clean, similar
-    // cost); otherwise aircraft are a few pixels and upscaling is kept.
-    const closeUp = cameraModeStore.get().mode !== 'globe' || detailedHexes.size > 0
-    if (effect.temporalUpscale === closeUp) {
-      effect.temporalUpscale = !closeUp
-      effect.resolutionScale = closeUp ? 0.5 : 1
-    }
-
     const settings = settingsStore.get()
     const sample = weatherStore.get().sample
     const live = settings.cloudSource === 'weather' && sample != null
@@ -219,6 +205,13 @@ export const VolumetricClouds: FC = () => {
         }
       }}
       qualityPreset={preset.clouds}
+      // Temporal upscaling reprojects cloud history from earlier frames; an
+      // aircraft moving against the clouds breaks it (halos, stripes), and
+      // switching it on the fly corrupted the cloud buffers (clouds drawn
+      // over the ground near the camera). Fixed: half resolution, no
+      // temporal upscaling, similar cost.
+      temporalUpscale={false}
+      resolutionScale={0.5}
       lightShafts={preset.lightShafts}
       localWeatherTexture={coverageTexture.texture}
       // Self-hosted copies of takram's textures (MIT); the STBN noise still
