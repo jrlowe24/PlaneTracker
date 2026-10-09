@@ -380,9 +380,13 @@ coarser tile error targets per preset, all deep imports pre-bundled.
   class. Types with neither use their class placeholder. Loaded models get
   the same lighting patch as the placeholders.
 
-  Currently configured: a user-provided Boeing 737-800 (Alaska livery,
-  Meshy AI, ~17 MB GLB, kept out of git) for narrowbody, widebody and
-  regional jets, fitted per type.
+  `liveries` maps an airline's ICAO code (callsign prefix, e.g. `DAL`) to
+  a model and wins over type and class models for airliners.
+
+  Currently configured (user-provided Meshy AI Boeing 737-800s, ~17 MB GLBs,
+  kept out of git): Delta livery for DAL and Endeavor (EDV), Alaska livery
+  for ASA and Horizon (QXE) and as the default for all other narrowbody,
+  widebody and regional jets, fitted to each type's dimensions.
 
 **Model licensing**: only add models you may redistribute (they're served
 to every visitor). Check the license (CC-BY needs visible credit; CC-BY-NC

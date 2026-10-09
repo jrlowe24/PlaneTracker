@@ -66,7 +66,7 @@ class DetailedAircraftController {
       fitScale: { span: 1, length: 1 },
       cls,
       typeCode,
-      object: createDetailedModel(typeCode, cls, (model, modelEntry) => {
+      object: createDetailedModel(typeCode, cls, state?.callsign ?? null, (model, modelEntry) => {
         // Swap in the glTF model if this entry is still alive.
         if (this.entries.get(hex) !== entry) {
           disposeDetailedModel(model)

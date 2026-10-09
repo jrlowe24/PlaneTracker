@@ -37,6 +37,20 @@ export interface ModelManifest {
   models: Record<string, ModelEntry>
   /** Fallback by aircraft class for types without their own model. */
   classes?: Partial<Record<AircraftClass, ModelEntry>>
+  /**
+   * By airline ICAO code (callsign prefix, e.g. "DAL"): the airline's
+   * livery. Wins over type and class models, for airliner classes only.
+   */
+  liveries?: Record<string, ModelEntry>
+}
+
+/** Classes that carry airline liveries. */
+const LIVERY_CLASSES: ReadonlySet<AircraftClass> = new Set(['narrowbody', 'widebody', 'regional'])
+
+/** Airline ICAO code from an airline-style callsign ("DAL1234" → "DAL"). */
+export function airlineCode(callsign: string | null): string | null {
+  const match = callsign == null ? null : /^([A-Z]{3})\d/.exec(callsign.trim().toUpperCase())
+  return match?.[1] ?? null
 }
 
 let manifestPromise: Promise<ModelManifest> | null = null
@@ -49,12 +63,16 @@ export function loadManifest(): Promise<ModelManifest> {
   return manifestPromise
 }
 
-/** The model for a type: its own entry, else its class's fallback. */
+/** The model for an aircraft: airline livery, else its type's, else its class's. */
 export function findModelEntry(
   manifest: ModelManifest,
   typeCode: string | null,
-  cls: AircraftClass
+  cls: AircraftClass,
+  callsign: string | null = null
 ): ModelEntry | null {
+  const airline = airlineCode(callsign)
+  const livery = airline == null || !LIVERY_CLASSES.has(cls) ? undefined : manifest.liveries?.[airline]
+  if (livery != null) return livery
   const own = typeCode == null ? undefined : manifest.models[typeCode.toUpperCase()]
   return own ?? manifest.classes?.[cls] ?? null
 }
@@ -171,11 +189,12 @@ export function disposeDetailedModel(object: Object3D): void {
 export function createDetailedModel(
   typeCode: string | null,
   cls: AircraftClass,
+  callsign: string | null,
   onUpgrade: (model: Object3D, entry: ModelEntry) => void
 ): Object3D {
   const placeholder = prepare(placeholderModel(cls), false)
   void loadManifest().then(manifest => {
-    const entry = findModelEntry(manifest, typeCode, cls)
+    const entry = findModelEntry(manifest, typeCode, cls, callsign)
     if (entry == null) return
     void loadTypeModel(entry).then(model => {
       if (model != null) onUpgrade(prepare(model.clone(true), true), entry)
