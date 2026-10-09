@@ -43,6 +43,40 @@ bool isAircraftPixel(const vec2 uv) {
   #endif
 }
 
+/**
+ * Clouds render at half resolution: low-res texels that hit an aircraft
+ * carry no cloud, and bilinear upsampling smears them onto the sky or cloud
+ * around it — a pale band hugging the silhouette. Next to an aircraft,
+ * rebuild the overlay from the surrounding low-res texels that aren't
+ * aircraft (bilinear weights renormalized).
+ */
+vec4 overlayAroundAircraft(const vec2 uv, const vec4 overlay) {
+  #if defined(HAS_OVERLAY) && defined(HAS_LIGHTING_MASK)
+  ivec2 size = textureSize(overlayBuffer, 0);
+  vec2 st = uv * vec2(size) - 0.5;
+  ivec2 base = ivec2(floor(st));
+  vec2 f = st - vec2(base);
+  vec4 sum = vec4(0.0);
+  float weightSum = 0.0;
+  bool nearAircraft = false;
+  for (int y = 0; y <= 1; ++y) {
+    for (int x = 0; x <= 1; ++x) {
+      ivec2 texel = clamp(base + ivec2(x, y), ivec2(0), size - 1);
+      if (isAircraftPixel((vec2(texel) + 0.5) / vec2(size))) {
+        nearAircraft = true;
+        continue;
+      }
+      float w = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+      sum += w * texelFetch(overlayBuffer, texel, 0);
+      weightSum += w;
+    }
+  }
+  return nearAircraft && weightSum > 1e-3 ? sum / weightSum : overlay;
+  #else
+  return overlay;
+  #endif
+}
+
 bool cloudInFrontOfAircraft(const vec2 uv) {
   #ifdef HAS_LIGHTING_MASK
   if (hasCloudDepth < 0.5 || !isAircraftPixel(uv)) return true;
@@ -92,7 +126,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     // ~0.9 albedo so they read as moonlit, not overcast day), by opacity.
     .replace(
       'vec4 overlay = texture(overlayBuffer, uv);',
-      'vec4 overlay = texture(overlayBuffer, uv);\n  if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
+      'vec4 overlay = texture(overlayBuffer, uv);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
     )
     .replace(
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
@@ -103,7 +137,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
     )
   if (
-    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|isAircraftPixel\(uv\)/g) ?? [])
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft/g) ?? [])
       .length < 9
   ) {
     // takram's shader changed: night light only partly applied.
