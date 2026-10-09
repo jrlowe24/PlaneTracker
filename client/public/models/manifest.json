@@ -1,0 +1,5 @@
+{
+  "$comment": "Map ICAO type designators to glTF/GLB files in this folder. Types without an entry use the procedural placeholder for their class. Model space: +Z forward (nose), +Y up, +X left wing, meters, origin near the center of gravity; use scale/rotationDeg/offset to adapt other conventions. Only add models you are licensed to redistribute (see README, Aircraft models).",
+  "version": 1,
+  "models": {}
+}

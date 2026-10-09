@@ -1,7 +1,9 @@
 import { useEffect, useState, type FC } from 'react'
 
 import { config } from '../config'
+import { flightStatusStore } from '../data/flightConnection'
 import { getGoogleTiles } from '../globe/googleTiles'
+import { useStore } from '../state/createStore'
 
 /**
  * Data attribution, visible at all times.
@@ -53,8 +55,27 @@ const GoogleAttribution: FC = () => {
   )
 }
 
+/** Attribution required by the active flight data source (adsb.lol: ODbL). */
+const FlightDataAttribution: FC = () => {
+  const attribution = useStore(flightStatusStore, s => s.attribution)
+  const url = useStore(flightStatusStore, s => s.attributionUrl)
+  if (attribution == null) return null
+  return (
+    <div className='attribution-flight'>
+      {url != null ? (
+        <a href={url} target='_blank' rel='noreferrer'>
+          {attribution}
+        </a>
+      ) : (
+        attribution
+      )}
+    </div>
+  )
+}
+
 export const Attribution: FC = () => (
   <div className='attribution'>
+    <FlightDataAttribution />
     {config.tilesDisabled ? (
       <div className='attribution-note'>
         Google 3D tiles disabled ({config.tilesDisabledReason})

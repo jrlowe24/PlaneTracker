@@ -2,18 +2,18 @@
 
 A live 3D flight tracker with a passenger's-eye view: every aircraft in the
 air on a photorealistic globe (Google Photorealistic 3D Tiles), with physically
-based atmosphere, real sun position and, later, volumetric clouds. Pick a
-plane, follow it, then look out of its window.
+based atmosphere and real sun position. Pick a plane, follow it, then look
+out of its window.
 
-> Status: **milestone 1** (scaffold + globe). Flight data, motion, window view
-> and clouds come in later milestones.
+> Status: milestones 1–4 (globe, data pipeline, motion + chase cam, window
+> view + models). Clouds and polish come in milestone 5.
 
 ## Repository layout
 
 ```
 client/   Vite + React + TypeScript + React Three Fiber app
-server/   Node + TypeScript WebSocket server for flight data (stub for now)
-shared/   Types and unit conversions shared by client and server
+server/   Node + TypeScript WebSocket server: one upstream poller, replay
+shared/   Types, wire protocol, units, geodesy, geoid shared by both
 ```
 
 pnpm workspaces; Node ≥ 22, pnpm 10.
@@ -23,31 +23,228 @@ pnpm workspaces; Node ≥ 22, pnpm 10.
 ```sh
 pnpm install
 cp client/.env.example client/.env   # then add your key, see below
-pnpm dev                             # client on :5173, server on :8787
+pnpm dev:replay                      # recorded SEA traffic (no adsb.lol calls)
+pnpm dev                             # live adsb.lol data
 ```
 
-Other scripts (from the repo root): `pnpm typecheck`, `pnpm lint`,
-`pnpm test`, `pnpm build`, `pnpm dev:client`, `pnpm dev:server`.
+The client runs on http://localhost:5173 and proxies `/ws` to the server on
+:8787.
 
-### Flags (client/.env)
+| Script                 | What it does                                                           |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `pnpm dev`             | Client + server, live data from adsb.lol                               |
+| `pnpm dev:replay`      | Client + server replaying `server/fixtures/sea.ndjson.gz` on a loop    |
+| `pnpm dev:synth`       | Client + server with 12,000 synthetic aircraft worldwide (`SYNTH=n`)   |
+| `pnpm record --preset sea` | Record 10 min of live data into a replay fixture (see below)       |
+| `pnpm typecheck` / `pnpm lint` / `pnpm test` / `pnpm build` | Checks and production build |
 
-| Variable                   | Meaning                                                                                             |
-| -------------------------- | --------------------------------------------------------------------------------------------------- |
-| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps Platform key (Map Tiles API). Without it the app falls back to the plain ellipsoid.     |
-| `VITE_DISABLE_TILES=1`     | Use a plain WGS84 ellipsoid instead of Google tiles. No Google requests are made. Use it for non-visual work. |
+Use replay (or synth) while developing so we don't hammer adsb.lol.
+
+### Flags
+
+| Variable (file)                         | Meaning                                                                                  |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `VITE_GOOGLE_MAPS_API_KEY` (client/.env) | Google Maps Platform key (Map Tiles API). Without it the app uses the plain ellipsoid.  |
+| `VITE_DISABLE_TILES=1` (client/.env)    | Plain WGS84 ellipsoid instead of Google tiles; no Google requests. For non-visual work. |
+| `REPLAY=1`, `REPLAY_FILE=fixtures/x.ndjson.gz` (server env) | Replay a recorded fixture in real time, looping.     |
+| `SYNTH=<count>` (server env)            | Synthetic worldwide traffic for stress tests.                                            |
+| `PORT` (server env)                     | Server port (default 8787).                                                              |
 
 `client/.env` is gitignored. Never commit keys; only `.env.example` is
 tracked.
 
+### Using it
+
+- Click an aircraft to select it; the panel shows callsign, registration,
+  type, altitude (barometric and GNSS), ground speed, vertical rate, track,
+  squawk and data age.
+- **Follow** (<kbd>F</kbd>): fly to a chase camera behind the aircraft. Drag
+  to orbit, scroll/pinch to zoom.
+- **Window seat** (<kbd>W</kbd>): sit by a window over the wing; drag for
+  limited head movement; <kbd>S</kbd> switches the left/right side.
+- <kbd>Esc</kbd> flies back out to the globe (or clears the selection).
+
 ### Dev controls and URL parameters
 
 In dev builds a panel (toggle with <kbd>`</kbd>) offers a **time offset**
-slider (±12 h from the real UTC clock) for testing day and night, an
-exposure slider, and the number of Google root sessions this page created.
+slider (±12 h from the real UTC clock) for testing day and night, exposure,
+the **interpolation delay**, the flight source/aircraft count and the number
+of Google root sessions this page created.
 
 - `?t=-6`: start with a time offset in hours.
-- `?view=lat,lon,heading,pitch,distance`: initial camera (degrees / meters),
+- `?view=lat,lon,heading,pitch,distance[,height]`: initial camera (degrees /
+  meters; `height` = target height above the ellipsoid, e.g. ~100 at SEA),
   e.g. `?view=40,-100,0,-90,1.6e7` for a whole-Earth view.
+- Console helpers (dev): `__windowSeatBench(frames)` renders frames
+  synchronously with a GPU sync and reports ms/frame (works even when the tab
+  is throttled); `__windowSeatView(lat, lon, heading, pitch, distance,
+  height)` moves the camera without a reload (a reload is a new billable
+  tiles session); `__windowSeatFlights`, `__windowSeatStores`,
+  `__windowSeatTiles`.
+
+## Flight data
+
+### Source: adsb.lol
+
+Findings (checked October 2026 against the API's OpenAPI spec, its source in
+adsblol/api, and live requests) that shape the poller:
+
+- `GET /v2/point/{lat}/{lon}/{radius}`: radius in whole nautical miles,
+  **max 250 nm**. Responses are readsb JSON: `alt_baro` (feet or the string
+  `"ground"`), `alt_geom` (feet, WGS84 ellipsoid), `gs`, `track`,
+  `true_heading`, `baro_rate`/`geom_rate`, `seen_pos`, `t` (type), `r`
+  (registration), `flight` (callsign), `category`, `squawk`.
+- Responses are cached server-side for 5 s, so polling faster is pointless.
+- Rate limits are "dynamic" and unpublished. Measured from one IP: an nginx
+  limiter allows a burst of ~2 requests, then about one every 5–10 s.
+  Faster requests get `429`.
+- A generic `User-Agent` gets `403 "User-Agent too generic; include valid
+  contact info"`. We send `window-seat/0.1 (+repo URL)`.
+- Data is ODbL; the attribution is shown on screen.
+
+### Server pipeline
+
+```
+clients ──viewport──▶ Hub ──merged regions──▶ FlightSource ──▶ AircraftCache
+   ▲                   │                        (adsb.lol / replay / synth)
+   └──── 1 Hz deltas ◀─┘
+```
+
+- Clients send their viewport (center + radius) over the WebSocket.
+- `regions.ts` merges all viewports into a few query circles: each viewport
+  is snapped to a 0.25° / 25 nm grid (so small camera moves keep the same
+  regions), large views become a 7-circle hex cover (max 450 nm radius),
+  contained circles are dropped and nearby circles merged when one ≤ 250 nm
+  query covers both without fetching much more area.
+- `RegionPoller` (the only thing that talks to adsb.lol) keeps one request in
+  flight, ≥ 5.5 s apart, adapting the interval upward on 429 (AIMD) and
+  backing off exponentially on errors (honoring `Retry-After`). Each region
+  is refreshed at most every 5 s; with N regions about every N × interval.
+  At most 8 regions are polled.
+- `AircraftCache` keeps the latest state per ICAO hex (never replacing a
+  newer position with an older one) and drops aircraft unseen for 60 s.
+- The `Hub` pushes each client, at 1 Hz, only the aircraft in its own
+  viewport that changed since its last push, plus removals.
+- Sources implement `FlightSource` (`server/src/sources/types.ts`), so
+  OpenSky, airplanes.live (same readsb format; `normalizeReadsb` can be
+  reused) or a paid feed can be swapped in. Everything is normalized into
+  `AircraftState`; units stay as on the wire (ft, kt, ft/min, degrees) and
+  are converted only in `shared/src/units.ts`.
+
+### Replay mode
+
+`pnpm record --preset sea` (or `--preset london`, or `--lat --lon --radius
+--minutes --interval`) polls one region for 10 min and writes
+`server/fixtures/<name>.ndjson.gz` (gzipped NDJSON: a header line, then one
+line per snapshot of wire tuples with original timestamps). `REPLAY=1`
+plays it back in real time on a loop, shifting timestamps to "now"; each loop
+starts with a reset so clients don't interpolate from the end back to the
+start. The committed `sea` fixture covers ~10 min of SEA/BFI/PAE traffic
+(58 snapshots; gaps where adsb.lol rate-limited the recording).
+
+### Wire protocol
+
+`shared/src/protocol.ts`: client → `{type:'viewport', viewport}`; server →
+`hello` (source + attribution) and `aircraft` messages with `upserts`
+(positional tuples, ~3× smaller than objects) and `removals`.
+
+## Rendering aircraft
+
+- **Instancing**: one `InstancedMesh` per airframe class (narrowbody,
+  widebody, regional, turboprop, bizjet, helicopter, light, generic), with
+  procedural low-poly placeholders. 12,000 synthetic aircraft render at
+  ~12–13 ms/frame including tiles and the full post chain (M3 Pro,
+  GPU-synchronized benchmark).
+- **Precision**: instance matrices are computed in float64 relative to the
+  camera; the meshes sit at the camera position, so float32 matrices keep
+  millimeter precision up close at ECEF scale (~6.4e6 m). Detailed models use
+  three's float64 model-view composition.
+- **Icons vs. true size**: aircraft are drawn at their real size up close and
+  never smaller than ~18 px (5 px from orbit), so they stay findable.
+- **Picking**: aircraft are a few pixels wide, so a click picks the nearest
+  projected aircraft within 22 px (32 px touch), skipping aircraft behind the
+  Earth. `GlobeControls` raycasts only the ground, never aircraft.
+- **Lighting (deliberate choice: mixed lighting)**: tiles are unlit albedo
+  lit in post (`AerialPerspective` sunLight/skyLight). Aircraft are lit by
+  real light sources (`SunLight` + `SkyLight` placed above the view center or
+  the followed aircraft) and masked out of post lighting with
+  `LightingMask`; aerial perspective (haze) still applies. This gives
+  aircraft specular highlights and lets distant icons glow at night. Because
+  three.js lights don't know the Earth's shadow, each aircraft gets a
+  sun-visibility factor (terminator + horizon dip at altitude) and a sky-light
+  scale, so night-side aircraft are dark except for their marker glow.
+
+## Motion
+
+- **Interpolation buffer**: aircraft are drawn 12 s (dev slider) behind the
+  newest data. Between samples a cubic Hermite in a local tangent frame uses
+  each sample's reported velocity, so positions and velocities are
+  continuous. Past the newest sample: linear extrapolation (vertical only
+  4 s), then hold and fade out after 20 s (parked ground traffic holds
+  instead). Before the first sample: back-fill along the velocity, so new
+  aircraft are already moving. Implausible jumps (>450 m/s) aren't
+  interpolated across.
+- **Error smoothing**: when late data contradicts the extrapolated path, the
+  jump is absorbed into an offset that decays over ~1 s (netcode-style)
+  instead of snapping.
+- **Attitude from kinematics**: heading = track of the interpolated velocity
+  (smoothed); bank = atan(V·ω/g) from the turn rate along the trajectory,
+  clamped to ±30°; pitch = flight-path angle + 2.5° angle of attack (faded in
+  with speed; 0 on the ground). All smoothed with frame-rate-independent
+  time constants.
+- **Altitude datum**: Google tiles use WGS84 ellipsoid heights. `alt_geom`
+  (readsb: WGS84 ellipsoid) is preferred; baro-only states use the
+  aircraft's learned geom−baro offset, else pressure altitude + the EGM96
+  geoid (`shared/src/geoid.ts`, 1° grid generated from NGA EGM96 via
+  `egm96-universal`, within ~2 m of the full model). On-ground aircraft (and
+  low aircraft near the camera) are raycast down onto the tiles; the
+  fuselage sits on per-class gear height, blended over touchdown. Verified
+  at SEA: an A321neo on final tracks the runway 34L centerline over the
+  threshold and settles onto the runway; parked aircraft sit on the ramp.
+- **Frame order** (`aircraft/framePriority.ts`): aircraft poses (−3) →
+  follow/window camera (−2) → `GlobeControls` (−1) → detailed models (−0.5)
+  → tiles + instance matrices (0) → composer (1). The camera always uses the
+  pose of the same frame, so there's no jitter.
+
+## Cameras
+
+- **Chase**: orbits the followed aircraft in its heading frame (level, so it
+  doesn't roll with the bank). Clip planes follow GlobeControls' scheme.
+- **Fly-to**: entering/leaving follow interpolates around the moving target
+  (direction slerp + log-distance zoom, easing), turning to face it early.
+  Leaving hands the camera back to `GlobeControls` from 12 km out.
+- **Window**: rigidly attached to the aircraft body frame (pitches and banks
+  with it) at a seat over the wing, looking ~80° off the nose and slightly
+  down, ±35°/±20° mouse-look, FOV 60°. A CSS overlay draws the cabin wall,
+  the rounded window, an inner shadow and a faint reflection.
+
+## Aircraft models
+
+- `client/src/aircraft/typeClasses.ts` maps ICAO type designators to a class
+  (falls back to the ADS-B emitter category, then generic).
+- `client/src/aircraft/airframes.ts` builds procedural placeholders per class
+  in code (fuselage lathe, swept/tapered/dihedral wings, tail, fin,
+  engines/props/rotor, landing gear), in glTF axes: +Z forward, +Y up, +X
+  left wing, meters. Distant aircraft use 6-segment versions; the followed
+  aircraft and aircraft within 1.5 km use detailed versions with gear (shown
+  on the ground and below ~1,500 ft AGL).
+- `client/public/models/manifest.json` maps type designators to glTF/GLB
+  files in that folder:
+
+  ```json
+  { "version": 1, "models": { "A320": { "url": "a320.glb", "scale": 1, "rotationDeg": [0, 0, 0], "offset": [0, 0, 0], "license": "CC-BY-4.0, Author" } } }
+  ```
+
+  Types without an entry use their class placeholder. Loaded models get the
+  same lighting patch as the placeholders.
+
+**Model licensing**: only add models you may redistribute (they're served
+to every visitor). Check the license (CC-BY needs visible credit; CC-BY-NC
+forbids commercial use; many "free" store models forbid redistribution in
+apps), keep the license and author in the manifest's `license` field, and add
+on-screen or about-page credit where required. Airline liveries and
+manufacturer marks can carry trademark restrictions. Placeholders are
+generated in code and carry no third-party rights.
 
 ## Google Cloud setup
 
@@ -78,9 +275,10 @@ client is built to make exactly one per page load:
 - The `TilesRenderer` is created once per page, outside React's lifecycle
   (`client/src/globe/googleTiles.ts`), and stashed on `globalThis`. React
   re-renders, StrictMode double effects and Vite HMR reuse it.
-- Vite pre-bundles all dependencies (`optimizeDeps` in `vite.config.ts`).
-  Lazy dependency discovery would otherwise force a page reload, which means
-  a second session.
+- Vite pre-bundles all dependencies (`optimizeDeps` in `vite.config.ts`),
+  including every deep `three/addons/...` import. Lazy dependency discovery
+  would otherwise force a page reload, which means a second session. **When
+  adding a deep import, add it to `optimizeDeps.include`.**
 - The auth plugin's "refresh session on any 4xx" behavior is limited to
   sessions older than 30 minutes, so a missing tile can't trigger repeated
   billable root requests.
@@ -98,32 +296,27 @@ page: N)`) show how many sessions the page has created.
   are shown at the bottom left at all times, per the
   [Map Tiles API policies](https://developers.google.com/maps/documentation/tile/policies).
   The logo (`client/public/attribution/google.png`) is shown unmodified at
-  18 px height (the guidelines require 16–19 px). It comes from the
-  3DTilesRendererJS examples. Swap in the official asset from Google's
-  attribution asset bundle if you prefer.
-- **adsb.lol** (milestone 2): flight data from [adsb.lol](https://adsb.lol),
-  ODbL-licensed. It will be credited on screen.
+  18 px height (the guidelines require 16–19 px).
+- **adsb.lol**: "Flight data © adsb.lol contributors (ODbL)" with a link is
+  shown at all times while adsb.lol (or a replay of it) is the source.
+- **EGM96**: geoid data from NGA (public domain), sampled via
+  `egm96-universal` (MIT).
 - **Stars**: `client/public/atmosphere/stars.bin` comes from takram's
   three-geospatial (MIT).
 
-## Architecture (so far)
+## Architecture (rendering)
 
-- **Rendering** (`client/src/scene`): `@takram/three-atmosphere` in
-  *post-process lighting* mode. Google tiles are unlit (albedo).
-  `AerialPerspective` lights them using a half-float normal buffer and adds
-  sun/sky irradiance, transmittance and inscatter. Then come `LensFlare`,
+- **Atmosphere** (`client/src/scene`): `@takram/three-atmosphere`.
+  `AerialPerspective` lights the tiles using a half-float normal buffer and
+  adds sun/sky irradiance, transmittance and inscatter; then `LensFlare`,
   AgX tone mapping, SMAA and dithering. `Sky` and `Stars` render the
-  background. The sun and moon come from `getSimulatedDate()` (real UTC plus
-  the dev offset) every frame.
+  background. The sun and moon follow `getSimulatedDate()` (real UTC plus
+  the dev offset).
 - **Tiles** (`client/src/globe`): `3d-tiles-renderer` with
   `GoogleCloudAuthPlugin`, `GLTFExtensionsPlugin` (Draco), `TileNormalsPlugin`
   (ours: creased normals computed in a worker pool, because Google tiles have
   no normals; plus anisotropic filtering), `TileCompressionPlugin` (mipmaps
   kept for grazing views), `UpdateOnChangePlugin` and `TilesFadePlugin`.
-- **Controls**: `GlobeControls` raycasts only against the ground object
-  (tiles or ellipsoid), so aircraft never steal camera input.
-- **Frame order**: controls (`useFrame` priority −1), then tiles update (0),
-  then the effect composer render (1).
 
 ### Pinned versions
 
@@ -144,15 +337,25 @@ install instead of being forced.
 
 takram's storybook still pins `3d-tiles-renderer` 0.4.24. We use 0.5.3 for
 its traversal and fade fixes. Its published packages don't import
-3d-tiles-renderer, so the two are decoupled. Google tiles with the atmosphere
-were verified in a browser with 0.5.3.
+3d-tiles-renderer, so the two are decoupled.
 
 ## Known limitations
 
-- Night side: Google tiles carry daytime imagery only, so at night the ground
-  is dark. Night lights (NASA Black Marble) are planned as an emissive layer.
-- The atmosphere's aerial perspective has a known faint horizon line artifact
-  at some angles (documented upstream in takram's README).
+- **Coverage**: adsb.lol's free API is per-region (≤ 250 nm) and tightly
+  rate-limited, so live data covers what you look at, up to ~450 nm across,
+  refreshed every ~6–45 s depending on how many regions are in view. Zoomed
+  out to the whole globe you only get the center region. A global feed
+  (OpenSky `states/all` with an account, or a paid feed) can be added as a
+  `FlightSource`. The 10,000+ aircraft path is exercised with `SYNTH`.
+- **Night side**: Google tiles carry daytime imagery only, so at night the
+  ground is dark. Night lights are planned (see milestone 5 notes).
+- The aerial perspective has a known faint horizon line artifact at some
+  angles (documented upstream in takram's README).
+- Coarse tiles can be tens of meters off in height until finer tiles load;
+  ground raycasts are redone every few seconds, so parked aircraft can settle
+  briefly after the camera moves close.
+- Parked aircraft without `track`/`true_heading` keep their last heading
+  (or north if they never moved).
 - `3d-tiles-renderer`'s r3f `GlobeControls` typings declare `ellipsoidFrame`
   as a `Matrix4`, but at runtime it expects an `Object3D`. We pass neither and
   rely on the WGS84 / identity-frame defaults.

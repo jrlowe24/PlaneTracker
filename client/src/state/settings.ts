@@ -8,6 +8,11 @@ export interface Settings {
   timeOffsetMs: number
   /** Camera exposure fed to the tone mapper. */
   exposure: number
+  /**
+   * How far behind the newest data aircraft are rendered, so there is
+   * almost always a sample on each side to interpolate between.
+   */
+  interpolationDelayMs: number
   showDevPanel: boolean
 }
 
@@ -22,6 +27,7 @@ function initialTimeOffsetMs(): number {
 export const settingsStore = createStore<Settings>({
   timeOffsetMs: initialTimeOffsetMs(),
   exposure: 10,
+  interpolationDelayMs: 12_000,
   showDevPanel: import.meta.env.DEV
 })
 

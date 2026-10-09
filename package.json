@@ -8,12 +8,15 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @windowseat/server --filter @windowseat/client dev",
+    "dev:replay": "REPLAY=1 pnpm dev",
+    "dev:synth": "SYNTH=${SYNTH:-12000} pnpm dev",
     "dev:client": "pnpm --filter @windowseat/client dev",
     "dev:server": "pnpm --filter @windowseat/server dev",
     "build": "pnpm --filter @windowseat/client build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "eslint .",
-    "test": "pnpm -r test"
+    "lint": "eslint client server shared eslint.config.js",
+    "test": "pnpm -r test",
+    "record": "pnpm --filter @windowseat/server record"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

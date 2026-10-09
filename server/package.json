@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:replay": "REPLAY=1 tsx watch src/index.ts",
+    "dev:synth": "SYNTH=${SYNTH:-12000} tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "record": "tsx scripts/record.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests"
   },

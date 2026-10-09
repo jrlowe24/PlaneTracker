@@ -1,6 +1,7 @@
 import { useEffect, useState, type FC } from 'react'
 
 import { config } from '../config'
+import { flightStatusStore } from '../data/flightConnection'
 import { tileStatusStore } from '../globe/tileStatus'
 import { useStore } from '../state/createStore'
 import { getSimulatedDate, settingsStore } from '../state/settings'
@@ -28,6 +29,10 @@ export const DevPanel: FC = () => {
   const visible = useStore(settingsStore, s => s.showDevPanel)
   const offset = useStore(settingsStore, s => s.timeOffsetMs)
   const exposure = useStore(settingsStore, s => s.exposure)
+  const delayMs = useStore(settingsStore, s => s.interpolationDelayMs)
+  const aircraftCount = useStore(flightStatusStore, s => s.aircraftCount)
+  const source = useStore(flightStatusStore, s => s.source)
+  const connection = useStore(flightStatusStore, s => s.status)
   const rootLoads = useStore(tileStatusStore, s => s.rootLoads)
   useTicker()
 
@@ -100,6 +105,25 @@ export const DevPanel: FC = () => {
         />
       </label>
 
+      <label className='dev-row'>
+        <span>
+          Interpolation delay <b>{(delayMs / 1000).toFixed(1)} s</b>
+        </span>
+        <input
+          type='range'
+          min={0}
+          max={20}
+          step={0.5}
+          value={delayMs / 1000}
+          onChange={e => {
+            settingsStore.set({ interpolationDelayMs: Number(e.target.value) * 1000 })
+          }}
+        />
+      </label>
+
+      <div className='dev-row muted'>
+        Flights: {source ?? '—'} ({connection}), {aircraftCount} aircraft
+      </div>
       <div className='dev-row muted'>
         Tiles:{' '}
         {config.tilesDisabled

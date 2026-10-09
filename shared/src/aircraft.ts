@@ -12,13 +12,20 @@ export interface AircraftState {
   registration: string | null
   /** ICAO aircraft type designator, e.g. "A320", "B738". */
   typeCode: string | null
+  /** ADS-B emitter category, e.g. "A3" (large), "A7" (rotorcraft). */
+  category: string | null
+  /** Transponder code, e.g. "7000". */
+  squawk: string | null
   /** Degrees, WGS84. */
   lat: number
   /** Degrees, WGS84. */
   lon: number
   /** Barometric (pressure) altitude in feet. Null when unknown or on ground. */
   altBaro: number | null
-  /** Geometric (GNSS) altitude in feet above the WGS84 ellipsoid. */
+  /**
+   * Geometric (GNSS) altitude in feet. readsb-based feeds (adsb.lol,
+   * airplanes.live) report height above the WGS84 ellipsoid.
+   */
   altGeom: number | null
   onGround: boolean
   /** Ground speed in knots. */

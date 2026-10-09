@@ -2,9 +2,11 @@ import { Canvas } from '@react-three/fiber'
 import type { FC } from 'react'
 
 import { Scene } from './scene/Scene'
+import { AircraftPanel } from './ui/AircraftPanel'
 import { Attribution } from './ui/Attribution'
 import { DevPanel } from './ui/DevPanel'
 import { TileErrorBanner } from './ui/TileErrorBanner'
+import { WindowFrame } from './ui/WindowFrame'
 
 export const App: FC = () => (
   <div className='app'>
@@ -16,7 +18,9 @@ export const App: FC = () => (
     >
       <Scene />
     </Canvas>
+    <WindowFrame />
     <TileErrorBanner />
+    <AircraftPanel />
     <DevPanel />
     <Attribution />
   </div>

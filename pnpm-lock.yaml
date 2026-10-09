@@ -127,6 +127,12 @@ importers:
 
   shared:
     devDependencies:
+      egm96-universal:
+        specifier: 1.1.1
+        version: 1.1.1
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -1018,6 +1024,9 @@ packages:
   draco3d@1.5.7:
     resolution: {integrity: sha512-m6WCKt/erDXcw+70IJXnG7M3awwQPAsZvJGX5zY7beBqpELw6RDGkYVU0W43AFxye4pDZ5i2Lbyc/NNGqwjUVQ==}
 
+  egm96-universal@1.1.1:
+    resolution: {integrity: sha512-rHOKjWBcT2SQ1SqATOt3FdVVEkd6+n4Q+j0IDivVc/yqS0SmQ+LLUbNdCRuS6C0aibv9UXxqOyAGIyyg4E22Qg==}
+
   electron-to-chromium@1.5.451:
     resolution: {integrity: sha512-vUNKPrUzw8ByEMOxloq0a71iD/mPuPxVkbDm3G5YhnxTzOw/I6qAg2MUS0cYj/c267lWmw26yW4Vv7foxTxPLg==}
 
@@ -1401,6 +1410,9 @@ packages:
 
   resolve-protobuf-schema@2.1.0:
     resolution: {integrity: sha512-kI5ffTiZWmJaS/huM8wZfEMer1eRd7oJQhDuxeCLe3t7N7mX3z94CN0xPxBQxFYQTSNz9T0i+v6inKqSdK8xrQ==}
+
+  rfc4648@1.5.4:
+    resolution: {integrity: sha512-rRg/6Lb+IGfJqO05HZkN50UtY7K/JhxJag1kP23+zyMfrvoB0B7RWv06MbOzoc79RgCdNTiUaNsTT1AJZ7Z+cg==}
 
   rollup@4.64.3:
     resolution: {integrity: sha512-iIMWbptLYsZdGTJMH8ngApXdsCatE6bCMv2eqGIfGE1++kwh7TCWBdWKK0FKC0yx++196vGK5VdagzRXSLMa8A==}
@@ -2541,6 +2553,10 @@ snapshots:
 
   draco3d@1.5.7: {}
 
+  egm96-universal@1.1.1:
+    dependencies:
+      rfc4648: 1.5.4
+
   electron-to-chromium@1.5.451: {}
 
   es-module-lexer@2.3.2: {}
@@ -2906,6 +2922,8 @@ snapshots:
   resolve-protobuf-schema@2.1.0:
     dependencies:
       protocol-buffers-schema: 3.6.1
+
+  rfc4648@1.5.4: {}
 
   rollup@4.64.3:
     dependencies:

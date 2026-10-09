@@ -19,7 +19,12 @@ export default defineConfig({
     // (e.g. from the normals worker) it force-reloads the page, and every
     // page load starts a new billable Google tiles session.
     entries: ['index.html', 'src/**/*.worker.ts'],
-    include: ['three/addons/utils/BufferGeometryUtils.js']
+    // Deep imports aren't discovered by the entry scan; list every one used.
+    include: [
+      'three/addons/utils/BufferGeometryUtils.js',
+      'three/addons/loaders/GLTFLoader.js',
+      'three/addons/loaders/DRACOLoader.js'
+    ]
   },
   worker: {
     format: 'es'
