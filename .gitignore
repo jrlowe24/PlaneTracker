@@ -14,3 +14,8 @@ coverage/
 
 # Route lookup cache (server)
 server/.cache/
+
+# Night lights (generated from NASA Black Marble by client/scripts/build-night-lights.mjs)
+client/.night-lights-src/
+client/public/night-lights/
+client/public/models/Meshy_AI_*

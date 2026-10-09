@@ -13,6 +13,7 @@ import { detailedHexes } from './detailState'
 import { FRAME_PRIORITY } from './framePriority'
 import { lightAnchor } from './lightAnchor'
 import { createDetailedModel, disposeDetailedModel } from './models'
+import { typeDimensions } from './typeDimensions'
 import { aircraftShading, skyBrightness } from './shading'
 
 /** Aircraft closer than this get a detailed model instead of an instance. */
@@ -23,6 +24,8 @@ interface DetailedEntry {
   object: Object3D
   /** glTF models are real size; placeholders are scaled to the type. */
   isGltf: boolean
+  /** glTF scale to the type's real size (models with `fit`), else 1. */
+  fitScale: { span: number; length: number }
   cls: AircraftClass
   typeCode: string | null
 }
@@ -60,9 +63,10 @@ class DetailedAircraftController {
     const cls = aircraftClass(typeCode, state?.category ?? null)
     const entry: DetailedEntry = {
       isGltf: false,
+      fitScale: { span: 1, length: 1 },
       cls,
       typeCode,
-      object: createDetailedModel(typeCode, cls, model => {
+      object: createDetailedModel(typeCode, cls, (model, modelEntry) => {
         // Swap in the glTF model if this entry is still alive.
         if (this.entries.get(hex) !== entry) {
           disposeDetailedModel(model)
@@ -72,6 +76,10 @@ class DetailedAircraftController {
         disposeDetailedModel(entry.object)
         entry.object = model
         entry.isGltf = true
+        if (modelEntry.fit != null) {
+          const [length, span] = typeDimensions(typeCode, cls)
+          entry.fitScale = { span: span / modelEntry.fit[1], length: length / modelEntry.fit[0] }
+        }
         this.group.add(model)
       })
     }
@@ -119,7 +127,9 @@ class DetailedAircraftController {
       object.position.copy(pose.position)
       basis.makeBasis(pose.left, pose.up, pose.forward)
       object.quaternion.setFromRotationMatrix(basis)
-      if (!entry.isGltf && aircraft != null) {
+      if (entry.isGltf) {
+        object.scale.set(entry.fitScale.span, entry.fitScale.length, entry.fitScale.length)
+      } else if (aircraft != null) {
         object.scale.set(aircraft.scale.span, aircraft.scale.length, aircraft.scale.length)
       }
       object.updateMatrixWorld()

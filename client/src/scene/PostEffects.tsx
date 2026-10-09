@@ -16,12 +16,53 @@ import { useContext, useEffect, useRef, useState, type FC } from 'react'
 import { Uniform, Vector3 } from 'three'
 
 import { AIRCRAFT_LAYER } from '../aircraft/layers'
+import { cloudDepth } from '../clouds/cloudDepth'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
+import { NightLights } from '../nightLights/NightLights'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { EffectComposer } from './EffectComposer'
 import { nightState, updateNightLighting } from './nightLighting'
+
+/**
+ * Clouds render at reduced resolution and are upsampled, so cloud behind an
+ * aircraft bleeds onto its pixels (a grid of dark/bright lines, worst at
+ * night). On aircraft pixels (lighting mask 0), keep the overlay only if
+ * the clouds' front-depth buffer has a cloud nearer than the aircraft in
+ * the surrounding low-res texels. Cloud front depth is a ray distance, the
+ * aircraft's view Z is ≤ its ray distance, so the test is conservative; texels
+ * that hit no cloud store the scene's view Z and fail it.
+ */
+const CLOUD_DEPTH_TEST = /* glsl */ `
+bool isAircraftPixel(const vec2 uv) {
+  #ifdef HAS_LIGHTING_MASK
+  return texture(lightingMaskBuffer, uv).LIGHTING_MASK_CHANNEL_ < 0.5;
+  #else
+  return false;
+  #endif
+}
+
+bool cloudInFrontOfAircraft(const vec2 uv) {
+  #ifdef HAS_LIGHTING_MASK
+  if (hasCloudDepth < 0.5 || !isAircraftPixel(uv)) return true;
+  float depth = reverseLogDepth(readDepthValue(depthBuffer, uv), cameraNear, cameraFar);
+  float aircraftZ = -getViewZ(depth);
+  ivec2 size = textureSize(cloudDepthBuffer, 0);
+  ivec2 base = ivec2(floor(uv * vec2(size) - 0.5));
+  float front = 1e20;
+  for (int y = 0; y <= 1; ++y) {
+    for (int x = 0; x <= 1; ++x) {
+      float f = texelFetch(cloudDepthBuffer, clamp(base + ivec2(x, y), ivec2(0), size - 1), 0).r;
+      if (f > 0.0) front = min(front, f);
+    }
+  }
+  return front < aircraftZ * 0.98;
+  #else
+  return true;
+  #endif
+}
+`
 
 /**
  * Adds night light to takram's AerialPerspective: ambient irradiance
@@ -35,7 +76,23 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   const shader = source
     .replace(
       'void mainImage(',
-      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nvoid mainImage(`
+      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\n${CLOUD_DEPTH_TEST}\nvoid mainImage(`
+    )
+    // Light shafts are half resolution too: the shadow length behind an
+    // aircraft (rays reaching the ground) bleeds onto its pixels as in-
+    // scatter stripes. Within the ~1.5 km an aircraft is drawn in detail,
+    // shafts in front of it are negligible.
+    .replace(
+      'shadowLength = texture(shadowLengthBuffer, uv).r;',
+      'shadowLength = texture(shadowLengthBuffer, uv).r;\n  if (isAircraftPixel(uv)) shadowLength = 0.0;'
+    )
+    // Clouds get no light at night from takram (sun and sky only), so they
+    // render as black slabs cutting through the scene. Light them with the
+    // same moonlight/starlight as the ground (perceptually tuned below their
+    // ~0.9 albedo so they read as moonlit, not overcast day), by opacity.
+    .replace(
+      'vec4 overlay = texture(overlayBuffer, uv);',
+      'vec4 overlay = texture(overlayBuffer, uv);\n  if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
     )
     .replace(
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
@@ -45,13 +102,47 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       '#else // SKY\n    outputColor = inputColor;',
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
     )
-  if ((shader.match(/nightAmbient|nightSky/g) ?? []).length < 4) {
+  if (
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|isAircraftPixel\(uv\)/g) ?? [])
+      .length < 9
+  ) {
     // takram's shader changed: night light only partly applied.
     console.warn('[night] AerialPerspective shader patch did not fully apply')
   }
   effect.uniforms.set('nightAmbient', new Uniform(nightState.ambient))
   effect.uniforms.set('nightSky', new Uniform(nightState.sky))
+  effect.uniforms.set('cloudDepthBuffer', new Uniform(null))
+  effect.uniforms.set('hasCloudDepth', new Uniform(0))
   ;(effect as unknown as { setFragmentShader: (s: string) => void }).setFragmentShader(shader)
+}
+
+/**
+ * The lighting mask marks aircraft pixels by re-rendering the aircraft
+ * layer and keeping pixels where its depth ≤ the scene's depth. The two
+ * renders differ by tiny precision errors across the surface, so a strict
+ * test fails in stripes and those strips get post-lit like terrain (dark
+ * lines at night, bands by day). Allow 0.3% of the distance (20 cm at 70 m);
+ * aircraft genuinely behind terrain or buildings are still excluded.
+ */
+function patchLightingMask(pass: LightingMaskPass): void {
+  const material = (
+    pass as unknown as {
+      depthMaskMaterial?: { fragmentShader: string; needsUpdate: boolean }
+    }
+  ).depthMaskMaterial
+  if (material == null || material.fragmentShader.includes('aircraftDepthTest')) return
+  const shader = material.fragmentShader
+    .replace(
+      'void main() {',
+      'bool aircraftDepthTest(const float scene, const float aircraft) {\n  return aircraft <= scene * 1.003 + 1e-7;\n}\n\nvoid main() {'
+    )
+    .replaceAll('depthTest(depth.x, depth.y)', 'aircraftDepthTest(depth.x, depth.y)')
+  if (!shader.includes('aircraftDepthTest(depth.x')) {
+    console.warn('[lighting-mask] depth test patch did not apply')
+    return
+  }
+  material.fragmentShader = shader
+  material.needsUpdate = true
 }
 
 const up = new Vector3()
@@ -67,6 +158,7 @@ export const PostEffects: FC = () => {
   const [sunUp, setSunUp] = useState(true)
   const composerRef = useRef<EffectComposerImpl>(null)
   const lightingMaskRef = useRef<LightingMaskPass>(null)
+  const aerialRef = useRef<AerialPerspectiveEffect>(null)
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -80,6 +172,13 @@ export const PostEffects: FC = () => {
   // GlobeControls changes near/far every frame; effects reconstructing
   // positions from depth must use the same values.
   useFrame(({ gl }, delta) => {
+    const aerial = aerialRef.current
+    if (aerial != null) {
+      const depth = aerial.uniforms.get('cloudDepthBuffer')
+      if (depth != null) depth.value = cloudDepth.texture
+      const has = aerial.uniforms.get('hasCloudDepth')
+      if (has != null) has.value = cloudDepth.texture != null ? 1 : 0
+    }
     if (transientStates != null) {
       updateNightLighting(
         camera.position,
@@ -118,10 +217,17 @@ export const PostEffects: FC = () => {
         night markers; the mask keeps post lighting off their pixels. Aerial
         perspective (transmittance + inscatter) still applies to both.
       */}
-      <LightingMask ref={lightingMaskRef} selectionLayer={AIRCRAFT_LAYER} />
+      <LightingMask
+        ref={pass => {
+          lightingMaskRef.current = pass
+          if (pass != null) patchLightingMask(pass)
+        }}
+        selectionLayer={AIRCRAFT_LAYER}
+      />
       <VolumetricClouds />
       <AerialPerspective
         ref={effect => {
+          aerialRef.current = effect
           if (effect != null) patchNightLight(effect)
         }}
         sky={cloudsEnabled && sunUp}
@@ -130,6 +236,7 @@ export const PostEffects: FC = () => {
         correctGeometricError
         albedoScale={2 / Math.PI}
       />
+      <NightLights />
       <>{lensFlare ? <LensFlare /> : null}</>
       <ToneMapping mode={ToneMappingMode.AGX} />
       <SMAA />

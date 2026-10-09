@@ -1,5 +1,64 @@
 {
-  "$comment": "Map ICAO type designators to glTF/GLB files in this folder. Types without an entry use the procedural placeholder for their class. Model space: +Z forward (nose), +Y up, +X left wing, meters, origin near the center of gravity; use scale/rotationDeg/offset to adapt other conventions. Only add models you are licensed to redistribute (see README, Aircraft models).",
+  "$comment": "Map ICAO type designators to glTF/GLB files in this folder. Types without an entry use the procedural placeholder for their class. Model space: +Z forward (nose), +Y up, +X left wing, meters, origin near the center of gravity; use scale/rotationDeg/offset to adapt other conventions. Only add models you are licensed to redistribute (see README, Aircraft models). `classes` gives a fallback model per aircraft class; `fit` ([length, span] in meters as transformed) stretches a model to each type's real dimensions.",
   "version": 1,
-  "models": {}
+  "models": {},
+  "classes": {
+    "narrowbody": {
+      "url": "Meshy_AI_boeing_737_alaska_tex_1009064957_texture.glb",
+      "scale": 19.75,
+      "rotationDeg": [
+        0,
+        90,
+        0
+      ],
+      "offset": [
+        0,
+        2.6,
+        3.0
+      ],
+      "fit": [
+        39.5,
+        35.8
+      ],
+      "license": "User-provided (Meshy AI), Boeing 737-800 in Alaska Airlines livery"
+    },
+    "widebody": {
+      "url": "Meshy_AI_boeing_737_alaska_tex_1009064957_texture.glb",
+      "scale": 19.75,
+      "rotationDeg": [
+        0,
+        90,
+        0
+      ],
+      "offset": [
+        0,
+        2.6,
+        3.0
+      ],
+      "fit": [
+        39.5,
+        35.8
+      ],
+      "license": "User-provided (Meshy AI), Boeing 737-800 in Alaska Airlines livery"
+    },
+    "regional": {
+      "url": "Meshy_AI_boeing_737_alaska_tex_1009064957_texture.glb",
+      "scale": 19.75,
+      "rotationDeg": [
+        0,
+        90,
+        0
+      ],
+      "offset": [
+        0,
+        2.6,
+        3.0
+      ],
+      "fit": [
+        39.5,
+        35.8
+      ],
+      "license": "User-provided (Meshy AI), Boeing 737-800 in Alaska Airlines livery"
+    }
+  }
 }

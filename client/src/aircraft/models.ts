@@ -23,11 +23,20 @@ export interface ModelEntry {
   offset?: [number, number, number]
   /** Attribution / license note (shown in dev tools, documented in README). */
   license?: string
+  /**
+   * Real [length, span] in meters of the model as transformed above. When
+   * set, the model is stretched to each aircraft's actual type dimensions,
+   * so one model can stand in for a whole family or class.
+   */
+  fit?: [length: number, span: number]
 }
 
 export interface ModelManifest {
   version: 1
+  /** By ICAO type designator. */
   models: Record<string, ModelEntry>
+  /** Fallback by aircraft class for types without their own model. */
+  classes?: Partial<Record<AircraftClass, ModelEntry>>
 }
 
 let manifestPromise: Promise<ModelManifest> | null = null
@@ -37,6 +46,17 @@ export function loadManifest(): Promise<ModelManifest> {
     .then(async response => (response.ok ? ((await response.json()) as ModelManifest) : null))
     .catch(() => null)
     .then(manifest => manifest ?? { version: 1, models: {} })
+  return manifestPromise
+}
+
+/** The model for a type: its own entry, else its class's fallback. */
+export function findModelEntry(
+  manifest: ModelManifest,
+  typeCode: string | null,
+  cls: AircraftClass
+): ModelEntry | null {
+  const own = typeCode == null ? undefined : manifest.models[typeCode.toUpperCase()]
+  return own ?? manifest.classes?.[cls] ?? null
   return manifestPromise
 }
 
@@ -152,17 +172,15 @@ export function disposeDetailedModel(object: Object3D): void {
 export function createDetailedModel(
   typeCode: string | null,
   cls: AircraftClass,
-  onUpgrade: (model: Object3D) => void
+  onUpgrade: (model: Object3D, entry: ModelEntry) => void
 ): Object3D {
   const placeholder = prepare(placeholderModel(cls), false)
-  if (typeCode != null) {
-    void loadManifest().then(manifest => {
-      const entry = manifest.models[typeCode.toUpperCase()]
-      if (entry == null) return
-      void loadTypeModel(entry).then(model => {
-        if (model != null) onUpgrade(prepare(model.clone(true), true))
-      })
+  void loadManifest().then(manifest => {
+    const entry = findModelEntry(manifest, typeCode, cls)
+    if (entry == null) return
+    void loadTypeModel(entry).then(model => {
+      if (model != null) onUpgrade(prepare(model.clone(true), true), entry)
     })
-  }
+  })
   return placeholder
 }

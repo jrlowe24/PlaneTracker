@@ -347,8 +347,15 @@ coarser tile error targets per preset, all deep imports pre-bundled.
   { "version": 1, "models": { "A320": { "url": "a320.glb", "scale": 1, "rotationDeg": [0, 0, 0], "offset": [0, 0, 0], "license": "CC-BY-4.0, Author" } } }
   ```
 
-  Types without an entry use their class placeholder. Loaded models get the
-  same lighting patch as the placeholders.
+  `classes` adds a fallback model per aircraft class, and `fit`
+  (`[length, span]` in meters, as transformed) stretches a model to each
+  aircraft's real type dimensions, so one model can cover a family or a
+  class. Types with neither use their class placeholder. Loaded models get
+  the same lighting patch as the placeholders.
+
+  Currently configured: a user-provided Boeing 737-800 (Alaska livery,
+  Meshy AI, ~17 MB GLB, kept out of git) for narrowbody, widebody and
+  regional jets, fitted per type.
 
 **Model licensing**: only add models you may redistribute (they're served
 to every visitor). Check the license (CC-BY needs visible credit; CC-BY-NC
@@ -456,32 +463,45 @@ takram's storybook still pins `3d-tiles-renderer` 0.4.24. We use 0.5.3 for
 its traversal and fade fixes. Its published packages don't import
 3d-tiles-renderer, so the two are decoupled.
 
-## Night city lights (proposal, not built)
+## Night city lights
 
-Google's imagery is daytime only, so the night side is black. Plan:
+Google's imagery is daytime only, so city lights come from NASA Black
+Marble 2016 (grayscale, 500 m; public domain, credited on screen as
+"Night lights: NASA Earth Observatory" whenever it's night in view).
 
-- **Where it slots in**: a custom postprocessing effect right after
-  `AerialPerspective` (post-lighting radiance, before lens flare and tone
-  mapping). It reconstructs ECEF position from depth (same camera uniforms
-  `AerialPerspective` uses via `adoptCameraSettings`), converts to
-  latitude/longitude, samples the light map, and adds emissive radiance
-  × a night factor from the sun elevation at that point (fading through
-  civil twilight). It must also apply the atmosphere's transmittance along
-  the view ray (takram exports its Bruneton shader functions) and attenuate
-  by the clouds' overlay alpha (available on the atmosphere context), since
-  `AerialPerspective` composites the clouds before our effect runs.
-- **Data**: NASA Black Marble 2016 grayscale (3 km, public domain with
-  credit) as one compressed equirectangular texture for cruise altitude
-  (~8k × 4k, R8/BC4, ~16–32 MB GPU); below ~50 km camera altitude, a tile
-  pyramid cut from the 500 m GeoTIFFs with GDAL (`gdal2tiles`), loaded like
-  raster tiles for the view. Our own color ramp (warm sodium for dim
-  areas, whiter LED for bright cores) instead of NASA's grading. Colorado
-  School of Mines VIIRS VNL v2.2 annual composites are the more recent
-  alternative (raw radiance, needs our own tone mapping, free account).
-- **Effort**: ~2–3 days for the global texture + effect; another 2–3 for the
-  GDAL pyramid and streaming. Proposed as the next milestone; it needs a
-  decision on hosting the texture/tile files (~100 MB–1 GB for the 500 m
-  pyramid) and adds NASA attribution on screen.
+Build the data once (downloads ~150 MB of NASA source tiles into
+`client/.night-lights-src/`, writes ~23 MB to `client/public/night-lights/`;
+both gitignored). Without it the app runs normally with no city lights:
+
+```bash
+pnpm --filter @windowseat/client night-lights
+```
+
+Resolution follows distance:
+
+- **Global base** (8192×4096, ~5 km/px) everywhere: what you see from orbit.
+- **Detail window** (~610 m/px): 512² tiles of 2.8125° (2,634 non-empty
+  worldwide) streamed into a 4096² texture covering ~1,500 km around the
+  view whenever the camera is below 600 km (not on Low quality); it
+  recenters as you travel, nearest tiles first.
+- **Point lights** below that: the 600 m map is a soft blob up close, so the
+  effect scatters procedural lights on a world-fixed 3D grid whose cell
+  size tracks the pixel footprint (35 m at the finest, doubling per level,
+  ~8 px per cell, two levels blended). Each cell's light is lit with a
+  probability from the map's brightness, so dense cores sparkle and suburbs
+  thin out. Lamps stay ~1.5 px wide (0.5 m minimum) with a small pool of
+  light on the ground up close. Grid cells are indexed with integers
+  anchored on the CPU in double precision, so there's no float jitter at
+  ECEF scale and no pattern jump while moving.
+
+It's a postprocessing effect after `AerialPerspective`
+(`client/src/nightLights/`): it reconstructs each pixel's camera-relative
+position from depth, fades lights in through civil twilight at that point,
+attenuates them by air mass, by clouds in front (atmosphere overlay alpha)
+and skips aircraft (lighting mask). Warm sodium tint in dim areas, whiter
+LED in bright cores. It runs as its own pass because merged with
+`AerialPerspective` it exceeds WebGL's 16 texture units. Measured: 45 fps at
+2560×1600 (High) looking over Seattle at night from 2.5 km.
 
 ## Known limitations
 

@@ -8,6 +8,7 @@ import {
   type CloudWeatherSpec
 } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, type FC } from 'react'
+import type { Texture } from 'three'
 
 import { detailedHexes } from '../aircraft/detailState'
 import { smoothingFactor } from '../aircraft/motion'
@@ -16,6 +17,7 @@ import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
+import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
 
 /**
@@ -78,6 +80,10 @@ const CIRRUS_DENSITY = 0.004
  * texture (see coverageTexture.ts). A dev toggle switches to manual
  * coverage.
  */
+interface CloudsPassInternals {
+  cloudsPass?: { currentRenderTarget?: { depthVelocity?: Texture | null } }
+}
+
 export const VolumetricClouds: FC = () => {
   const camera = useThree(({ camera }) => camera)
   const level = useStore(qualityStore, s => s.level)
@@ -100,6 +106,8 @@ export const VolumetricClouds: FC = () => {
 
   useFrame((_, delta) => {
     const effect = ref.current
+    cloudDepth.texture =
+      (effect as CloudsPassInternals | null)?.cloudsPass?.currentRenderTarget?.depthVelocity ?? null
     if (effect == null) return
     effect.skipRendering = camera.position.length() - WGS84_A > MAX_CAMERA_ALTITUDE
 

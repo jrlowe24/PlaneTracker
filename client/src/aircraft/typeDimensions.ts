@@ -66,6 +66,14 @@ export interface AirframeScale {
 
 const UNIT: AirframeScale = { span: 1, length: 1 }
 
+/** Real [length, span] in meters: the type's, else the class placeholder's. */
+export function typeDimensions(typeCode: string | null, cls: AircraftClass): [number, number] {
+  const dims = typeCode == null ? undefined : DIMENSIONS[typeCode.toUpperCase()]
+  if (dims != null) return dims
+  const params = AIRFRAMES[cls]
+  return [params.length, params.rotorDiameter ?? params.wingSpan]
+}
+
 /** Scale from the class placeholder to the real type (1, 1 if unknown). */
 export function airframeScale(typeCode: string | null, cls: AircraftClass): AirframeScale {
   const dims = typeCode == null ? undefined : DIMENSIONS[typeCode.toUpperCase()]

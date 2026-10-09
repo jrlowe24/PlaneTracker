@@ -4,6 +4,7 @@ import { config } from '../config'
 import { flightStatusStore } from '../data/flightConnection'
 import { getGoogleTiles } from '../globe/googleTiles'
 import { weatherStore } from '../data/weather'
+import { nightLightsStore } from '../nightLights/nightLightsStore'
 import { cameraModeStore } from '../state/cameraMode'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
@@ -59,6 +60,20 @@ const GoogleAttribution: FC = () => {
   )
 }
 
+/** NASA Black Marble while city lights are visible. */
+const NightLightsCredit: FC = () => {
+  const credit = useStore(nightLightsStore, s => s.credit)
+  if (credit == null) return null
+  return (
+    <>
+      {' · '}
+      <a href='https://science.nasa.gov/earth/earth-observatory/earth-at-night/' target='_blank' rel='noreferrer'>
+        {credit}
+      </a>
+    </>
+  )
+}
+
 /** Open-Meteo (CC BY 4.0) while live weather drives the clouds. */
 const WeatherCredit: FC = () => {
   const attribution = useStore(weatherStore, s => s.attribution)
@@ -96,6 +111,7 @@ const FlightDataAttribution: FC = () => {
         attribution
       )}
       <WeatherCredit />
+      <NightLightsCredit />
       {following && follow != null && (
         <>
           {' · '}
