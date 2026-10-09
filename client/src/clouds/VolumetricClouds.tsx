@@ -4,6 +4,7 @@ import { CloudLayer, Clouds } from '@takram/three-clouds/r3f'
 import { WGS84_A } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, type FC } from 'react'
 
+import { cameraModeStore } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
@@ -26,6 +27,13 @@ export const VolumetricClouds: FC = () => {
   const camera = useThree(({ camera }) => camera)
   const level = useStore(qualityStore, s => s.level)
   const coverage = useStore(settingsStore, s => s.cloudCoverage)
+  // Temporal upscaling reprojects cloud history; a followed aircraft stays
+  // still on screen while the clouds stream past it, so the history breaks
+  // at its edges and leaves a smeared halo around the plane. While the
+  // camera is attached to an aircraft, render clouds without it at half
+  // resolution (clean edges, similar cost); in the globe view aircraft are
+  // a few pixels and upscaling is kept.
+  const attached = useStore(cameraModeStore, s => s.mode !== 'globe')
   const preset = QUALITY_PRESETS[level]
   const weather = useMemo(() => createProceduralWeather(), [])
   useEffect(
@@ -55,6 +63,8 @@ export const VolumetricClouds: FC = () => {
       qualityPreset={preset.clouds}
       coverage={coverage}
       lightShafts={preset.lightShafts}
+      temporalUpscale={!attached}
+      resolutionScale={attached ? 0.5 : 1}
       localWeatherTexture={weather.localWeatherTexture}
       // Self-hosted copies of takram's textures (MIT); the STBN noise still
       // comes from takram's default URL.
