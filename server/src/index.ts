@@ -67,7 +67,23 @@ const hub = new Hub(cache, source, {}, routes, followFeed, weather)
 // Worldwide search (live lookups only with live data).
 const search = new SearchService(cache, followFeed, source instanceof AdsbLolSource ? source : null)
 
+/**
+ * Origins allowed to call the HTTP API from a browser (the site is hosted
+ * separately in production): comma-separated, or * (default).
+ */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '*').split(',').map(o => o.trim())
+
 const http = createServer((req, res) => {
+  const origin = req.headers.origin
+  if (origin != null && (ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin))) {
+    res.setHeader('access-control-allow-origin', ALLOWED_ORIGINS.includes('*') ? '*' : origin)
+    res.setHeader('vary', 'origin')
+  }
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, { 'access-control-allow-methods': 'GET', 'access-control-max-age': '86400' })
+    res.end()
+    return
+  }
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(

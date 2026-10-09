@@ -8,6 +8,7 @@ import { useEffect, useState, type FC } from 'react'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { jumpTo } from '../camera/jump'
+import { config } from '../config'
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { flightConnection } from '../data/flightConnection'
 import { startUserLocation, userLocationStore } from '../data/userLocation'
@@ -89,7 +90,7 @@ function useWorldSearch(query: string): WorldSearch {
     if (q.length < 2) return
     const controller = new AbortController()
     const id = setTimeout(() => {
-      fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal })
+      fetch(config.serverHttpUrl(`/api/search?q=${encodeURIComponent(q)}`), { signal: controller.signal })
         .then(async response => {
           if (!response.ok) throw new Error(String(response.status))
           const body = (await response.json()) as SearchResponse

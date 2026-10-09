@@ -8,6 +8,7 @@ import type {
 
 import { createStore } from '../state/createStore'
 import { AircraftRegistry } from './aircraftRegistry'
+import { config } from '../config'
 import { mergeWeatherGrid, weatherStore } from './weather'
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
@@ -99,8 +100,7 @@ class FlightConnection {
   }
 
   private connect(): void {
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const socket = new WebSocket(`${protocol}://${window.location.host}/ws`)
+    const socket = new WebSocket(config.serverWsUrl('/ws'))
     this.socket = socket
     flightStatusStore.set({ status: 'connecting' })
 
