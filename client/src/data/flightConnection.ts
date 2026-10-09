@@ -115,14 +115,14 @@ class FlightConnection {
       }
       updateClockOffset(message.serverTime)
       if (message.type === 'hello') {
-        // A new server session: forget aircraft from a previous connection.
-        this.registry.clear()
+        // A new server session (reconnect/restart): keep aircraft on screen
+        // and drop those it doesn't confirm within a grace period.
+        this.registry.markAllUnconfirmed(Date.now())
         flightStatusStore.set({
           source: message.source,
           attribution: message.attribution,
           attributionUrl: message.attributionUrl,
-          followAttribution: message.followAttribution,
-          aircraftCount: 0
+          followAttribution: message.followAttribution
         })
       } else if (message.type === 'routes') {
         for (const route of message.routes) this.routes.set(route.callsign, route)

@@ -226,26 +226,30 @@ export class AircraftInstances {
       // class (a distant C172 is as findable as an airliner).
       const iconScale = Math.max(
         1,
-        (minPixels * distance * pixelToWorld) / AIRFRAMES[aircraft.cls].length
+        (minPixels * distance * pixelToWorld) /
+          (AIRFRAMES[aircraft.cls].length * aircraft.scale.length)
       )
       // Stale aircraft shrink away instead of popping.
       const scale = iconScale * pose.opacity
+      // Placeholder → real type dimensions (span on X, length on Y/Z).
+      const spanScale = scale * aircraft.scale.span
+      const lengthScale = scale * aircraft.scale.length
 
       const { batch, index } = this.slot(aircraft.cls)
       const m = batch.matrices
       const { left, up, forward } = pose
       const o = index * 16
-      m[o + 0] = left.x * scale
-      m[o + 1] = left.y * scale
-      m[o + 2] = left.z * scale
+      m[o + 0] = left.x * spanScale
+      m[o + 1] = left.y * spanScale
+      m[o + 2] = left.z * spanScale
       m[o + 3] = 0
-      m[o + 4] = up.x * scale
-      m[o + 5] = up.y * scale
-      m[o + 6] = up.z * scale
+      m[o + 4] = up.x * lengthScale
+      m[o + 5] = up.y * lengthScale
+      m[o + 6] = up.z * lengthScale
       m[o + 7] = 0
-      m[o + 8] = forward.x * scale
-      m[o + 9] = forward.y * scale
-      m[o + 10] = forward.z * scale
+      m[o + 8] = forward.x * lengthScale
+      m[o + 9] = forward.y * lengthScale
+      m[o + 10] = forward.z * lengthScale
       m[o + 11] = 0
       m[o + 12] = x
       m[o + 13] = y

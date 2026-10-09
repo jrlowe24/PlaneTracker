@@ -4,6 +4,7 @@ import { Matrix4, Vector3, type Quaternion } from 'three'
 import { AIRFRAMES, type AirframeParams } from '../aircraft/airframes'
 import type { Pose } from '../aircraft/pose'
 import { aircraftClass } from '../aircraft/typeClasses'
+import { airframeScale, scaledAirframe } from '../aircraft/typeDimensions'
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
 
@@ -47,7 +48,8 @@ export function seatFor(params: AirframeParams, side: 'left' | 'right'): SeatGeo
 export function seatForAircraft(hex: string | null, side: 'left' | 'right'): SeatGeometry {
   const state = hex == null ? undefined : flightConnection.registry.byHex.get(hex)?.state
   const cls = aircraftClass(state?.typeCode ?? null, state?.category ?? null)
-  return seatFor(AIRFRAMES[cls], side)
+  const scale = airframeScale(state?.typeCode ?? null, cls)
+  return seatFor(scaledAirframe(AIRFRAMES[cls], scale), side)
 }
 
 const eye = new Vector3()

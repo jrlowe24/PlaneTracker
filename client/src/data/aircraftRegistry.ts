@@ -4,6 +4,7 @@ import { stateEllipsoidHeight, toSample, type MotionSample } from '../aircraft/m
 import type { AircraftClass } from '../aircraft/airframes'
 import type { Pose } from '../aircraft/pose'
 import { aircraftClass } from '../aircraft/typeClasses'
+import { airframeScale, type AirframeScale } from '../aircraft/typeDimensions'
 
 /** Smoothed attitude state, owned by the render loop. */
 export interface Attitude {
@@ -37,6 +38,8 @@ export interface TrackedAircraft {
   state: AircraftState
   /** Airframe class from type code / emitter category. */
   cls: AircraftClass
+  /** Scale from the class placeholder to the real type's dimensions. */
+  scale: AirframeScale
   /** Kinematic samples (SI, ellipsoid heights), oldest first. */
   motion: MotionSample[]
   /** Smoothed geometric − barometric altitude difference, feet. */
@@ -52,7 +55,12 @@ export interface TrackedAircraft {
   receivedAt: number
   /** Dense slot in `AircraftRegistry.list`; also the instance index. */
   index: number
+  /** Kept across a reconnect but not yet confirmed by the new session. */
+  unconfirmed: boolean
 }
+
+/** After a reconnect, aircraft the new session hasn't sent within this time are dropped. */
+const RECONNECT_GRACE_MS = 15_000
 
 const MAX_SAMPLES = 16
 
@@ -69,6 +77,7 @@ export class AircraftRegistry {
 
   apply(message: AircraftMessage, now: number): void {
     if (message.reset) this.clear()
+    this.pruneUnconfirmed(now)
     for (const hex of message.removals) {
       this.remove(hex)
     }
@@ -85,6 +94,7 @@ export class AircraftRegistry {
         hex: state.hex,
         state,
         cls: aircraftClass(state.typeCode, state.category),
+        scale: airframeScale(state.typeCode, aircraftClass(state.typeCode, state.category)),
         motion: [],
         baroOffsetFt: null,
         groundHeight: null,
@@ -105,7 +115,8 @@ export class AircraftRegistry {
         pose: null,
         cameraDistance: Infinity,
         receivedAt: now,
-        index: this.list.length
+        index: this.list.length,
+        unconfirmed: false
       }
       this.byHex.set(state.hex, tracked)
       this.list.push(tracked)
@@ -126,11 +137,35 @@ export class AircraftRegistry {
     }
     if (state.typeCode !== tracked.state.typeCode || state.category !== tracked.state.category) {
       tracked.cls = aircraftClass(state.typeCode, state.category)
+      tracked.scale = airframeScale(state.typeCode, tracked.cls)
     }
     tracked.state = state
     tracked.receivedAt = now
+    tracked.unconfirmed = false
     return tracked
   }
+
+  /**
+   * A new server session started (reconnect, server restart). Keep drawing
+   * what we have instead of blanking the sky; whatever the new session
+   * doesn't send again within a grace period is dropped.
+   */
+  markAllUnconfirmed(now: number): void {
+    for (const aircraft of this.list) aircraft.unconfirmed = true
+    this.unconfirmedSince = now
+  }
+
+  /** Drops aircraft not confirmed after a reconnect's grace period. */
+  pruneUnconfirmed(now: number): void {
+    if (this.unconfirmedSince == null || now - this.unconfirmedSince < RECONNECT_GRACE_MS) return
+    this.unconfirmedSince = null
+    for (const aircraft of [...this.list]) {
+      if (aircraft.unconfirmed) this.remove(aircraft.hex)
+    }
+    ++this.version
+  }
+
+  private unconfirmedSince: number | null = null
 
   /** Records a tile-raycast ground height and applies it to on-ground samples. */
   setGroundHeight(hex: string, height: number): void {

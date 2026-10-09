@@ -5,7 +5,6 @@ import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { AIRFRAMES } from './airframes'
 import {
   bankAngle,
-  defaultMotionOptions,
   evaluateMotion,
   metersPerRadian,
   pitchAngle,
@@ -54,7 +53,13 @@ export function createPose(): Pose {
   }
 }
 
-/** Seconds past the extrapolation limit over which stale aircraft fade out. */
+/**
+ * Stale aircraft hold position (extrapolation stops at its limit) and only
+ * fade out this long after their newest sample; the server drops aircraft
+ * unseen for 60 s anyway. Fading earlier made planes blink out during
+ * ordinary gaps in polled data.
+ */
+const FADE_AFTER_SECONDS = 45
 const FADE_SECONDS = 10
 /** Time constant over which a data correction is blended in. */
 const ERROR_TIME_CONSTANT = 1.2
@@ -137,7 +142,7 @@ export function computePose(
   // (the server drops it when unseen); hold it. Airborne aircraft with stale
   // positions fade out instead of freezing in mid-air.
   const holding = k.onGround && speed < 3
-  const overdue = k.extrapolation - defaultMotionOptions.maxExtrapolation
+  const overdue = k.extrapolation - FADE_AFTER_SECONDS
   out.opacity = holding || overdue <= 0 ? 1 : Math.max(0, 1 - overdue / FADE_SECONDS)
   out.speed = speed
   out.onGround = k.onGround
@@ -147,7 +152,7 @@ export function computePose(
   attitude.ground = first
     ? groundTarget
     : attitude.ground + (groundTarget - attitude.ground) * smoothingFactor(dt, 0.8)
-  const clearance = AIRFRAMES[aircraft.cls].groundClearance
+  const clearance = AIRFRAMES[aircraft.cls].groundClearance * aircraft.scale.length
   let height = k.height + clearance * attitude.ground
   // Never below the terrain (late data on short final, baro errors).
   if (aircraft.groundHeight != null) {

@@ -21,6 +21,8 @@ const MAX_DETAILED = 12
 
 interface DetailedEntry {
   object: Object3D
+  /** glTF models are real size; placeholders are scaled to the type. */
+  isGltf: boolean
   cls: AircraftClass
   typeCode: string | null
 }
@@ -57,6 +59,7 @@ class DetailedAircraftController {
     const typeCode = state?.typeCode ?? null
     const cls = aircraftClass(typeCode, state?.category ?? null)
     const entry: DetailedEntry = {
+      isGltf: false,
       cls,
       typeCode,
       object: createDetailedModel(typeCode, cls, model => {
@@ -68,6 +71,7 @@ class DetailedAircraftController {
         this.group.remove(entry.object)
         disposeDetailedModel(entry.object)
         entry.object = model
+        entry.isGltf = true
         this.group.add(model)
       })
     }
@@ -115,6 +119,9 @@ class DetailedAircraftController {
       object.position.copy(pose.position)
       basis.makeBasis(pose.left, pose.up, pose.forward)
       object.quaternion.setFromRotationMatrix(basis)
+      if (!entry.isGltf && aircraft != null) {
+        object.scale.set(aircraft.scale.span, aircraft.scale.length, aircraft.scale.length)
+      }
       object.updateMatrixWorld()
 
       aircraftShading(

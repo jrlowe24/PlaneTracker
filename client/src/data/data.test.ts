@@ -63,6 +63,29 @@ describe('AircraftRegistry', () => {
     expect(tracked.motion.at(-1)!.t).toBe(20_000)
   })
 
+  it('keeps aircraft across a reconnect and drops unconfirmed ones later', () => {
+    const registry = new AircraftRegistry()
+    registry.upsert({ ...base, hex: 'keep' }, 0)
+    registry.upsert({ ...base, hex: 'gone' }, 0)
+    registry.markAllUnconfirmed(1000)
+    const update = (now: number, hexes: string[]): void => {
+      registry.apply(
+        {
+          type: 'aircraft',
+          serverTime: now,
+          reset: false,
+          upserts: hexes.map(hex => encodeAircraft({ ...base, hex, positionTimestamp: now })),
+          removals: []
+        },
+        now
+      )
+    }
+    update(2000, ['keep'])
+    expect(registry.list).toHaveLength(2)
+    update(17_000, ['keep'])
+    expect(registry.list.map(a => a.hex)).toEqual(['keep'])
+  })
+
   it('clears on reset', () => {
     const registry = new AircraftRegistry()
     registry.upsert(base, 0)
