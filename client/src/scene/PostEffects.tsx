@@ -232,9 +232,11 @@ export const PostEffects: FC = () => {
   useFrame(({ gl }, delta) => {
     const aerial = aerialRef.current
     if (aerial != null) {
-      const depth = aerial.uniforms.get('cloudDepthBuffer')
+      // Our own uniforms, added by patchNightLight.
+      const uniforms = aerial.uniforms as unknown as Map<string, Uniform>
+      const depth = uniforms.get('cloudDepthBuffer')
       if (depth != null) depth.value = cloudDepth.texture
-      const has = aerial.uniforms.get('hasCloudDepth')
+      const has = uniforms.get('hasCloudDepth')
       if (has != null) has.value = cloudDepth.texture != null ? 1 : 0
     }
     if (transientStates != null) {

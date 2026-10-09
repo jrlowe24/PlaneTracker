@@ -9,21 +9,20 @@ import {
 } from 'three'
 
 /**
- * Per-layer cloud coverage texture for takram's clouds ("local weather":
- * r = low cumulus, g = mid, b = cirrus), tiled over the globe.
+ * Cloud noise for takram's clouds ("local weather": r = low cumulus, g =
+ * mid, b = cirrus), tiled over the globe.
  *
- * takram has one global `coverage` uniform for all layers, so per-layer
- * cover can't be set there. Instead each channel holds tileable fBm noise
- * that has been rank-transformed to a uniform distribution u ∈ [0, 1); for
- * a layer coverage c the channel stores u − (1 − c) + THRESHOLD, so exactly
- * a fraction c of the texels exceed THRESHOLD — where, with the renderer's
- * global coverage held at GLOBAL_COVERAGE and the layer's filter width at
- * FILTER_WIDTH, clouds start (mid-layer height). Exposed for that pairing.
+ * Each channel holds tileable fBm noise rank-transformed to a uniform
+ * distribution u ∈ [0, 1). The patched clouds shader (regionalShader.ts)
+ * adds COVERAGE_THRESHOLD − (1 − c) for the cover c at each sample's
+ * position, so exactly a fraction c of the area exceeds COVERAGE_THRESHOLD
+ * — where, with the renderer's global coverage held at GLOBAL_COVERAGE and
+ * each layer's filter width at FILTER_WIDTH, clouds start (mid-layer).
  */
 export const GLOBAL_COVERAGE = 0.5
 export const FILTER_WIDTH = 0.2
 /** Weather value where clouds begin mid-layer: mix(v, 1, w) = 1 − coverage. */
-const THRESHOLD = (1 - GLOBAL_COVERAGE - FILTER_WIDTH) / (1 - FILTER_WIDTH)
+export const COVERAGE_THRESHOLD = (1 - GLOBAL_COVERAGE - FILTER_WIDTH) / (1 - FILTER_WIDTH)
 
 const SIZE = 256
 
@@ -96,41 +95,23 @@ function fbmChannel(style: NoiseStyle): Float32Array {
 
 export class CoverageTexture {
   readonly texture: DataTexture
-  private readonly data: Uint8Array
-  private readonly uniform: [Float32Array, Float32Array, Float32Array]
-  private readonly current: [number, number, number] = [-1, -1, -1]
 
   constructor() {
-    this.uniform = [fbmChannel(STYLES[0]), fbmChannel(STYLES[1]), fbmChannel(STYLES[2])]
-    this.data = new Uint8Array(SIZE * SIZE * 4)
-    const texture = new DataTexture(this.data, SIZE, SIZE, RGBAFormat, UnsignedByteType)
+    const channels = [fbmChannel(STYLES[0]), fbmChannel(STYLES[1]), fbmChannel(STYLES[2])]
+    const data = new Uint8Array(SIZE * SIZE * 4)
+    for (let channel = 0; channel < 3; ++channel) {
+      const u = channels[channel]!
+      for (let i = 0; i < u.length; ++i) data[i * 4 + channel] = Math.round(u[i]! * 255)
+    }
+    const texture = new DataTexture(data, SIZE, SIZE, RGBAFormat, UnsignedByteType)
     texture.wrapS = RepeatWrapping
     texture.wrapT = RepeatWrapping
     texture.minFilter = LinearMipMapLinearFilter
     texture.magFilter = LinearFilter
     texture.generateMipmaps = true
     texture.colorSpace = NoColorSpace
+    texture.needsUpdate = true
     this.texture = texture
-    this.setCoverage(0, 0, 0)
-  }
-
-  /** Per-layer coverage 0…1; only rewrites channels that changed noticeably. */
-  setCoverage(low: number, mid: number, high: number): void {
-    const next = [low, mid, high]
-    let changed = false
-    for (let channel = 0; channel < 3; ++channel) {
-      const c = Math.min(1, Math.max(0, next[channel]!))
-      if (Math.abs(c - this.current[channel]!) < 0.005) continue
-      this.current[channel] = c
-      changed = true
-      const u = this.uniform[channel]!
-      const offset = THRESHOLD - (1 - c)
-      for (let i = 0; i < u.length; ++i) {
-        const v = Math.min(1, Math.max(0, u[i]! + offset))
-        this.data[i * 4 + channel] = Math.round(v * 255)
-      }
-    }
-    if (changed) this.texture.needsUpdate = true
   }
 
   dispose(): void {

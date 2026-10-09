@@ -1,6 +1,6 @@
 import type { AircraftState } from './aircraft'
 import type { RouteInfo } from './routes'
-import type { WeatherSample } from './weather'
+import type { WeatherGridCell, WeatherSample } from './weather'
 
 /**
  * WebSocket protocol between client and server (JSON text frames).
@@ -70,7 +70,22 @@ export interface WeatherMessage {
   attribution: Attribution
 }
 
-export type ServerMessage = HelloMessage | AircraftMessage | RoutesMessage | WeatherMessage
+/**
+ * Cloud cover on a grid of 1° cells around the view, so clouds vary across
+ * the map instead of the whole sky following one sample.
+ */
+export interface WeatherGridMessage {
+  type: 'weatherGrid'
+  serverTime: number
+  cells: WeatherGridCell[]
+}
+
+export type ServerMessage =
+  | HelloMessage
+  | AircraftMessage
+  | RoutesMessage
+  | WeatherMessage
+  | WeatherGridMessage
 
 export type AircraftTuple = [
   hex: string,

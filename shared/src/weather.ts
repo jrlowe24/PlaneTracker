@@ -22,6 +22,17 @@ export interface WeatherSample {
   freezingLevel: number | null
 }
 
+/** Cloud cover of one cell of the regional weather grid (1° cells). */
+export interface WeatherGridCell {
+  /** Cell center, degrees (integers). */
+  lat: number
+  lon: number
+  /** Cloud cover in %, low / mid / high. */
+  low: number
+  mid: number
+  high: number
+}
+
 export interface CloudLayerSpec {
   /** Cloud base, meters MSL. */
   altitude: number

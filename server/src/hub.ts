@@ -9,6 +9,7 @@ import {
   type RouteInfo,
   type RoutesMessage,
   type Viewport,
+  type WeatherGridMessage,
   type WeatherMessage
 } from '@windowseat/shared'
 import type { WebSocket } from 'ws'
@@ -53,6 +54,9 @@ interface ClientSession {
   /** Where weather was last sent for, and when. */
   weatherAt: { lat: number; lon: number } | null
   weatherSentAt: number
+  /** Where the cloud cover grid was last sent for, and when. */
+  gridAt: { lat: number; lon: number } | null
+  gridSentAt: number
   resetPending: boolean
 }
 
@@ -157,6 +161,8 @@ export class Hub {
       followHex: null,
       weatherAt: null,
       weatherSentAt: 0,
+      gridAt: null,
+      gridSentAt: 0,
       resetPending: false
     }
     this.clients.add(client)
@@ -223,6 +229,7 @@ export class Hub {
    */
   private pushWeather(client: ClientSession, now: number): void {
     if (this.weather == null || client.viewport == null) return
+    this.pushWeatherGrid(client, now)
     const { lat, lon } = client.viewport
     const last = client.weatherAt
     const moved = last == null ? Infinity : greatCircleDistance(last.lat, last.lon, lat, lon)
@@ -237,6 +244,25 @@ export class Hub {
         weather: sample,
         attribution: OPEN_METEO_ATTRIBUTION
       }
+      client.socket.send(JSON.stringify(message))
+    })
+  }
+
+  /**
+   * Sends the cloud cover grid (1° cells, ~±350 km) around the view when
+   * the view has moved more than ~80 km from where it was last sent (well
+   * before the edge of the grid comes into view), or every 15 minutes.
+   */
+  private pushWeatherGrid(client: ClientSession, now: number): void {
+    const { lat, lon } = client.viewport!
+    const last = client.gridAt
+    const moved = last == null ? Infinity : greatCircleDistance(last.lat, last.lon, lat, lon)
+    if (moved < 80_000 && now - client.gridSentAt < 15 * 60_000) return
+    client.gridAt = { lat, lon }
+    client.gridSentAt = now
+    void this.weather!.grid.around(lat, lon).then(cells => {
+      if (cells.length === 0 || client.socket.readyState !== client.socket.OPEN) return
+      const message: WeatherGridMessage = { type: 'weatherGrid', serverTime: Date.now(), cells }
       client.socket.send(JSON.stringify(message))
     })
   }

@@ -291,15 +291,25 @@ start. The committed `sea` fixture covers ~10 min of SEA/BFI/PAE traffic
   at the lifting condensation level (125 m per °C of temperature–dew point
   spread above ground; Open-Meteo's `cloud_base` is null), thicker with more
   cover; mid layer from ~3 km above the low tops; cirrus at freezing level
-  + 4.5 km (7–11 km). Changes blend over a few seconds.
+  + 4.5 km (7–11 km). Layer heights blend over about a minute.
+- **Geographic cover**: cover varies across the map instead of the whole
+  sky following one reading. The server also sends a 7×7 grid of 1° cells
+  (~±350 km) of low/mid/high cover around the view (one Open-Meteo
+  multi-location request for missing cells, cached 30 min; resent after
+  80 km of movement). The client interpolates it into a 64×64 texture over
+  ±600 km in a local east/north plane (`client/src/clouds/regionalCoverage.ts`),
+  with each cell easing toward new forecasts over ~90 s, and patches
+  takram's clouds and cloud-shadow shaders to look up the cover at each
+  sample's position (`regionalShader.ts`). Flying from an overcast area
+  into a clear one passes through the edge of the cloud field. Without grid
+  data (or in manual mode) the view-center / slider cover applies everywhere.
 - **Per-layer coverage**: takram has one global coverage for all layers, so
-  cover is baked into our own coverage texture
-  (`client/src/clouds/coverageTexture.ts`): one tileable fBm channel per
-  layer (cumulus blobs, broad mid sheets, streaky cirrus), rank-transformed
-  to a uniform distribution and offset so exactly the forecast fraction of
-  texels crosses the cloud threshold at a fixed global coverage. Layer
-  shapes stay takram's defaults (re-applied per frame because `<Clouds>`
-  resets layers after mount).
+  our coverage texture (`client/src/clouds/coverageTexture.ts`) holds one
+  tileable fBm channel per layer (cumulus blobs, broad mid sheets, streaky
+  cirrus), rank-transformed to a uniform distribution; the patched shader
+  offsets it so exactly the local cover fraction crosses the cloud
+  threshold at a fixed global coverage. Layer shapes stay takram's defaults
+  (re-applied per frame because `<Clouds>` resets layers after mount).
 - The dev panel shows the current cover and can switch to a manual coverage
   slider.
 - **Sky vs. stars**: the clouds story draws the sky in post
@@ -501,24 +511,28 @@ Resolution follows distance:
   worldwide) streamed into a 4096² texture covering ~1,500 km around the
   view whenever the camera is below 600 km (not on Low quality); it
   recenters as you travel, nearest tiles first.
-- **Point lights** below that: the 600 m map is a soft blob up close, so the
-  effect scatters procedural lights on a world-fixed 3D grid whose cell
-  size tracks the pixel footprint (35 m at the finest, doubling per level,
-  ~8 px per cell, two levels blended). Each cell's light is lit with a
-  probability from the map's brightness, so dense cores sparkle and suburbs
-  thin out. Lamps stay ~1.5 px wide (0.5 m minimum) with a small pool of
-  light on the ground up close. Grid cells are indexed with integers
-  anchored on the CPU in double precision, so there's no float jitter at
-  ECEF scale and no pattern jump while moving.
+- **Shaped by the imagery** up close: the 600 m map is a soft blob at
+  street level, so the effect runs before AerialPerspective on the unlit
+  photo texture and classifies each pixel by color: grey mid-dark asphalt
+  next to contrasting surfaces (streets) glows, brighter grey (roofs, lots)
+  barely, water (dark, bluish) and vegetation (green) never. Brightness
+  follows the map (steep curve), varied per ~250 m district. Within
+  ~15 m/pixel, street lamps (world-fixed 32 m grid, only on street-like
+  surfaces with real texture structure) line the roads; within ~2 m/pixel,
+  building facades (normal from depth derivatives) show lit windows on a
+  3.2 m grid. Grids are indexed with integer cells anchored on the CPU in
+  double precision, so there's no float jitter at ECEF scale.
+- From far away (ground pixels of hundreds of meters, coarse tiles) the
+  map alone drives the glow, still kept off water.
 
-It's a postprocessing effect after `AerialPerspective`
-(`client/src/nightLights/`): it reconstructs each pixel's camera-relative
-position from depth, fades lights in through civil twilight at that point,
-attenuates them by air mass, by clouds in front (atmosphere overlay alpha)
-and skips aircraft (lighting mask). Warm sodium tint in dim areas, whiter
-LED in bright cores. It runs as its own pass because merged with
-`AerialPerspective` it exceeds WebGL's 16 texture units. Measured: 45 fps at
-2560×1600 (High) looking over Seattle at night from 2.5 km.
+The emission is handed to AerialPerspective in the alpha channel
+(1 − emission/0.1; effect passes clamp alpha to [0, 1]), which adds it to
+post-lit terrain only (not aircraft) before atmospheric transmittance and
+the cloud overlay, so lights dim through haze and hide behind clouds. Night
+exposure adapts up to 4× (moonlight/starlight floor in
+`client/src/scene/nightLighting.ts`); stars are drawn brighter than
+takram's default. Measured: 60 fps at 1920×1200 (Medium) over Seattle at
+night from 2 km.
 
 ## Known limitations
 

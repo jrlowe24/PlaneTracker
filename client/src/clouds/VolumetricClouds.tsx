@@ -8,9 +8,10 @@ import {
   type CloudWeatherSpec
 } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, type FC } from 'react'
-import type { Texture } from 'three'
+import type { ShaderMaterial, Texture } from 'three'
 
 import { detailedHexes } from '../aircraft/detailState'
+import { lightAnchor } from '../aircraft/lightAnchor'
 import { smoothingFactor } from '../aircraft/motion'
 import { weatherStore } from '../data/weather'
 import { cameraModeStore } from '../state/cameraMode'
@@ -19,6 +20,7 @@ import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
+import { RegionalCoverageController } from './regionalShader'
 
 /**
  * Above this camera altitude the clouds are skipped: takram's clouds don't
@@ -33,9 +35,7 @@ const MAX_CAMERA_ALTITUDE = 120_000
  * heights follow a little faster than cover.
  */
 const COVER_TIME_CONSTANT = 30
-const HEIGHT_TIME_CONSTANT = 12
-/** The coverage texture is rewritten at most this often (seconds). */
-const COVERAGE_UPDATE_INTERVAL = 0.5
+const HEIGHT_TIME_CONSTANT = 60
 
 /** Manual mode: takram's default layer heights at the slider's coverage. */
 function manualSpec(coverage: number): CloudWeatherSpec {
@@ -81,7 +81,11 @@ const CIRRUS_DENSITY = 0.004
  * coverage.
  */
 interface CloudsPassInternals {
-  cloudsPass?: { currentRenderTarget?: { depthVelocity?: Texture | null } }
+  cloudsPass?: {
+    currentRenderTarget?: { depthVelocity?: Texture | null }
+    currentMaterial?: ShaderMaterial
+  }
+  shadowPass?: { currentMaterial?: ShaderMaterial }
 }
 
 export const VolumetricClouds: FC = () => {
@@ -89,11 +93,13 @@ export const VolumetricClouds: FC = () => {
   const level = useStore(qualityStore, s => s.level)
   const preset = QUALITY_PRESETS[level]
   const coverageTexture = useMemo(() => new CoverageTexture(), [])
+  const regional = useMemo(() => new RegionalCoverageController(), [])
   useEffect(
     () => () => {
       coverageTexture.dispose()
+      regional.dispose()
     },
-    [coverageTexture]
+    [coverageTexture, regional]
   )
 
   const ref = useRef<CloudsEffect>(null)
@@ -102,7 +108,6 @@ export const VolumetricClouds: FC = () => {
   // Our own blended layer heights (not read back from the effect, whose
   // layers <Clouds> may reset to defaults).
   const heights = useRef<Array<{ altitude: number; height: number }>>([])
-  const sinceCoverageUpdate = useRef(Infinity)
 
   useFrame((_, delta) => {
     const effect = ref.current
@@ -163,13 +168,10 @@ export const VolumetricClouds: FC = () => {
       layer.shapeDetailAmount = i === 2 ? 0 : 1
       layer.shadow = i < 2 && QUALITY_PRESETS[qualityStore.get().level].cloudShadows
     }
-    // Per-layer cover lives in the coverage texture (rewritten at most twice
-    // a second, and only when it changed by more than half a percent).
-    sinceCoverageUpdate.current += dt
-    if (first || sinceCoverageUpdate.current >= COVERAGE_UPDATE_INTERVAL) {
-      sinceCoverageUpdate.current = 0
-      coverageTexture.setCoverage(cover[0]!, cover[1]!, cover[2]!)
-    }
+    // Cover per layer: from the regional grid at each sample's position
+    // when there is weather data (patched shader), else the blended
+    // view-center / manual cover everywhere.
+    regional.update(dt, live, lightAnchor, weatherStore.get().grid, [cover[0]!, cover[1]!, cover[2]!])
   })
 
   if (preset.clouds === false) return null
@@ -183,6 +185,12 @@ export const VolumetricClouds: FC = () => {
         }
         // Slow drift of the coverage pattern (wind).
         effect.localWeatherVelocity.set(0.00002, 0.000005)
+        const passes = effect as unknown as CloudsPassInternals
+        for (const material of [passes.cloudsPass?.currentMaterial, passes.shadowPass?.currentMaterial]) {
+          if (material != null && !regional.patch(material)) {
+            console.warn('[clouds] regional coverage patch did not apply')
+          }
+        }
       }}
       qualityPreset={preset.clouds}
       lightShafts={preset.lightShafts}

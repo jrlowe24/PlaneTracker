@@ -1,4 +1,4 @@
-import type { Attribution, WeatherSample } from '@windowseat/shared'
+import type { Attribution, WeatherGridCell, WeatherSample } from '@windowseat/shared'
 
 import { USER_AGENT } from './sources/adsbLol'
 
@@ -63,6 +63,8 @@ interface Entry {
 
 export class WeatherService {
   private readonly cache = new Map<string, Entry>()
+  /** Regional cloud cover grid (see WeatherGrid). */
+  readonly grid = new WeatherGrid()
 
   /** Cached sample for the cell around (lat, lon), fetching it if stale. */
   async get(lat: number, lon: number): Promise<WeatherSample | null> {
@@ -103,6 +105,108 @@ export class WeatherService {
     } catch (error) {
       console.warn('[weather]', error instanceof Error ? error.message : error)
       return null
+    }
+  }
+}
+
+/**
+ * Regional cloud cover: 1° cells (integer lat/lon centers) in a square
+ * around the view, fetched from Open-Meteo in one multi-location request
+ * for whichever cells are missing or older than 30 minutes.
+ */
+const GRID_TTL_MS = 30 * 60_000
+/** Cells from the center cell to the edge: 3 → a 7×7 grid (~770 km). */
+export const GRID_RADIUS_CELLS = 3
+
+interface OpenMeteoGridItem {
+  latitude: number
+  longitude: number
+  current?: { cloud_cover_low?: number; cloud_cover_mid?: number; cloud_cover_high?: number }
+}
+
+const gridKey = (lat: number, lon: number): string => `${lat},${lon}`
+
+/** Integer cell centers of the grid around (lat, lon), longitudes wrapped. */
+export function gridCells(lat: number, lon: number, radius = GRID_RADIUS_CELLS): Array<[number, number]> {
+  const cLat = Math.round(lat)
+  const cLon = Math.round(lon)
+  const cells: Array<[number, number]> = []
+  for (let dy = -radius; dy <= radius; ++dy) {
+    const cellLat = cLat + dy
+    if (cellLat < -89 || cellLat > 89) continue
+    for (let dx = -radius; dx <= radius; ++dx) {
+      const cellLon = ((((cLon + dx + 180) % 360) + 360) % 360) - 180
+      cells.push([cellLat, cellLon])
+    }
+  }
+  return cells
+}
+
+export class WeatherGrid {
+  private readonly cells = new Map<string, { cell: WeatherGridCell; fetchedAt: number }>()
+  private pending: Promise<void> | null = null
+
+  /** Cover for the grid around (lat, lon); fetches missing/stale cells. */
+  async around(lat: number, lon: number): Promise<WeatherGridCell[]> {
+    const wanted = gridCells(lat, lon)
+    const now = Date.now()
+    const stale = wanted.filter(([a, b]) => {
+      const entry = this.cells.get(gridKey(a, b))
+      return entry == null || now - entry.fetchedAt > GRID_TTL_MS
+    })
+    if (stale.length > 0) {
+      if (this.pending != null) await this.pending
+      this.pending = this.fetch(stale).finally(() => {
+        this.pending = null
+      })
+      await this.pending
+    }
+    return wanted.flatMap(([a, b]) => {
+      const entry = this.cells.get(gridKey(a, b))
+      return entry == null ? [] : [entry.cell]
+    })
+  }
+
+  private async fetch(cells: Array<[number, number]>): Promise<void> {
+    const params = new URLSearchParams({
+      latitude: cells.map(c => c[0]).join(','),
+      longitude: cells.map(c => c[1]).join(','),
+      current: 'cloud_cover_low,cloud_cover_mid,cloud_cover_high',
+      timezone: 'GMT'
+    })
+    try {
+      const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, {
+        headers: { accept: 'application/json', 'user-agent': USER_AGENT },
+        signal: AbortSignal.timeout(10_000)
+      })
+      if (!response.ok) {
+        console.warn(`[weather] Open-Meteo grid ${response.status}`)
+        return
+      }
+      const body = (await response.json()) as OpenMeteoGridItem[] | OpenMeteoGridItem
+      const items = Array.isArray(body) ? body : [body]
+      const now = Date.now()
+      items.forEach((item, i) => {
+        const [lat, lon] = cells[i]!
+        const c = item.current
+        if (c == null) return
+        this.cells.set(gridKey(lat, lon), {
+          cell: {
+            lat,
+            lon,
+            low: c.cloud_cover_low ?? 0,
+            mid: c.cloud_cover_mid ?? 0,
+            high: c.cloud_cover_high ?? 0
+          },
+          fetchedAt: now
+        })
+      })
+      // Bound memory: drop cells not refreshed for a few hours.
+      for (const [key, entry] of this.cells) {
+        if (now - entry.fetchedAt > 6 * GRID_TTL_MS) this.cells.delete(key)
+      }
+    } catch (error) {
+      console.warn('[weather] grid', error instanceof Error ? error.message : error)
     }
   }
 }

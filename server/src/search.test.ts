@@ -98,3 +98,15 @@ describe('RegionPoller one-off requests', () => {
     expect(calls[0]).toBe('extra')
   })
 })
+
+describe('weather grid cells', () => {
+  it('centers a 7×7 grid of 1° cells and wraps longitude', async () => {
+    const { gridCells } = await import('./weather')
+    const cells = gridCells(47.4, -122.3)
+    expect(cells).toHaveLength(49)
+    expect(cells[24]).toEqual([47, -122])
+    const wrapped = gridCells(10, 179.6)
+    expect(wrapped.map(c => c[1])).toContain(-178)
+    expect(wrapped.every(c => c[1] >= -180 && c[1] < 180)).toBe(true)
+  })
+})

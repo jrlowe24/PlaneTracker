@@ -57,7 +57,6 @@ export function findModelEntry(
 ): ModelEntry | null {
   const own = typeCode == null ? undefined : manifest.models[typeCode.toUpperCase()]
   return own ?? manifest.classes?.[cls] ?? null
-  return manifestPromise
 }
 
 let gltfLoader: GLTFLoader | null = null
