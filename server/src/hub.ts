@@ -1,5 +1,6 @@
 import {
   encodeAircraft,
+  greatCircleDistance,
   nauticalMilesToMeters,
   type AircraftMessage,
   type AircraftTuple,
@@ -16,7 +17,7 @@ import type { AircraftCache } from './cache'
 import { mergeViewports } from './regions'
 import type { RouteResolver } from './routes'
 import { ADSB_FI_ATTRIBUTION, type FollowFeed } from './sources/followFeed'
-import { OPEN_METEO_ATTRIBUTION, weatherCell, type WeatherService } from './weather'
+import { OPEN_METEO_ATTRIBUTION, type WeatherService } from './weather'
 import type { FlightSource } from './sources/types'
 
 export interface HubOptions {
@@ -49,8 +50,8 @@ interface ClientSession {
   sentRoutes: Set<string>
   /** Aircraft this client follows (fast updates), if any. */
   followHex: string | null
-  /** Weather cell last sent and when. */
-  weatherCell: string | null
+  /** Where weather was last sent for, and when. */
+  weatherAt: { lat: number; lon: number } | null
   weatherSentAt: number
   resetPending: boolean
 }
@@ -154,7 +155,7 @@ export class Hub {
       sent: new Map(),
       sentRoutes: new Set(),
       followHex: null,
-      weatherCell: null,
+      weatherAt: null,
       weatherSentAt: 0,
       resetPending: false
     }
@@ -214,13 +215,19 @@ export class Hub {
     }
   }
 
-  /** Sends weather for the client's view center when the cell changes or every 10 min. */
+  /**
+   * Sends weather for the client's view center when the view has moved more
+   * than ~50 km from where weather was last sent, or every 10 minutes. The
+   * distance hysteresis keeps small pans across a 0.25° cell boundary from
+   * flip-flopping the clouds.
+   */
   private pushWeather(client: ClientSession, now: number): void {
     if (this.weather == null || client.viewport == null) return
     const { lat, lon } = client.viewport
-    const cell = weatherCell(lat, lon)
-    if (cell === client.weatherCell && now - client.weatherSentAt < 10 * 60_000) return
-    client.weatherCell = cell
+    const last = client.weatherAt
+    const moved = last == null ? Infinity : greatCircleDistance(last.lat, last.lon, lat, lon)
+    if (moved < 50_000 && now - client.weatherSentAt < 10 * 60_000) return
+    client.weatherAt = { lat, lon }
     client.weatherSentAt = now
     void this.weather.get(lat, lon).then(sample => {
       if (sample == null || client.socket.readyState !== client.socket.OPEN) return

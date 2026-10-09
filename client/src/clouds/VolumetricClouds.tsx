@@ -24,8 +24,16 @@ import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTextur
  * only cost frame time.
  */
 const MAX_CAMERA_ALTITUDE = 120_000
-/** Weather changes (new data, panning to another cell) blend over ~this many seconds. */
-const BLEND_TIME_CONSTANT = 4
+/**
+ * New weather blends in slowly, the way real cloud fields build and thin:
+ * fast blends made clouds visibly pop in and dissolve whenever a new sample
+ * arrived (e.g. while following an aircraft across weather cells). Layer
+ * heights follow a little faster than cover.
+ */
+const COVER_TIME_CONSTANT = 30
+const HEIGHT_TIME_CONSTANT = 12
+/** The coverage texture is rewritten at most this often (seconds). */
+const COVERAGE_UPDATE_INTERVAL = 0.5
 
 /** Manual mode: takram's default layer heights at the slider's coverage. */
 function manualSpec(coverage: number): CloudWeatherSpec {
@@ -85,6 +93,10 @@ export const VolumetricClouds: FC = () => {
   const ref = useRef<CloudsEffect>(null)
   const initialized = useRef(false)
   const blended = useRef<[number, number, number]>([0, 0, 0])
+  // Our own blended layer heights (not read back from the effect, whose
+  // layers <Clouds> may reset to defaults).
+  const heights = useRef<Array<{ altitude: number; height: number }>>([])
+  const sinceCoverageUpdate = useRef(Infinity)
 
   useFrame((_, delta) => {
     const effect = ref.current
@@ -111,18 +123,24 @@ export const VolumetricClouds: FC = () => {
     const targets = layerTargets(spec, geoid)
 
     // Blend toward the target (snap on the first frame).
-    const k = initialized.current ? smoothingFactor(Math.min(delta, 0.1), BLEND_TIME_CONSTANT) : 1
+    const dt = Math.min(delta, 0.1)
+    const first = !initialized.current
     initialized.current = true
+    const kCover = first ? 1 : smoothingFactor(dt, COVER_TIME_CONSTANT)
+    const kHeight = first ? 1 : smoothingFactor(dt, HEIGHT_TIME_CONSTANT)
     effect.coverage = GLOBAL_COVERAGE
     const layers = effect.cloudLayers
     const cover = blended.current
     for (let i = 0; i < 3; ++i) {
-      const layer = layers[i]
       const t = targets[i]!
+      const h = (heights.current[i] ??= { altitude: t.altitude, height: t.height })
+      h.altitude += (t.altitude - h.altitude) * kHeight
+      h.height += (t.height - h.height) * kHeight
+      cover[i] = cover[i]! + (t.coverage - cover[i]!) * kCover
+      const layer = layers[i]
       if (layer == null) continue
-      layer.altitude += (t.altitude - layer.altitude) * k
-      layer.height += (t.height - layer.height) * k
-      cover[i] = cover[i]! + (t.coverage - cover[i]!) * k
+      layer.altitude = h.altitude
+      layer.height = h.height
     }
     // Static shape parameters are re-applied every frame: <Clouds> resets
     // its layers to takram's defaults after mount.
@@ -137,9 +155,13 @@ export const VolumetricClouds: FC = () => {
       layer.shapeDetailAmount = i === 2 ? 0 : 1
       layer.shadow = i < 2 && QUALITY_PRESETS[qualityStore.get().level].cloudShadows
     }
-    // Per-layer cover lives in the coverage texture (rewritten only when it
-    // changes by more than half a percent).
-    coverageTexture.setCoverage(cover[0]!, cover[1]!, cover[2]!)
+    // Per-layer cover lives in the coverage texture (rewritten at most twice
+    // a second, and only when it changed by more than half a percent).
+    sinceCoverageUpdate.current += dt
+    if (first || sinceCoverageUpdate.current >= COVERAGE_UPDATE_INTERVAL) {
+      sinceCoverageUpdate.current = 0
+      coverageTexture.setCoverage(cover[0]!, cover[1]!, cover[2]!)
+    }
   })
 
   if (preset.clouds === false) return null
