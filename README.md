@@ -57,9 +57,9 @@ tracked.
 ### Using it
 
 - **Nearby aircraft** (top left): the 40 aircraft closest to what you're
-  looking at (or to the plane you're following), with altitude and distance,
-  refreshed every second. Type to search callsign, registration, type or
-  ICAO hex; <kbd>Enter</kbd> follows the first match. Click a row to fly to
+  looking at (or to the plane you're following), with route (e.g.
+  `SEA → ATL`), altitude and distance, refreshed every second. Type to search
+  callsign, airport (code or city), registration, type or ICAO hex; <kbd>Enter</kbd> follows the first match. Click a row to fly to
   that aircraft and follow it (also works while following another one).
 - Click an aircraft to select it; the panel shows callsign, registration,
   type, altitude (barometric and GNSS), ground speed, vertical rate, track,
@@ -136,6 +136,21 @@ clients ──viewport──▶ Hub ──merged regions──▶ FlightSource �
   reused) or a paid feed can be swapped in. Everything is normalized into
   `AircraftState`; units stay as on the wire (ft, kt, ft/min, degrees) and
   are converted only in `shared/src/units.ts`.
+
+### Routes (origin → destination)
+
+ADS-B carries no origin or destination. The server looks up the scheduled
+route for airline-style callsigns (`ASA1305` → LAX–SEA) in vradarserver's
+standing data (CC0), as static per-callsign JSON files mirrored by adsb.lol
+(`vrs-standing-data.adsb.lol/routes/AS/ASA1305.json`). adsb.lol's batch
+`POST /api/0/routeset` returns an empty 201 to anonymous clients (October
+2026), so it isn't used. `server/src/routes.ts`: one request at a time
+(400 ms apart), cached in memory and in `server/.cache/routes.json` (12 h,
+misses 6 h); each client receives a route once per callsign in its view.
+Routes are schedules, so the client picks the leg the aircraft is actually
+flying from its position and track (`shared/src/routes.ts`; out-and-back
+routes like SEA–BLI–SEA resolve by direction) and marks routes whose
+position doesn't fit as unverified (`?`). Disable with `ROUTES=0`.
 
 ### Replay mode
 
@@ -365,6 +380,7 @@ page: N)`) show how many sessions the page has created.
   18 px height (the guidelines require 16–19 px).
 - **adsb.lol**: "Flight data © adsb.lol contributors (ODbL)" with a link is
   shown at all times while adsb.lol (or a replay of it) is the source.
+- **Routes**: vradarserver standing data (CC0), served by adsb.lol.
 - **EGM96**: geoid data from NGA (public domain), sampled via
   `egm96-universal` (MIT).
 - **Stars**: `client/public/atmosphere/stars.bin` comes from takram's

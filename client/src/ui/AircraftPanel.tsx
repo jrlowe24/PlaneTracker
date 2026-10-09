@@ -2,6 +2,7 @@ import type { AircraftState } from '@windowseat/shared'
 import { useEffect, useState, type FC } from 'react'
 
 import { flightConnection, serverNow } from '../data/flightConnection'
+import { routeFor } from '../data/routeDisplay'
 import {
   cameraModeStore,
   enterWindowView,
@@ -86,6 +87,7 @@ export const AircraftPanel: FC = () => {
   }
 
   const state = tracked.state
+  const route = routeFor(tracked)
   const ageS = Math.max(0, (serverNow() - state.positionTimestamp) / 1000)
   return (
     <div className='aircraft-panel'>
@@ -99,6 +101,15 @@ export const AircraftPanel: FC = () => {
         </div>
         <CloseButton />
       </div>
+      {route != null && (
+        <div className='aircraft-route' title={route.leg.plausible ? undefined : 'Scheduled route for this callsign; the position doesn’t match it'}>
+          <span className='route-codes'>{route.short}</span>
+          <span className='muted'>
+            {route.long.replace(/ \([A-Z0-9]+\)/g, '')}
+            {route.leg.plausible ? '' : ' · unverified'}
+          </span>
+        </div>
+      )}
       <dl className='aircraft-facts'>
         <dt>Altitude</dt>
         <dd>{formatAltitude(state)}</dd>

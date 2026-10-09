@@ -475,3 +475,28 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.row-route {
+  margin-left: 6px;
+  font-weight: 500;
+  font-size: 11px;
+  color: rgba(255, 196, 140, 0.95);
+}
+
+.row-route.doubtful {
+  color: var(--muted);
+}
+
+.aircraft-route {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -2px 0 10px;
+}
+
+.route-codes {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(255, 196, 140, 0.95);
+  letter-spacing: 0.03em;
+}

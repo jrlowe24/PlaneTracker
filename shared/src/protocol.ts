@@ -1,4 +1,5 @@
 import type { AircraftState } from './aircraft'
+import type { RouteInfo } from './routes'
 
 /**
  * WebSocket protocol between client and server (JSON text frames).
@@ -40,7 +41,14 @@ export interface AircraftMessage {
   removals: string[]
 }
 
-export type ServerMessage = HelloMessage | AircraftMessage
+/** Routes for callsigns in the client's view (sent once per callsign). */
+export interface RoutesMessage {
+  type: 'routes'
+  serverTime: number
+  routes: RouteInfo[]
+}
+
+export type ServerMessage = HelloMessage | AircraftMessage | RoutesMessage
 
 export type AircraftTuple = [
   hex: string,

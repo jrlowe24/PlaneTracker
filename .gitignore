@@ -11,3 +11,6 @@ coverage/
 
 # Large recorded fixtures can be regenerated with the record script
 *.log
+
+# Route lookup cache (server)
+server/.cache/

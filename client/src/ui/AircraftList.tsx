@@ -3,6 +3,7 @@ import { useEffect, useState, type FC } from 'react'
 import { lightAnchor } from '../aircraft/lightAnchor'
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { flightConnection } from '../data/flightConnection'
+import { routeFor } from '../data/routeDisplay'
 import { cameraModeStore, followAircraft } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { selectionStore } from '../state/selection'
@@ -14,6 +15,10 @@ interface Row {
   hex: string
   label: string
   detail: string
+  /** "LAX → SEA", or null when unknown. */
+  route: string | null
+  routeTitle: string | null
+  routePlausible: boolean
   altitude: string
   distanceNm: number
 }
@@ -23,7 +28,11 @@ const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
 function toRow(aircraft: TrackedAircraft): Row {
   const { state } = aircraft
   const distance = aircraft.pose?.position.distanceTo(lightAnchor) ?? Infinity
+  const route = routeFor(aircraft)
   return {
+    route: route?.short ?? null,
+    routeTitle: route == null ? null : `${route.long}${route.leg.plausible ? '' : ' (scheduled route; position doesn’t match)'}`,
+    routePlausible: route?.leg.plausible ?? false,
     hex: aircraft.hex,
     label: state.callsign ?? state.registration ?? state.hex.toUpperCase(),
     detail: [state.typeCode, state.registration !== state.callsign ? state.registration : null]
@@ -40,7 +49,9 @@ function toRow(aircraft: TrackedAircraft): Row {
 
 function matches(aircraft: TrackedAircraft, query: string): boolean {
   const { state } = aircraft
-  return [state.callsign, state.registration, state.typeCode, state.hex].some(
+  const route = state.callsign == null ? undefined : flightConnection.routes.get(state.callsign)
+  const airports = route?.airports.flatMap(a => [a.iata, a.icao, a.location]) ?? []
+  return [state.callsign, state.registration, state.typeCode, state.hex, ...airports].some(
     value => value?.toLowerCase().includes(query) === true
   )
 }
@@ -109,7 +120,7 @@ export const AircraftList: FC = () => {
           <input
             className='aircraft-search'
             type='search'
-            placeholder='Search callsign, registration, type…'
+            placeholder='Search flight, airport, registration, type…'
             value={query}
             onChange={e => {
               setQuery(e.target.value)
@@ -141,7 +152,18 @@ export const AircraftList: FC = () => {
                     }}
                   >
                     <span className='row-main'>
-                      <span className='row-label'>{row.label}</span>
+                      <span className='row-label'>
+                        {row.label}
+                        {row.route != null && (
+                          <span
+                            className={`row-route${row.routePlausible ? '' : ' doubtful'}`}
+                            title={row.routeTitle ?? undefined}
+                          >
+                            {row.route}
+                            {row.routePlausible ? '' : '?'}
+                          </span>
+                        )}
+                      </span>
                       <span className='row-detail muted'>{row.detail}</span>
                     </span>
                     <span className='row-numbers'>

@@ -1,5 +1,6 @@
 import type {
   ClientMessage,
+  RouteInfo,
   ServerMessage,
   Viewport
 } from '@windowseat/shared'
@@ -45,6 +46,8 @@ function updateClockOffset(serverTime: number): void {
 
 class FlightConnection {
   readonly registry = new AircraftRegistry()
+  /** Scheduled routes by callsign (from the server's route lookups). */
+  readonly routes = new Map<string, RouteInfo>()
   private socket: WebSocket | null = null
   private viewport: Viewport | null = null
   private retryMs = 1000
@@ -105,6 +108,8 @@ class FlightConnection {
           attributionUrl: message.attributionUrl,
           aircraftCount: 0
         })
+      } else if (message.type === 'routes') {
+        for (const route of message.routes) this.routes.set(route.callsign, route)
       } else {
         this.registry.apply(message, Date.now())
         if (flightStatusStore.get().aircraftCount !== this.registry.list.length) {

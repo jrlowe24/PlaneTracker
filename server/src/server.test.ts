@@ -15,6 +15,7 @@ import {
   snapRegion,
   viewportToRegions
 } from './regions'
+import { parseStandingDataRoute } from './routes'
 import { normalizeReadsb } from './sources/adsbLol'
 import {
   adaptRequestInterval,
@@ -268,6 +269,24 @@ describe('parseClientMessage', () => {
       parseClientMessage(
         JSON.stringify({ type: 'viewport', viewport: { lat: 100, lon: 0, radiusNm: 1 } })
       )
+    ).toBeNull()
+  })
+})
+
+describe('parseStandingDataRoute', () => {
+  it('keeps airports with coordinates and requires two or more', () => {
+    const route = parseStandingDataRoute('ASA1305', {
+      callsign: 'ASA1305',
+      _airports: [
+        { icao: 'KLAX', iata: 'LAX', name: 'Los Angeles International Airport', location: 'Los Angeles', countryiso2: 'US', lat: 33.94, lon: -118.41 },
+        { icao: 'KSEA', iata: 'SEA', name: 'Seattle Tacoma International Airport', location: 'Seattle', countryiso2: 'US', lat: 47.45, lon: -122.31 }
+      ]
+    })
+    expect(route?.airports.map(a => a.iata)).toEqual(['LAX', 'SEA'])
+    expect(parseStandingDataRoute('X', { _airports: [{ icao: 'KSEA', lat: 47, lon: -122 }] })).toBeNull()
+    expect(
+      parseStandingDataRoute('X', { _airports: [{ icao: 'KSEA', iata: '', lat: 47, lon: -122 }, { icao: 'EGLL', lat: 51, lon: 0 }] })
+        ?.airports[0]?.iata
     ).toBeNull()
   })
 })

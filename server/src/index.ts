@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws'
 import { AircraftCache } from './cache'
 import { readFixture } from './fixtures'
 import { Hub } from './hub'
+import { RouteResolver } from './routes'
 import { AdsbLolSource } from './sources/adsbLol'
 import { ReplaySource } from './sources/replay'
 import { SyntheticSource } from './sources/synthetic'
@@ -18,6 +19,9 @@ import type { FlightSource } from './sources/types'
  * - default: live adsb.lol polling for the clients' merged viewports
  * - REPLAY=1: loops a recorded fixture (REPLAY_FILE, default fixtures/sea.ndjson.gz)
  * - SYNTH=<count>: synthetic worldwide traffic for stress tests
+ *
+ * Routes (origin/destination by callsign) are looked up unless ROUTES=0 or
+ * the traffic is synthetic.
  */
 
 const PORT = Number(process.env.PORT ?? 8787)
@@ -47,7 +51,9 @@ async function createSource(): Promise<FlightSource> {
 
 const source = await createSource()
 const cache = new AircraftCache()
-const hub = new Hub(cache, source)
+const routesEnabled = process.env.ROUTES !== '0' && !source.name.startsWith('synthetic')
+const routes = routesEnabled ? new RouteResolver(resolve(here, '../.cache/routes.json')) : null
+const hub = new Hub(cache, source, {}, routes)
 
 const http = createServer((req, res) => {
   if (req.url === '/health') {

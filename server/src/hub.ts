@@ -5,12 +5,15 @@ import {
   type AircraftTuple,
   type ClientMessage,
   type HelloMessage,
+  type RouteInfo,
+  type RoutesMessage,
   type Viewport
 } from '@windowseat/shared'
 import type { WebSocket } from 'ws'
 
 import type { AircraftCache } from './cache'
 import { mergeViewports } from './regions'
+import type { RouteResolver } from './routes'
 import type { FlightSource } from './sources/types'
 
 export interface HubOptions {
@@ -39,6 +42,8 @@ interface ClientSession {
   viewport: Viewport | null
   /** hex → cache revision last sent to this client. */
   sent: Map<string, number>
+  /** Callsigns whose route this client already has. */
+  sentRoutes: Set<string>
   resetPending: boolean
 }
 
@@ -88,12 +93,14 @@ export class Hub {
   constructor(
     private readonly cache: AircraftCache,
     private readonly source: FlightSource,
-    options: Partial<HubOptions> = {}
+    options: Partial<HubOptions> = {},
+    private readonly routes: RouteResolver | null = null
   ) {
     this.options = { ...defaultHubOptions, ...options }
   }
 
   start(): void {
+    this.routes?.start()
     this.source.start({
       onAircraft: (states, receivedAt) => {
         this.cache.upsert(states, receivedAt)
@@ -114,6 +121,7 @@ export class Hub {
   stop(): void {
     if (this.timer != null) clearInterval(this.timer)
     this.timer = null
+    this.routes?.stop()
     this.source.stop()
   }
 
@@ -126,6 +134,7 @@ export class Hub {
       socket,
       viewport: null,
       sent: new Map(),
+      sentRoutes: new Set(),
       resetPending: false
     }
     this.clients.add(client)
@@ -177,14 +186,27 @@ export class Hub {
     const radius =
       nauticalMilesToMeters(viewport.radiusNm) * this.options.viewportMargin
     const upserts: AircraftTuple[] = []
+    const newRoutes: RouteInfo[] = []
     const inView = new Set<string>()
     for (const entry of this.cache.within(viewport.lat, viewport.lon, radius)) {
       const hex = entry.state.hex
       inView.add(hex)
+      const callsign = entry.state.callsign
+      if (this.routes != null && callsign != null && !client.sentRoutes.has(callsign)) {
+        const route = this.routes.get(callsign)
+        if (route != null) {
+          newRoutes.push(route)
+          client.sentRoutes.add(callsign)
+        }
+      }
       if (sent.get(hex) !== entry.revision) {
         upserts.push(encodeAircraft(entry.state))
         sent.set(hex, entry.revision)
       }
+    }
+    if (newRoutes.length > 0) {
+      const routesMessage: RoutesMessage = { type: 'routes', serverTime: now, routes: newRoutes }
+      socket.send(JSON.stringify(routesMessage))
     }
     const removals: string[] = []
     for (const hex of sent.keys()) {
