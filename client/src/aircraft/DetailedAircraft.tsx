@@ -8,7 +8,7 @@ import { cameraModeStore } from '../state/cameraMode'
 import { selectionStore } from '../state/selection'
 import { shadingUniform } from './aircraftMaterial'
 import { aircraftClass } from './typeClasses'
-import type { AircraftClass } from './airframes'
+import { AIRFRAMES, type AircraftClass } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { FRAME_PRIORITY } from './framePriority'
 import { lightAnchor } from './lightAnchor'
@@ -26,6 +26,8 @@ interface DetailedEntry {
   isGltf: boolean
   /** glTF scale to the type's real size (models with `fit`), else 1. */
   fitScale: { span: number; length: number }
+  /** Vertical model shift (m, body up) putting its wheels on the ground. */
+  lift: number
   cls: AircraftClass
   typeCode: string | null
 }
@@ -64,6 +66,7 @@ class DetailedAircraftController {
     const entry: DetailedEntry = {
       isGltf: false,
       fitScale: { span: 1, length: 1 },
+      lift: 0,
       cls,
       typeCode,
       object: createDetailedModel(typeCode, cls, state?.callsign ?? null, (model, modelEntry, anchors) => {
@@ -83,11 +86,19 @@ class DetailedAircraftController {
         // Nav lights follow this model's shape (scaled like the model).
         const { span, length } = entry.fitScale
         const scaled = (v: Vector3): Vector3 => v.clone().multiply(new Vector3(span, length, length))
+        // The pose puts the fuselage axis the class placeholder's gear
+        // height above the ground; shift the model so its own lowest point
+        // (its wheels) sits exactly there instead of floating or sinking.
+        const aircraft = flightConnection.registry.byHex.get(hex)
+        const clearance = AIRFRAMES[cls].groundClearance * (aircraft?.scale.length ?? 1)
+        entry.lift = -clearance - anchors.lowest * length
+        const lifted = (v: Vector3): Vector3 => scaled(v).setY(scaled(v).y + entry.lift)
         modelLightAnchors.set(hex, {
-          wingtip: scaled(anchors.wingtip),
-          tail: scaled(anchors.tail),
-          top: scaled(anchors.top),
-          bottom: scaled(anchors.bottom)
+          wingtip: lifted(anchors.wingtip),
+          tail: lifted(anchors.tail),
+          top: lifted(anchors.top),
+          bottom: lifted(anchors.bottom),
+          lowest: -clearance
         })
         this.group.add(model)
       })
@@ -134,7 +145,7 @@ class DetailedAircraftController {
         const agl = aircraft.groundHeight == null ? Infinity : pose.height - aircraft.groundHeight
         gear.visible = aircraft.attitude.ground > 0.05 || agl < 460
       }
-      object.position.copy(pose.position)
+      object.position.copy(pose.position).addScaledVector(pose.up, entry.lift)
       basis.makeBasis(pose.left, pose.up, pose.forward)
       object.quaternion.setFromRotationMatrix(basis)
       if (entry.isGltf) {

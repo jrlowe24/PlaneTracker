@@ -13,6 +13,8 @@ export interface LightAnchors {
   tail: Vector3
   top: Vector3
   bottom: Vector3
+  /** Lowest point of the model (gear), body-frame meters. */
+  lowest: number
 }
 
 /**

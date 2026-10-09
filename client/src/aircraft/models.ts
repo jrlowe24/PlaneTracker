@@ -134,6 +134,8 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
     if (outer.x - p.x < 0.6 && Math.abs(p.y - outer.y) < 0.6 && p.z > wingtip.z) wingtip.copy(p)
   }
   wingtip.z += 0.15
+  let lowest = Infinity
+  for (const p of points) lowest = Math.min(lowest, p.y)
   const midZ = (minZ + maxZ) / 2
   const length = maxZ - minZ
   for (const p of points) {
@@ -151,7 +153,7 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
   if (!Number.isFinite(top.y)) top.set(0, 1, 0)
   if (!Number.isFinite(bottom.y)) bottom.set(0, -1, 0)
   if (!Number.isFinite(tail.z)) tail.set(0, 0, minZ)
-  return { wingtip, tail, top, bottom }
+  return { wingtip, tail, top, bottom, lowest: Number.isFinite(lowest) ? lowest : -1 }
 }
 
 /** Loads (once) and normalizes a glTF model; null on failure. */
