@@ -13,6 +13,10 @@ const SLOW_MS = TARGET_MS * 1.12
 const MIN_SCALE = 0.5
 const STEP_DOWN = 0.85
 const STEP_UP = 1.08
+/** Below this scale, coarser terrain is traded in before more resolution. */
+const TILE_TRADE_SCALE = 0.7
+const MAX_TILE_FACTOR = 2
+const TILE_STEP = 1.25
 /** Seconds of averaging before a decision; going up needs longer. */
 const WINDOW_DOWN_S = 0.75
 const WINDOW_UP_S = 3
@@ -28,55 +32,72 @@ const WINDOW_UP_S = 3
  */
 class ResolutionGovernor {
   scale = 1
+  tileFactor = 1
   private sum = 0
   private count = 0
   private elapsed = 0
 
-  /** Returns a new scale when it should change, else null. */
-  sample(deltaS: number): number | null {
+  /** Returns true when scale or tile factor changed. */
+  sample(deltaS: number): boolean {
     const ms = deltaS * 1000
     // Ignore stalls (tab hidden, debugger, page load hitches).
-    if (ms > 250) return null
+    if (ms > 250) return false
     this.sum += ms
     this.count += 1
     this.elapsed += deltaS
     const mean = this.sum / this.count
-    let next: number | null = null
-    if (this.elapsed >= WINDOW_DOWN_S && mean > SLOW_MS && this.scale > MIN_SCALE) {
-      next = Math.max(MIN_SCALE, this.scale * STEP_DOWN)
-    } else if (this.elapsed >= WINDOW_UP_S && mean < TARGET_MS * 1.04 && this.scale < 1) {
-      next = Math.min(1, this.scale * STEP_UP)
+    let changed = false
+    if (this.elapsed >= WINDOW_DOWN_S && mean > SLOW_MS) {
+      // Resolution first; once it's fairly low, coarser terrain too
+      // (draw calls and triangles cost CPU and vertex time resolution
+      // can't win back).
+      if (this.scale <= TILE_TRADE_SCALE && this.tileFactor < MAX_TILE_FACTOR) {
+        this.tileFactor = Math.min(MAX_TILE_FACTOR, this.tileFactor * TILE_STEP)
+        changed = true
+      } else if (this.scale > MIN_SCALE) {
+        this.scale = Math.round(Math.max(MIN_SCALE, this.scale * STEP_DOWN) * 20) / 20
+        changed = true
+      }
+    } else if (this.elapsed >= WINDOW_UP_S && mean < TARGET_MS * 1.04) {
+      // Recover terrain detail first, then resolution.
+      if (this.tileFactor > 1) {
+        this.tileFactor = Math.max(1, this.tileFactor / TILE_STEP)
+        changed = true
+      } else if (this.scale < 1) {
+        this.scale = Math.round(Math.min(1, this.scale * STEP_UP) * 20) / 20
+        changed = true
+      }
     }
-    if (next != null || this.elapsed >= WINDOW_UP_S) {
+    if (changed || this.elapsed >= WINDOW_UP_S) {
       this.sum = 0
       this.count = 0
       this.elapsed = 0
     }
-    if (next == null) return null
-    this.scale = Math.round(next * 20) / 20
-    return this.scale
+    return changed
   }
 
   reset(): void {
     this.scale = 1
+    this.tileFactor = 1
     this.sum = 0
     this.count = 0
     this.elapsed = 0
   }
 }
 
-/** Applies the quality preset's resolution (adaptively) and tile error target. */
+/** Applies the quality preset's resolution and tile error target (both adaptively). */
 export const QualityApplier: FC = () => {
   const setDpr = useThree(({ setDpr }) => setDpr)
   const level = useStore(qualityStore, s => s.level)
   const preset = QUALITY_PRESETS[level]
   const governor = useMemo(() => new ResolutionGovernor(), [])
   const scale = useStore(resolutionStore, s => s.scale)
+  const tileFactor = useStore(resolutionStore, s => s.tileFactor)
 
   useEffect(() => {
     // A new preset starts at full resolution again.
     governor.reset()
-    resolutionStore.set({ scale: 1 })
+    resolutionStore.set({ scale: 1, tileFactor: 1 })
   }, [governor, preset.maxDpr])
 
   useEffect(() => {
@@ -84,14 +105,17 @@ export const QualityApplier: FC = () => {
   }, [setDpr, preset.maxDpr, scale])
 
   useFrame((_, delta) => {
-    const next = governor.sample(delta)
-    if (next != null) resolutionStore.set({ scale: next })
+    if (resolutionStore.get().locked) return
+    if (governor.sample(delta)) {
+      resolutionStore.set({ scale: governor.scale, tileFactor: governor.tileFactor })
+    }
   })
 
   useEffect(() => {
     if (config.tilesDisabled) return
-    getGoogleTiles({ apiKey: config.googleMapsApiKey }).errorTarget = preset.tileErrorTarget
-  }, [preset.tileErrorTarget])
+    getGoogleTiles({ apiKey: config.googleMapsApiKey }).errorTarget =
+      preset.tileErrorTarget * tileFactor
+  }, [preset.tileErrorTarget, tileFactor])
 
   return null
 }

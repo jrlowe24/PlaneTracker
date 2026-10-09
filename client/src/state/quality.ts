@@ -39,7 +39,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     cloudShadows: true,
     lightShafts: true,
     lensFlare: true,
-    tileErrorTarget: 6,
+    tileErrorTarget: 10,
     maxDpr: 2
   }
 }
