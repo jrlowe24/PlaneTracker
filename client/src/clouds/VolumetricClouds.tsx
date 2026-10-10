@@ -18,7 +18,7 @@ import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
-import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
+import { CONVECTIVE_FILTER_WIDTH, CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
 import { patchCloudsResolve, RegionalCoverageController } from './regionalShader'
 
 /**
@@ -76,6 +76,32 @@ function manualSpec(coverage: number): CloudWeatherSpec {
   }
 }
 
+interface CloudOverride {
+  low: number
+  mid: number
+  high: number
+  cape: number
+  code: number
+}
+type CloudOverrideWindow = Window & { __windowSeatCloudOverride?: CloudOverride }
+
+function overrideSpec(o: CloudOverride): CloudWeatherSpec {
+  return cloudLayersFromWeather({
+    lat: 0,
+    lon: 0,
+    time: 0,
+    elevation: 50,
+    cloudCoverLow: o.low,
+    cloudCoverMid: o.mid,
+    cloudCoverHigh: o.high,
+    temperature: 20,
+    dewPoint: 12,
+    freezingLevel: 3500,
+    cape: o.cape,
+    weatherCode: o.code
+  })
+}
+
 /** Layer parameters the renderer blends toward. */
 interface LayerTarget {
   altitude: number
@@ -96,7 +122,7 @@ function layerTargets(spec: CloudWeatherSpec, geoid: number): LayerTarget[] {
 const LOW_MID_DENSITY = 0.2
 const CIRRUS_DENSITY = 0.004
 /** Towering cumulus / cumulonimbus: denser than fair-weather cumulus. */
-const CONVECTIVE_DENSITY = 0.3
+const CONVECTIVE_DENSITY = 0.6
 
 /**
  * Volumetric clouds (takram three-clouds), following its 3DTilesRenderer
@@ -142,6 +168,7 @@ export const VolumetricClouds: FC = () => {
   // layers <Clouds> may reset to defaults).
   const heights = useRef<Array<{ altitude: number; height: number }>>([])
   const sinceDisplay = useRef(0)
+  const lastOverride = useRef<CloudOverride | undefined>(undefined)
 
   useFrame((_, delta) => {
     const effect = ref.current
@@ -163,8 +190,19 @@ export const VolumetricClouds: FC = () => {
 
     const settings = settingsStore.get()
     const sample = weatherStore.get().sample
-    const live = settings.cloudSource === 'weather' && sample != null
-    const spec = live ? cloudLayersFromWeather(sample) : manualSpec(settings.cloudCoverage)
+    // Dev: window.__windowSeatCloudOverride = { low, mid, high, cape, code }
+    // forces a weather scenario instantly (repeatable visual tests).
+    const override = import.meta.env.DEV ? (window as CloudOverrideWindow).__windowSeatCloudOverride : undefined
+    const live = override == null && settings.cloudSource === 'weather' && sample != null
+    const spec = override != null
+      ? overrideSpec(override)
+      : live
+        ? cloudLayersFromWeather(sample)
+        : manualSpec(settings.cloudCoverage)
+    if (override != null && override !== lastOverride.current) {
+      lastOverride.current = override
+      initialized.current = false
+    }
     // Cover at the view center comes from the blended grid when there is
     // one (the same field the shader uses everywhere), not the single
     // nearest reading, which jumps between cells.
@@ -206,13 +244,13 @@ export const VolumetricClouds: FC = () => {
       const layer = layers[i]
       if (layer == null) continue
       layer.weatherExponent = 1
-      layer.coverageFilterWidth = FILTER_WIDTH
+      layer.coverageFilterWidth = i === 3 ? CONVECTIVE_FILTER_WIDTH : FILTER_WIDTH
       // Towers stay wide most of the way up (lower bias), cumulus round off.
       layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35
       layer.densityScale =
         i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : i === 3 ? CONVECTIVE_DENSITY : LOW_MID_DENSITY
       layer.shapeAmount = i === 2 ? 0.4 : 1
-      layer.shapeDetailAmount = i === 2 ? 0 : 1
+      layer.shapeDetailAmount = i === 2 ? 0 : i === 3 ? 0.45 : 1
       layer.shadow = i !== 2 && shadows
     }
     // Cover per layer: from the regional grid at each sample's position
@@ -237,6 +275,11 @@ export const VolumetricClouds: FC = () => {
         }
         // Slow drift of the coverage pattern (wind).
         effect.localWeatherVelocity.set(0.00002, 0.000005)
+        // More contrast: less ambient sky fill inside clouds (shadowed sides
+        // and bases read grey, not evenly lit cotton), slightly stronger
+        // powder darkening at thin edges facing away from the sun.
+        effect.skyLightScale = 0.6
+        effect.powderScale = 0.9
         // Cloud shadow cascades span 40 km, not the whole view (180 km+):
         // spread over the far plane, the far cascades were ~200 m per texel
         // and painted blocky smudges over distant terrain and aircraft.

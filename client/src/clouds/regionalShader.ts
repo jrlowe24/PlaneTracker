@@ -2,7 +2,7 @@ import { ecefToGeodetic, type WeatherGridCell } from '@windowseat/shared'
 import type { Vector3} from 'three';
 import { Uniform, Vector4, type ShaderMaterial, type Texture } from 'three'
 
-import { COVERAGE_THRESHOLD } from './coverageTexture'
+import { CONVECTIVE_FILTER_WIDTH, COVERAGE_THRESHOLD, coverageThreshold } from './coverageTexture'
 import { REGION_RADIUS, RegionalCoverage, type Cover } from './regionalCoverage'
 
 /**
@@ -27,7 +27,37 @@ uniform float regionalRadius;
 uniform float regionalEnabled;
 uniform vec4 coverageFallback;
 
-vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLevel) {
+/**
+ * Cumulonimbus vertical profile for the convective layer (w): a narrower
+ * column through the middle that spreads into a wide, flat-topped anvil
+ * near the top (where rising air hits the tropopause), instead of the
+ * rounded dome shape of fair-weather cumulus. Multiplies the convective
+ * coverage at each height, so widths stay relative to how many storms
+ * there are (the library's own height profile shifts area by a fixed
+ * amount, which erased sparse columns).
+ */
+float convectiveProfile(const float h) {
+  // Widening tower, flaring gradually into the anvil; the top thins out
+  // (the noise decides where it ends) instead of a flat cut.
+  float column = mix(0.75, 1.25, smoothstep(0.0, 0.75, h));
+  float anvil = smoothstep(0.66, 0.9, h);
+  float top = 1.0 - 0.85 * smoothstep(0.88, 1.0, h);
+  return mix(column, 2.4, anvil) * top;
+}
+
+/**
+ * Detail erosion varies: by region (some areas of a deck are smooth, others
+ * lumpy; a uniform "cauliflower" texture everywhere read as fake), and
+ * toward cloud-field edges (thin weather density), which erode harder into
+ * ragged, wispy margins instead of rounded walls.
+ */
+float detailVariation(const vec3 position, const float weatherDensity) {
+  float region = texture(shapeTexture, position * shapeRepeat * 0.11 + vec3(0.37, 0.71, 0.13)).r;
+  float edge = 1.0 + 0.9 * (1.0 - smoothstep(0.0, 0.55, weatherDensity));
+  return mix(0.35, 1.35, smoothstep(0.25, 0.75, region)) * edge;
+}
+
+vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLevel, const float convectiveHeight) {
   vec4 cover = coverageFallback;
   if (regionalEnabled > 0.5) {
     // Positions here are globe-centered (ECEF plus a small, mostly radial
@@ -38,7 +68,9 @@ vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLev
     vec4 regional = texture(regionalCoverage, clamp(st, 0.0, 1.0));
     cover = mix(coverageFallback, regional, smoothstep(0.0, 0.08, edge));
   }
-  vec4 offset = clamp(${COVERAGE_THRESHOLD.toFixed(6)} - (1.0 - cover), -1.0, 1.0);
+  cover.w = min(cover.w * convectiveProfile(convectiveHeight), 1.0);
+  const vec4 thresholds = vec4(vec3(${COVERAGE_THRESHOLD.toFixed(6)}), ${coverageThreshold(CONVECTIVE_FILTER_WIDTH).toFixed(6)});
+  vec4 offset = clamp(thresholds - (1.0 - cover), -1.0, 1.0);
   vec4 direct = clamp(weather + offset, 0.0, 1.0);
   // Distant samples read blurred mips of the noise (all ~0.5), and
   // thresholding a blurred value turns far clouds into a uniform translucent
@@ -82,14 +114,19 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
   const signature =
     'WeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel) {'
   const apply = '  #ifdef SHADOW\n  localWeather *= shadowLayerMask;'
+  const heightScaleLine = '  vec4 heightScale = shapeAlteringFunction(weather.heightFraction, shapeAlteringBiases);'
+  const detailLine = '    modifier = mix(vec4(0.0), modifier, shapeDetailAmounts);'
   const source = material.fragmentShader
-  if (!source.includes(signature) || !source.includes(apply)) return false
+  if (!source.includes(signature) || !source.includes(apply) || !source.includes(heightScaleLine)) return false
   material.fragmentShader = source
     .replace(
       signature,
       `${CHUNK}\nWeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel, const vec3 weatherPosition) {`
     )
-    .replace(apply, `  localWeather = applyRegionalCoverage(localWeather, weatherPosition, mipLevel);\n${apply}`)
+    .replace(apply, `  localWeather = applyRegionalCoverage(localWeather, weatherPosition, mipLevel, weather.heightFraction.w);\n${apply}`)
+    .replace(heightScaleLine, `${heightScaleLine}\n  heightScale.w = smoothstep(0.0, 0.05, weather.heightFraction.w);`)
+    // The shadow pass has no detail noise; only patch where present.
+    .replace(detailLine, `${detailLine}\n    modifier.w *= 1.0 - 0.85 * smoothstep(0.72, 0.84, weather.heightFraction.w);\n    modifier *= detailVariation(position, dot(weather.density, vec4(0.25)) * 4.0 / max(1.0, dot(step(vec4(0.001), weather.density), vec4(1.0))));`)
     .replaceAll('sampleWeather(uv, height, mipLevel)', 'sampleWeather(uv, height, mipLevel, position)')
   Object.assign(material.uniforms, uniforms)
   material.needsUpdate = true

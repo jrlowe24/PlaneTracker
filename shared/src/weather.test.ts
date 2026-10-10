@@ -49,7 +49,7 @@ describe('cloud layers from weather', () => {
     expect(cloudLayersFromWeather(base).convective.coverage).toBe(0)
     expect(convectiveCoverage(500, 3)).toBe(0)
     const storm = cloudLayersFromWeather({ ...base, cape: 2000, weatherCode: 95 })
-    expect(storm.convective.coverage).toBeGreaterThan(0.3)
+    expect(storm.convective.coverage).toBeGreaterThan(0.1)
     expect(storm.convective.altitude).toBe(storm.low.altitude)
     expect(storm.convective.height).toBeGreaterThan(8000)
     expect(convectiveCoverage(3000, 2)).toBeGreaterThan(0)

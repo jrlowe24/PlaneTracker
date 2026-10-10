@@ -69,9 +69,9 @@ export function convectiveCoverage(cape: number | null, code: number | null): nu
   const c = Math.max(0, cape ?? 0)
   const instability = clampValue((c - 300) / 1700, 0, 1)
   let coverage = 0
-  if (code != null && code >= 95) coverage = 0.3 + 0.15 * instability
-  else if (code != null && code >= 80 && code <= 82) coverage = 0.08 + 0.12 * instability
-  return Math.max(coverage, 0.12 * clampValue((c - 1500) / 1500, 0, 1))
+  if (code != null && code >= 95) coverage = 0.1 + 0.06 * instability
+  else if (code != null && code >= 80 && code <= 82) coverage = 0.05 + 0.07 * instability
+  return Math.max(coverage, 0.08 * clampValue((c - 1500) / 1500, 0, 1))
 }
 
 /** Top of convective towers above their base, meters, from CAPE. */

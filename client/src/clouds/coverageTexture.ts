@@ -27,8 +27,13 @@ export const GLOBAL_COVERAGE = 0.5
  * instead of a crisp outline traced by the 2D coverage map.
  */
 export const FILTER_WIDTH = 0.4
-/** Weather value where clouds begin mid-layer: mix(v, 1, w) = 1 − coverage. */
-export const COVERAGE_THRESHOLD = (1 - GLOBAL_COVERAGE - FILTER_WIDTH) / (1 - FILTER_WIDTH)
+/** Filter width of the convective layer: sharp, solid storm-cell edges. */
+export const CONVECTIVE_FILTER_WIDTH = 0.12
+/** Weather value where clouds begin mid-layer for a filter width w: mix(v, 1, w) = 1 − coverage. */
+export function coverageThreshold(filterWidth: number): number {
+  return (1 - GLOBAL_COVERAGE - filterWidth) / (1 - filterWidth)
+}
+export const COVERAGE_THRESHOLD = coverageThreshold(FILTER_WIDTH)
 
 const SIZE = 256
 
@@ -74,8 +79,8 @@ const STYLES: [NoiseStyle, NoiseStyle, NoiseStyle, NoiseStyle] = [
   { periodX: 5, periodY: 5, octaves: 4, seed: 23 },
   // High: streaky cirrus.
   { periodX: 16, periodY: 3, octaves: 3, seed: 37 },
-  // Convective: isolated towers, fewer and larger than cumulus cells.
-  { periodX: 7, periodY: 7, octaves: 2, seed: 53 }
+  // Convective: isolated round cells (a few km wide, spread apart).
+  { periodX: 22, periodY: 22, octaves: 1, seed: 53 }
 ]
 
 /** Rank-transforms values to a uniform distribution over [0, 1). */
