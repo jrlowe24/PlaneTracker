@@ -11,6 +11,7 @@ import { RouteResolver } from './routes'
 import { SearchService } from './search'
 import { AdsbLolSource } from './sources/adsbLol'
 import { FollowFeed } from './sources/followFeed'
+import { OpenSkySnapshot } from './sources/openskySnapshot'
 import { WeatherService } from './weather'
 import { ReplaySource } from './sources/replay'
 import { SyntheticSource } from './sources/synthetic'
@@ -63,7 +64,12 @@ const followFeed = followEnabled
   : null
 // Current weather (Open-Meteo) for the clouds; WEATHER=0 disables.
 const weather = process.env.WEATHER === '0' ? null : new WeatherService()
-const hub = new Hub(cache, source, {}, routes, followFeed, weather)
+// Worldwide overview (OpenSky), live data only; OVERVIEW=0 disables.
+const overview =
+  source instanceof AdsbLolSource && process.env.OVERVIEW !== '0'
+    ? new OpenSkySnapshot((states, receivedAt) => cache.upsert(states, receivedAt))
+    : null
+const hub = new Hub(cache, source, {}, routes, followFeed, weather, overview)
 // Worldwide search (live lookups only with live data).
 const search = new SearchService(cache, followFeed, source instanceof AdsbLolSource ? source : null)
 

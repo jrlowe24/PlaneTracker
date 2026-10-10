@@ -36,4 +36,10 @@ export interface AircraftState {
   verticalRate: number | null
   /** Unix epoch milliseconds when the position was measured. */
   positionTimestamp: number
+  /**
+   * True for aircraft known only from the periodic worldwide snapshot
+   * (minutes between updates): shown zoomed out, extrapolated along their
+   * track, replaced by live data in regions being polled.
+   */
+  overview?: boolean
 }

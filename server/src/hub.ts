@@ -19,6 +19,7 @@ import type { AircraftCache } from './cache'
 import { mergeViewports } from './regions'
 import type { RouteResolver } from './routes'
 import { ADSB_FI_ATTRIBUTION, type FollowFeed } from './sources/followFeed'
+import { OPENSKY_ATTRIBUTION, type OpenSkySnapshot } from './sources/openskySnapshot'
 import { OPEN_METEO_ATTRIBUTION, type WeatherService } from './weather'
 import type { FlightSource } from './sources/types'
 
@@ -127,7 +128,8 @@ export class Hub {
     options: Partial<HubOptions> = {},
     private readonly routes: RouteResolver | null = null,
     private readonly followFeed: FollowFeed | null = null,
-    private readonly weather: WeatherService | null = null
+    private readonly weather: WeatherService | null = null,
+    private readonly overview: OpenSkySnapshot | null = null
   ) {
     this.options = { ...defaultHubOptions, ...options }
   }
@@ -135,6 +137,7 @@ export class Hub {
   start(): void {
     this.routes?.start()
     this.followFeed?.start()
+    this.overview?.start()
     this.source.start({
       onAircraft: (states, receivedAt) => {
         this.cache.upsert(states, receivedAt)
@@ -157,6 +160,7 @@ export class Hub {
     this.timer = null
     this.routes?.stop()
     this.followFeed?.stop()
+    this.overview?.stop()
     this.source.stop()
   }
 
@@ -185,7 +189,8 @@ export class Hub {
       source: this.source.name,
       attribution: this.source.attribution,
       attributionUrl: this.source.attributionUrl,
-      followAttribution: this.followFeed == null ? null : ADSB_FI_ATTRIBUTION
+      followAttribution: this.followFeed == null ? null : ADSB_FI_ATTRIBUTION,
+      overviewAttribution: this.overview == null ? null : OPENSKY_ATTRIBUTION
     }
     socket.send(JSON.stringify(hello))
 
@@ -232,7 +237,7 @@ export class Hub {
 
   private push(): void {
     const now = Date.now()
-    this.cache.prune(now, this.options.staleAfterMs)
+    this.cache.prune(now, this.options.staleAfterMs, this.overview?.maxAgeMs)
     for (const client of this.clients) {
       this.pushTo(client, now)
       this.pushWeather(client, now)

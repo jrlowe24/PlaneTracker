@@ -99,6 +99,7 @@ const FlightDataAttribution: FC = () => {
   const attribution = useStore(flightStatusStore, s => s.attribution)
   const url = useStore(flightStatusStore, s => s.attributionUrl)
   const follow = useStore(flightStatusStore, s => s.followAttribution)
+  const overview = useStore(flightStatusStore, s => s.overviewAttribution)
   const following = useStore(cameraModeStore, s => s.mode !== 'globe')
   if (attribution == null) return null
   return (
@@ -109,6 +110,14 @@ const FlightDataAttribution: FC = () => {
         </a>
       ) : (
         attribution
+      )}
+      {overview != null && (
+        <>
+          {' · '}
+          <a href={overview.url ?? undefined} target='_blank' rel='noreferrer'>
+            {overview.text}
+          </a>
+        </>
       )}
       <WeatherCredit />
       <NightLightsCredit />

@@ -51,11 +51,15 @@ export class AircraftCache {
     return changed
   }
 
-  /** Removes aircraft not reported for `maxAgeMs`; returns their hex codes. */
-  prune(now: number, maxAgeMs: number): string[] {
+  /**
+   * Removes aircraft not reported for `maxAgeMs` (`overviewMaxAgeMs` for
+   * aircraft known only from the worldwide snapshot); returns their hexes.
+   */
+  prune(now: number, maxAgeMs: number, overviewMaxAgeMs = maxAgeMs): string[] {
     const removed: string[] = []
     for (const [hex, entry] of this.entries) {
-      if (now - entry.lastSeenAt > maxAgeMs) {
+      const limit = entry.state.overview === true ? overviewMaxAgeMs : maxAgeMs
+      if (now - entry.lastSeenAt > limit) {
         this.entries.delete(hex)
         removed.push(hex)
       }

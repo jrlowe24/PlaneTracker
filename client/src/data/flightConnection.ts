@@ -20,6 +20,7 @@ export interface FlightStatus {
   attributionUrl: string | null
   /** Extra source for followed aircraft (shown while following). */
   followAttribution: Attribution | null
+  overviewAttribution: Attribution | null
   aircraftCount: number
 }
 
@@ -29,6 +30,7 @@ export const flightStatusStore = createStore<FlightStatus>({
   attribution: null,
   attributionUrl: null,
   followAttribution: null,
+  overviewAttribution: null,
   aircraftCount: 0
 })
 
@@ -133,7 +135,8 @@ class FlightConnection {
           source: message.source,
           attribution: message.attribution,
           attributionUrl: message.attributionUrl,
-          followAttribution: message.followAttribution
+          followAttribution: message.followAttribution,
+          overviewAttribution: message.overviewAttribution ?? null
         })
       } else if (message.type === 'weather') {
         weatherStore.set({ sample: message.weather, attribution: message.attribution })

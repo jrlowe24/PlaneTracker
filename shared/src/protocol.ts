@@ -51,6 +51,8 @@ export interface HelloMessage {
    * while the client follows an aircraft.
    */
   followAttribution: Attribution | null
+  /** Worldwide overview source, if any. */
+  overviewAttribution?: Attribution | null
 }
 
 export interface AircraftMessage {
@@ -110,7 +112,9 @@ export type AircraftTuple = [
   groundSpeed: number | null,
   track: number | null,
   verticalRate: number | null,
-  positionTimestamp: number
+  positionTimestamp: number,
+  /** 1 for worldwide-snapshot (overview) aircraft; omitted otherwise. */
+  overview?: 1
 ]
 
 function round(value: number, digits: number): number {
@@ -123,7 +127,7 @@ function roundOrNull(value: number | null, digits: number): number | null {
 }
 
 export function encodeAircraft(a: AircraftState): AircraftTuple {
-  return [
+  const tuple: AircraftTuple = [
     a.hex,
     a.callsign,
     a.registration,
@@ -141,6 +145,8 @@ export function encodeAircraft(a: AircraftState): AircraftTuple {
     a.verticalRate,
     a.positionTimestamp
   ]
+  if (a.overview === true) tuple.push(1)
+  return tuple
 }
 
 export function decodeAircraft(t: AircraftTuple): AircraftState {
@@ -159,7 +165,8 @@ export function decodeAircraft(t: AircraftTuple): AircraftState {
     groundSpeed: t[11],
     track: t[12],
     verticalRate: t[13],
-    positionTimestamp: t[14]
+    positionTimestamp: t[14],
+    ...(t[15] === 1 ? { overview: true } : {})
   }
 }
 

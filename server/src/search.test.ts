@@ -110,3 +110,26 @@ describe('weather grid cells', () => {
     expect(wrapped.every(c => c[1] >= -180 && c[1] < 180)).toBe(true)
   })
 })
+
+describe('OpenSky snapshot', () => {
+  it('normalizes state vectors and drops stale or position-less ones', async () => {
+    const { normalizeOpenSky } = await import('./sources/openskySnapshot')
+    const now = 1_000_000
+    const states = normalizeOpenSky(
+      [
+        ['abc123', 'UAL1    ', 'United States', now - 5, now, -122.3, 47.5, 3048, false, 100, 90, -5, null, 3100, '1200', false, 0, 4],
+        ['def456', null, 'X', now - 600, now, 1, 2, null, true, 0, 0, 0, null, null, null, false, 0],
+        ['aaa111', null, 'X', null, now, null, null, null, false, null, null, null, null, null, null, false, 0]
+      ],
+      now
+    )
+    expect(states).toHaveLength(1)
+    const s = states[0]!
+    expect(s.hex).toBe('abc123')
+    expect(s.callsign).toBe('UAL1')
+    expect(s.altBaro).toBe(10000)
+    expect(s.category).toBe('A3')
+    expect(s.groundSpeed).toBeCloseTo(194.4, 1)
+    expect(s.overview).toBe(true)
+  })
+})
