@@ -1197,8 +1197,32 @@ kbd {
     font-size: 15px;
   }
 
+  /* Credits: small and tight, still legible. The Google logo stays at
+     its 16 px minimum. */
   .attribution {
-    font-size: 10px;
-    padding-top: 4px;
+    font-size: 7.5px;
+    line-height: 1.25;
+    padding: 2px 8px max(3px, env(safe-area-inset-bottom));
+    color: rgba(255, 255, 255, 0.75);
+  }
+
+  .attribution a {
+    text-decoration: none;
+  }
+
+  .attribution-flight {
+    margin-bottom: 1px;
+  }
+
+  .attribution-google {
+    gap: 6px;
+  }
+
+  .google-logo {
+    height: 16px;
+  }
+
+  .credits {
+    line-height: 16px;
   }
 }
