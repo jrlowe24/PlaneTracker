@@ -97,8 +97,8 @@ function manualSpec(coverage: number): CloudWeatherSpec {
   const deck = smoothstep(0.55, 0.9, c)
   return {
     coverage: c,
-    low: { altitude: 900, height: (700 + 600 * c) * (1 - deck) + 600 * deck, coverage: c },
-    mid: { altitude: 3200, height: 900, coverage: Math.max(0, (c - 0.45) * 1.6) },
+    low: { altitude: 900, height: (1000 + 1200 * c) * (1 - deck) + 950 * deck, coverage: c },
+    mid: { altitude: 3600, height: 1500, coverage: Math.max(0, (c - 0.45) * 1.6) },
     high: { altitude: 8000, height: 500, coverage: c === 0 ? 0 : 0.15 + 0.4 * c },
     convective: { altitude: 900, height: 0, coverage: 0 }
   }

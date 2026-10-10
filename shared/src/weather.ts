@@ -114,12 +114,15 @@ export function cloudLayersFromWeather(sample: WeatherSample): CloudWeatherSpec 
 
   const ground = Math.max(0, sample.elevation)
   const lowBase = ground + clamp(cumulusBaseAboveGround(sample.temperature, sample.dewPoint), 300, 3000)
-  // Scattered cumulus build tall; near overcast, low cloud is a flatter
-  // stratocumulus sheet (thick decks read as walls of cotton).
+  // Scattered cumulus build tall (1–2 km, like real fair-weather and
+  // building cumulus); near overcast, low cloud is a stratocumulus sheet,
+  // still ~1 km deep (at 600 m decks read as thin pancakes, thicker ones
+  // as walls of cotton). The renderer's shaping rounds off part of each
+  // layer, so the visible cloud is somewhat thinner than the layer.
   const deck = smoothstep01((low - 0.55) / 0.35)
-  const lowHeight = (400 + 1400 * low) * (1 - deck) + 600 * deck
+  const lowHeight = (1000 + 1200 * low) * (1 - deck) + 950 * deck
   const midBase = Math.max(lowBase + lowHeight + 300, 3000)
-  const midHeight = 600 + 1200 * mid
+  const midHeight = 1000 + 1500 * mid
   const freezing = sample.freezingLevel ?? 3000
   const highBase = clamp(freezing + 4500, 7000, 11_000)
 
