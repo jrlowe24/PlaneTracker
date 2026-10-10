@@ -71,7 +71,7 @@ const STYLES: [NoiseStyle, NoiseStyle, NoiseStyle, NoiseStyle] = [
   // Low clouds use a broad, irregular envelope. The volumetric shape and
   // detail textures supply the smaller puffs; putting those into the weather
   // mask too made high-cover fields read as evenly spaced cotton balls.
-  { periodX: 5, periodY: 4, octaves: 5, seed: 11, persistence: 0.58 },
+  { periodX: 4, periodY: 3, octaves: 4, seed: 11, persistence: 0.42 },
   // Mid: broader sheets (altostratus/altocumulus).
   { periodX: 5, periodY: 5, octaves: 4, seed: 23 },
   // High: streaky cirrus.

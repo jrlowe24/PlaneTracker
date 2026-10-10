@@ -256,14 +256,16 @@ export const VolumetricClouds: FC = () => {
       layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35 - 0.17 * deck
       layer.densityScale =
         i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : i === 3 ? CONVECTIVE_DENSITY : LOW_MID_DENSITY
-      // Reduce large-scale spherical erosion as the deck fills in, while
-      // retaining enough fine detail to keep its edges and top from looking
-      // like a featureless slab.
+      // Fill the broad shape as the deck rises; fine detail keeps eroding its
+      // low-density boundaries so the result doesn't become a featureless slab.
       layer.shapeAmount = i === 2 ? 0.4 : 1 - (i === 0 ? 0.88 : 0.8) * deck
-      layer.shapeDetailAmount = i === 2 ? 0 : 1 - (i === 0 ? 0.65 : 0.55) * deck
+      layer.shapeDetailAmount = i === 2 ? 0 : 1 + (i === 0 ? 0.18 : 0.1) * deck
       const baseFill = 0.25 + 0.48 * deck
       layer.densityProfile.set(0, 0, 1 - baseFill, baseFill)
-      layer.shadow = i !== 2 && shadows
+      // Dense mid-level decks were producing a hard blue self-shadow rim.
+      // Keep their shadows while broken, but let a near-overcast deck scatter
+      // light without feeding its own coarse shadow map back into the edges.
+      layer.shadow = shadows && (i === 0 || (i === 1 && deck < 0.6))
     }
     // Cover per layer: from the regional grid at each sample's position
     // when there is weather data (patched shader), else the blended
@@ -287,6 +289,10 @@ export const VolumetricClouds: FC = () => {
         }
         // Slow drift of the coverage pattern (wind).
         effect.localWeatherVelocity.set(0.00002, 0.000005)
+        // The library's default powder term darkens very thin cloud samples
+        // strongly. At sunset this reads as a blue shadow around sunlit wisps.
+        effect.powderScale = 0.28
+        effect.powderExponent = 100
         // Cloud shadow cascades span 40 km, not the whole view (180 km+):
         // spread over the far plane, the far cascades were ~200 m per texel
         // and painted blocky smudges over distant terrain and aircraft.
