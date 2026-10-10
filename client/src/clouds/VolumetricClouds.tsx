@@ -19,6 +19,7 @@ import { settingsStore } from '../state/settings'
 import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
+import { patchCloudSkipBanding } from './cloudMarching'
 import { patchCloudsResolve, RegionalCoverageController } from './regionalShader'
 
 /**
@@ -307,6 +308,10 @@ export const VolumetricClouds: FC = () => {
           if (material != null && !regional.patch(material)) {
             console.warn('[clouds] regional coverage patch did not apply')
           }
+        }
+        const cloudsMaterial = passes.cloudsPass?.currentMaterial
+        if (cloudsMaterial != null && !patchCloudSkipBanding(cloudsMaterial)) {
+          console.warn('[clouds] banding patch did not apply')
         }
         const resolve = passes.cloudsPass?.resolveMaterial
         if (resolve != null && !patchCloudsResolve(resolve)) {
