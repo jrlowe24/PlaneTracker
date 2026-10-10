@@ -144,8 +144,15 @@ export class OpenSkySnapshot {
       if (Number.isFinite(remaining) && remaining < 40) next *= 4
       console.info(`[opensky] ${states.length} aircraft worldwide; next in ${Math.round(next / 1000)} s`)
     } catch (error) {
-      console.warn('[opensky]', error instanceof Error ? error.message : error)
-      next = Math.max(next, 5 * 60_000)
+      // fetch() wraps network errors ("fetch failed"); the cause says why
+      // (timeout, reset, DNS, TLS).
+      const cause = error instanceof Error && error.cause != null ? error.cause : null
+      const detail =
+        cause instanceof Error ? `${cause.name}: ${cause.message}${'code' in cause ? ` (${String(cause.code)})` : ''}` : ''
+      console.warn('[opensky]', error instanceof Error ? error.message : error, detail)
+      // Network failures retry soon; API errors (rate limit etc.) keep the
+      // interval chosen above.
+      next = cause != null ? Math.max(60_000, Math.min(next, 5 * 60_000)) : Math.max(next, 5 * 60_000)
     }
     if (this.timer !== null || next > 0) this.schedule(next)
   }
