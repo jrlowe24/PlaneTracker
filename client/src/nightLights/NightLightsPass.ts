@@ -130,13 +130,26 @@ float roadLayer(const int level, const ivec2 cell) {
 }
 
 /**
+ * Brightness of a lamp drawn bigger than it is, share = its true size
+ * over its drawn size. Slower than its true share (share²) so lamps stay
+ * visible; steeper again far away (share < 0.1, a pixel spanning tens of
+ * meters), where lamps at their true spacing fill every pixel along a road
+ * and the slow falloff turned streets into a glowing map.
+ */
+float distantFade(const float share) {
+  return min(1.0, pow(share, 0.6) * pow(min(1.0, share / 0.1), 0.7));
+}
+
+/**
  * A lamp is ~0.7 m. Farther away it's drawn at least about a pixel wide,
  * and dimmed as it grows, a little slower than its true share of the pixel
  * so distant cities still read as fields of lights (as they do to the eye,
  * through glare) rather than a lattice of full-brightness dots.
+ * (Steeper far away: see distantFade.)
  */
 float lampFade(const float radius) {
-  return min(1.0, pow(0.5 / radius, 0.9));
+  float share = 0.5 / radius;
+  return min(1.0, pow(share, 0.9) * pow(min(1.0, share / 0.1), 0.7));
 }
 
 /**
@@ -160,7 +173,7 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
   // Fixture ~0.7 m; drawn at least ~1 px, dimmed as that outgrows it.
   float physical = 0.35 / max(footprint, 1e-3);
   float core = max(0.8, physical);
-  float fade = min(1.0, pow(physical / 0.8, 0.6));
+  float fade = distantFade(physical / 0.8);
   // The 3x3 cell search reaches about a texel from this pixel in every
   // direction: radii (pixels) beyond that would be clipped into dashes
   // where a pixel spans a lot of ground (grazing views).
@@ -299,12 +312,16 @@ void main() {
 
   // Residential carpet where only the coarse level's main roads are drawn,
   // and a faint glow beyond every window.
-  float density = smoothstep(0.1, 0.6, value) * 0.35;
+  // Sparser where NASA's map is dimmer: suburbs thin out to the dark edges.
+  float density = pow(smoothstep(0.12, 0.8, value), 1.5) * 0.3;
   float land = 1.0 - waterScore(albedo.rgb);
   if (coarse > 0.0) lit += carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * coarse * land;
   lit += vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
 
-  outColor = vec4(lit * urban * smoothstep(0.35, 0.85, upness) * night, 1.0);
+  // Brighter where NASA's map is: downtown cores stand out from suburbs
+  // instead of one even sheet of light across the metro area.
+  float cores = mix(0.7, 1.3, smoothstep(0.35, 0.95, value));
+  outColor = vec4(lit * urban * cores * smoothstep(0.35, 0.85, upness) * night, 1.0);
 }
 `
 
