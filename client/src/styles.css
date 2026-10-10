@@ -1197,32 +1197,80 @@ kbd {
     font-size: 15px;
   }
 
-  /* Credits: small and tight, still legible. The Google logo stays at
-     its 16 px minimum. */
+  /*
+   * Credits: one 16 px row (the Google logo's minimum height), text at
+   * 8 px on a single line with an ellipsis; tap to show it all.
+   */
   .attribution {
-    font-size: 7.5px;
-    line-height: 1.25;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 8px;
+    line-height: 12px;
     padding: 2px 8px max(3px, env(safe-area-inset-bottom));
     color: rgba(255, 255, 255, 0.75);
+    pointer-events: auto;
   }
 
   .attribution a {
     text-decoration: none;
   }
 
-  .attribution-flight {
-    margin-bottom: 1px;
+  /* Collapsed, a tap expands the row; the links work once expanded. */
+  .attribution:not(.expanded) a {
+    pointer-events: none;
   }
 
   .attribution-google {
+    order: -1;
+    flex: 0 1 auto;
+    min-width: 0;
     gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .attribution-flight {
+    flex: 1 1 0;
+    margin: 0;
+  }
+
+  .attribution-google .credits,
+  .attribution-flight {
+    min-width: 0;
+    line-height: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .attribution-google .credits {
+    max-width: 38vw;
   }
 
   .google-logo {
     height: 16px;
+    flex: none;
   }
 
-  .credits {
-    line-height: 16px;
+  /* Tapped: everything, wrapped. */
+  .attribution.expanded {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.55);
+  }
+
+  .attribution.expanded .attribution-google {
+    order: 0;
+  }
+
+  .attribution.expanded .attribution-flight {
+    flex: none;
+  }
+
+  .attribution.expanded .attribution-google .credits,
+  .attribution.expanded .attribution-flight {
+    white-space: normal;
+    max-width: none;
   }
 }

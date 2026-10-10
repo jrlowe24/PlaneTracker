@@ -154,15 +154,28 @@ function useHeightVariable(): (element: HTMLDivElement | null) => void {
   }, [])
 }
 
-export const Attribution: FC = () => (
-  <div className='attribution' ref={useHeightVariable()}>
-    <FlightDataAttribution />
-    {config.tilesDisabled ? (
-      <div className='attribution-note'>
-        Google 3D tiles disabled ({config.tilesDisabledReason})
-      </div>
-    ) : (
-      <GoogleAttribution />
-    )}
-  </div>
-)
+/**
+ * On phones the credits are one short row (logo, then the text on a single
+ * line, cut off with an ellipsis); tapping the text shows it all.
+ */
+export const Attribution: FC = () => {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div
+      className={`attribution${expanded ? ' expanded' : ''}`}
+      ref={useHeightVariable()}
+      onClick={event => {
+        if ((event.target as HTMLElement).closest('a') == null) setExpanded(e => !e)
+      }}
+    >
+      <FlightDataAttribution />
+      {config.tilesDisabled ? (
+        <div className='attribution-note'>
+          Google 3D tiles disabled ({config.tilesDisabledReason})
+        </div>
+      ) : (
+        <GoogleAttribution />
+      )}
+    </div>
+  )
+}
