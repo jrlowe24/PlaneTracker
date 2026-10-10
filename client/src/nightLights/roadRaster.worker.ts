@@ -264,6 +264,12 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
 
   // Airports.
   const aeroway = tile.layers.aeroway
+  const runways: Point[][] = []
+  for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
+    const feature = aeroway!.feature(i)
+    if (feature.type !== 2 || String(feature.properties.class) !== 'runway') continue
+    for (const line of geometry(feature)) if (line.length >= 2) runways.push(line)
+  }
   for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
     const feature = aeroway!.feature(i)
     const cls = String(feature.properties.class)
@@ -277,10 +283,10 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
     if (feature.type !== 2) continue
     for (const line of geometry(feature)) {
       if (line.length < 2) continue
-      if (cls === 'runway') drawRunway(ctx, line, mpp, size)
-      else if (cls === 'taxiway') drawTaxiway(ctx, line, mpp)
+      if (cls === 'taxiway') drawTaxiway(ctx, line, mpp)
     }
   }
+  for (const line of runways) drawRunway(ctx, line, runways, mpp, size)
 
   const pixels = ctx.getImageData(0, 0, size, size).data
   for (let i = 0; i < size * size; ++i) pixels[i * 4 + 3] = Math.min(255, Math.round(lampEnergy[i]! * 255))
@@ -339,27 +345,44 @@ function drawTaxiway(ctx: Ctx, line: Point[], mpp: number): void {
   })
 }
 
+/** Distance (px) from a point to a polyline. */
+function distanceToLine(p: Point, line: Point[]): number {
+  let best = Infinity
+  for (let i = 1; i < line.length; ++i) {
+    const a = line[i - 1]!
+    const b = line[i]!
+    const abx = b.x - a.x
+    const aby = b.y - a.y
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / (abx * abx + aby * aby || 1)))
+    best = Math.min(best, Math.hypot(p.x - a.x - abx * t, p.y - a.y - aby * t))
+  }
+  return best
+}
+
 /**
  * Runway lighting, in order of brightness: white edge lights (every 30 m,
- * the runway's outline, brightest), green threshold and red end bars at
- * ends inside the tile (not where the tile cut the runway), an approach
- * light system there (centerline barrettes every 30 m out to 900 m, a
- * crossbar at 300 m, red side rows over the inner 300 m), and a dim
- * centerline every 15 m.
+ * the runway's outline, brightest), green threshold and red end bars at the runway's real ends, an
+ * approach light system there (centerline barrettes every 30 m out to
+ * 900 m, a crossbar at 300 m, red side rows over the inner 270 m), and a
+ * dim centerline every 15 m.
+ *
+ * OpenStreetMap often splits a runway into several ways (at displaced
+ * thresholds, crossings, edits): an end of a way is a real end only if it
+ * is inside the tile (not where the tile cut the runway) and no other
+ * runway way continues from it. Approach lights stop at other runways.
  */
-function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
+function drawRunway(ctx: Ctx, line: Point[], runways: Point[][], mpp: number, size: number): void {
   const half = 23 / mpp
   const r = 3 / mpp
-  const at = (p: Point, ox: number, oy: number, along: number, across: number): [number, number] => [
-    p.x + ox * (along / mpp) - oy * (across / mpp),
-    p.y + oy * (along / mpp) + ox * (across / mpp)
-  ]
-  // Spill from the edge lights across the pavement (the surface's own
-  // color shows: markings, centerline paint), strongest near the edges.
-  if (poolsEnabled) {
-    strokeLine(ctx, line, Math.max(1, 50 / mpp), rgba(RUNWAY, 0.005))
-  }
+  const at = (p: Point, ox: number, oy: number, along: number, across: number): Point => ({
+    x: p.x + ox * (along / mpp) - oy * (across / mpp),
+    y: p.y + oy * (along / mpp) + ox * (across / mpp)
+  })
+  const others = runways.filter(other => other !== line)
+  const onRunway = (p: Point, distance: number): boolean => runways.some(other => distanceToLine(p, other) < distance)
   along(line, 30 / mpp, 15 / mpp, (x, y, dx, dy) => {
+    // Low fixtures aimed along the runway: they light no pavement, so the
+    // runway between the rows stays dark, as it is.
     lamp(ctx, x - dy * half, y + dx * half, r, RUNWAY, 1, false)
     lamp(ctx, x + dy * half, y - dx * half, r, RUNWAY, 1, false)
   })
@@ -375,21 +398,33 @@ function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
   ]
   for (const [end, next] of ends) {
     if (!inside(end)) continue
+    if (others.some(other => distanceToLine(end, other) < 40 / mpp)) continue
     const length = Math.hypot(next.x - end.x, next.y - end.y)
     if (length === 0) continue
     // Unit vector pointing outward from the runway at this end.
     const ox = (end.x - next.x) / length
     const oy = (end.y - next.y) / length
-    for (let k = -8; k <= 8; ++k) {
-      lamp(ctx, ...at(end, ox, oy, 3, k * 3), r * 0.8, GREEN, 1, false)
-      lamp(ctx, ...at(end, ox, oy, -3, k * 3), r * 0.8, RED, 0.9, false)
+    for (let k = -7; k <= 7; ++k) {
+      const green = at(end, ox, oy, 2, k * 3)
+      const red = at(end, ox, oy, -2, k * 3 + 1.5)
+      lamp(ctx, green.x, green.y, r * 0.8, GREEN, 1, false)
+      lamp(ctx, red.x, red.y, r * 0.8, RED, 0.6, false)
     }
-    for (let d = 30; d <= 900; d += 30) {
-      const bar = d === 300 ? 15 : 2
-      for (let k = -bar; k <= bar; ++k) lamp(ctx, ...at(end, ox, oy, d, k * 1.5), r * 0.8, RUNWAY, 0.85, false)
+    for (let d = 60; d <= 900; d += 30) {
+      const center = at(end, ox, oy, d, 0)
+      // Off the end of this runway only: not across another one.
+      if (onRunway(center, 35 / mpp)) break
+      const bar = d === 300 ? 7 : 1
+      for (let k = -bar; k <= bar; ++k) {
+        const p = at(end, ox, oy, d, k * 2.5)
+        lamp(ctx, p.x, p.y, r * 0.8, RUNWAY, 0.85, false)
+      }
       if (d <= 270) {
         for (const side of [-1, 1]) {
-          for (let k = 0; k < 3; ++k) lamp(ctx, ...at(end, ox, oy, d, side * (10 + k * 1.5)), r * 0.8, RED, 0.8, false)
+          for (let k = 0; k < 2; ++k) {
+            const p = at(end, ox, oy, d, side * (11 + k * 3))
+            lamp(ctx, p.x, p.y, r * 0.8, RED, 0.7, false)
+          }
         }
       }
     }

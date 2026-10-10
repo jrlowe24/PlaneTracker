@@ -320,7 +320,7 @@ void main() {
  */
 export class NightLightsPass extends Pass {
   readonly target = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })
-  /** The lights blurred: their glow (NightGlowEffect adds it to the scene). */
+  /** The lights blurred: their glow (the aerial perspective patch in PostEffects adds it). */
   private readonly blur = new MipmapBlurPass()
   private readonly material: ShaderMaterial
 
@@ -423,6 +423,12 @@ export class NightLightsPass extends Pass {
 
   setSun(direction: Vector3): void {
     this.u<Vector3>('sunDirection').value.copy(direction)
+  }
+
+  override initialize(renderer: WebGLRenderer, alpha: boolean): void {
+    // Half float like the lights themselves: 8-bit mipmaps (the default)
+    // quantize the faint glow into flat, hard-edged slabs.
+    this.blur.initialize(renderer, alpha, HalfFloatType)
   }
 
   override setSize(width: number, height: number): void {
