@@ -49,6 +49,8 @@ export class RegionalCoverage {
   readonly north = new Vector3(0, 1, 0)
   /** False until the first grid arrives. */
   hasData = false
+  /** Most cover of each layer anywhere in the region (empty layers aren't marched). */
+  readonly max: Cover = { low: 0, mid: 0, high: 0, conv: 0 }
 
   private readonly data = new Uint8Array(SIZE * SIZE * 4)
   private readonly displayed = new Map<string, Cover>()
@@ -171,7 +173,8 @@ export class RegionalCoverage {
 
   private rebuild(): void {
     this.updateBounds()
-    const { data, point } = this
+    const { data, point, max } = this
+    max.low = max.mid = max.high = max.conv = 0
     for (let j = 0; j < SIZE; ++j) {
       const y = ((j + 0.5) / SIZE - 0.5) * 2 * REGION_RADIUS
       for (let i = 0; i < SIZE; ++i) {
@@ -184,6 +187,10 @@ export class RegionalCoverage {
         data[o + 1] = Math.round(255 * c.mid)
         data[o + 2] = Math.round(255 * c.high)
         data[o + 3] = Math.round(255 * c.conv)
+        max.low = Math.max(max.low, c.low)
+        max.mid = Math.max(max.mid, c.mid)
+        max.high = Math.max(max.high, c.high)
+        max.conv = Math.max(max.conv, c.conv)
       }
     }
     this.texture.needsUpdate = true

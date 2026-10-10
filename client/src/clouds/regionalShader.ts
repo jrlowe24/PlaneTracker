@@ -146,6 +146,11 @@ export class RegionalCoverageController {
     this.uniforms.regionalEnabled.value = live && this.coverage.hasData ? 1 : 0
   }
 
+  /** Most cover of each layer anywhere in the region, or null without grid data. */
+  maxCover(): Cover | null {
+    return this.coverage.hasData ? this.coverage.max : null
+  }
+
   /** Blended grid cover at an ECEF point, or null without grid data. */
   coverAtPoint(point: Vector3): Cover | null {
     const g = ecefToGeodetic(point.x, point.y, point.z)

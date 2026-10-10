@@ -16,6 +16,7 @@ import { weatherStore } from '../data/weather'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
+import { nightState } from '../scene/nightLighting'
 import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
@@ -30,6 +31,8 @@ import { patchCloudsResolve, RegionalCoverageController } from './regionalShader
 const FADE_START_ALTITUDE = 25_000
 const FADE_END_ALTITUDE = 70_000
 const SHADOW_MAX_FAR = 40_000
+/** Cloud resolution at night, relative to the preset's. */
+const NIGHT_RESOLUTION = 0.7
 
 /**
  * Drops the clouds' temporal history after a camera cut or a resolution
@@ -171,6 +174,7 @@ export const VolumetricClouds: FC = () => {
   // Weather choice last frame, and how long the quick blend still runs.
   const lastChoice = useRef('')
   const quickBlend = useRef(0)
+  const dark = useRef(false)
 
   useFrame((_, delta) => {
     const effect = ref.current
@@ -191,7 +195,12 @@ export const VolumetricClouds: FC = () => {
     // fade), which costs next to nothing.
     effect.skipRendering = false
     historyReset.update(effect, camera.position, camera.quaternion)
-    const scale = cloudDepth.fade > 0 ? QUALITY_PRESETS[qualityStore.get().level].cloudResolution : 0.1
+    // At night the clouds only show as dim underglow and moonlight: render
+    // them coarser (hysteresis so dusk doesn't reallocate back and forth).
+    if (!dark.current && nightState.night > 0.95) dark.current = true
+    else if (dark.current && nightState.night < 0.75) dark.current = false
+    const resolution = QUALITY_PRESETS[qualityStore.get().level].cloudResolution * (dark.current ? NIGHT_RESOLUTION : 1)
+    const scale = cloudDepth.fade > 0 ? resolution : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
     const settings = settingsStore.get()
@@ -227,6 +236,7 @@ export const VolumetricClouds: FC = () => {
     effect.coverage = GLOBAL_COVERAGE
     const layers = effect.cloudLayers
     const cover = blended.current
+    const maxCover = live ? regional.maxCover() : null
     for (let i = 0; i < 4; ++i) {
       const t = targets[i]!
       const h = (heights.current[i] ??= { altitude: t.altitude, height: t.height })
@@ -239,7 +249,12 @@ export const VolumetricClouds: FC = () => {
       // An empty layer (no towers forecast) costs no ray marching.
       // Convective towers are disabled until their shapes are finished
       // (work in progress on branch wip-storm-clouds).
-      layer.height = i === 3 && (!CONVECTIVE_ENABLED || cover[3]! < 0.005) ? 0 : h.height
+      // Nor does a layer with no cloud anywhere: clear sky marched every
+      // ray through the empty shell (~10 ms, more than a cloudy sky, whose
+      // rays stop early in cloud).
+      const most = i === 3 ? (maxCover?.conv ?? cover[3]!) : (maxCover?.[(['low', 'mid', 'high'] as const)[i]!] ?? cover[i]!)
+      const empty = Math.max(most, cover[i]!) < 0.005
+      layer.height = empty || (i === 3 && !CONVECTIVE_ENABLED) ? 0 : h.height
     }
     // Lowest layer with cloud: where city light meets the cloud base
     // (night lights' cloud underglow).
