@@ -81,11 +81,24 @@ export interface RoadLevelUniforms {
   origin: [x: number, y: number]
   /** Texture layer per window cell (row-major), −1 while not loaded. */
   layers: Float32Array
+  /**
+   * Per window cell, 0 … 1: how far a newly arrived tile has faded in (the
+   * coarser level shows through meanwhile), times the level's own fade
+   * with altitude: lights cross-fade instead of popping in.
+   */
+  fade: Float32Array
 }
+
+/** Seconds a newly loaded tile takes to fade in. */
+const TILE_FADE_S = 0.6
+/** Each level fades out over the top quarter of its altitude range. */
+const LEVEL_FADE = 0.25
 
 interface Slot {
   key: string
   loaded: boolean
+  /** When the tile arrived (performance.now()). */
+  loadedAt: number
 }
 
 class Level {
@@ -98,7 +111,8 @@ class Level {
     curvature: 0,
     metersPerTexel: 1,
     origin: [0, 0],
-    layers: new Float32Array(WINDOW * WINDOW).fill(-1)
+    layers: new Float32Array(WINDOW * WINDOW).fill(-1),
+    fade: new Float32Array(WINDOW * WINDOW)
   }
   /** Window origin tile. */
   ox = Number.NaN
@@ -106,7 +120,7 @@ class Level {
   private readonly anchorEcef = new Vector3()
   private lat0 = 0
   private lon0 = 0
-  readonly slots: Slot[] = Array.from({ length: WINDOW * WINDOW }, () => ({ key: '', loaded: false }))
+  readonly slots: Slot[] = Array.from({ length: WINDOW * WINDOW }, () => ({ key: '', loaded: false, loadedAt: 0 }))
 
   constructor(
     readonly index: number,
@@ -159,16 +173,20 @@ class Level {
     return this.index * WINDOW * WINDOW + slot
   }
 
-  updateUniforms(camera: Vector3, enabled: boolean): void {
-    this.uniforms.enabled = enabled && Number.isFinite(this.ox)
+  updateUniforms(camera: Vector3, strength: number): void {
+    this.uniforms.enabled = strength > 0 && Number.isFinite(this.ox)
     this.uniforms.anchor.copy(this.anchorEcef).sub(camera)
+    const now = performance.now()
     for (let cy = 0; cy < WINDOW; ++cy) {
       for (let cx = 0; cx < WINDOW; ++cx) {
         const { x, y } = this.cellTile(cx, cy)
         const slot = this.slotFor(x, y)
         const s = this.slots[slot]!
-        this.uniforms.layers[cy * WINDOW + cx] =
-          s.loaded && s.key === `${this.z}/${x}/${y}` ? this.layerOf(slot) : -1
+        const ready = s.loaded && s.key === `${this.z}/${x}/${y}`
+        this.uniforms.layers[cy * WINDOW + cx] = ready ? this.layerOf(slot) : -1
+        const t = ready ? Math.min(1, (now - s.loadedAt) / (TILE_FADE_S * 1000)) : 0
+        // Smoothstep: no visible start or end of the fade.
+        this.uniforms.fade[cy * WINDOW + cx] = t * t * (3 - 2 * t) * strength
       }
     }
   }
@@ -264,6 +282,9 @@ export class RoadLightTiles {
     LEVELS.forEach((spec, i) => {
       const level = this.levels[i]!
       const enabled = this.available && altitude < spec.maxAltitude
+      // Fades out over the top of its altitude range (no pop at the limit).
+      const t = Math.min(1, Math.max(0, (spec.maxAltitude - altitude) / (spec.maxAltitude * LEVEL_FADE)))
+      const strength = enabled ? t * t * (3 - 2 * t) : 0
       if (enabled) {
         const lead = Math.min(reach, spec.lead)
         ground.copy(up).multiplyScalar(WGS84_A)
@@ -272,7 +293,7 @@ export class RoadLightTiles {
         level.place(tileOf(g.lat, g.lon, level.z))
         this.request(level)
       }
-      level.updateUniforms(position, enabled)
+      level.updateUniforms(position, strength)
     })
   }
 
@@ -335,6 +356,7 @@ export class RoadLightTiles {
     this.lamps.addLayerUpdate(layer)
     this.lamps.needsUpdate = true
     s.loaded = true
+    s.loadedAt = performance.now()
   }
 
   /**

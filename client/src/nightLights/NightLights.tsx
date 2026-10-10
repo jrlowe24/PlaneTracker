@@ -74,6 +74,7 @@ class NightLightsController {
       tiles.setCenter(center.lat, center.lon)
     }
     const m = tiles.manifest!
+    tiles.tick(Math.min(delta, 0.1))
     effect.setDetail(detail, tiles.origin, tiles.loaded, m.detail.tileDegrees, m.detail.columns)
     if (this.roads != null) {
       this.roads.update(camera)

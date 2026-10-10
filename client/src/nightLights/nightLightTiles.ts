@@ -37,6 +37,9 @@ export const WINDOW_TILES = 8
 const MAX_CACHED_TILES = 192
 const CONCURRENT_LOADS = 6
 
+/** Seconds a newly arrived light map tile takes to fade in. */
+const TILE_FADE_S = 0.8
+
 export class NightLightTiles {
   manifest: NightLightsManifest | null = null
   base: Texture | null = null
@@ -53,6 +56,8 @@ export class NightLightTiles {
   /** The same, as being filled (ahead of the uploaded texture). */
   private readonly windowOrigin = { x: -1000, y: -1000 }
   private readonly windowLoaded = new Float32Array(WINDOW_TILES * WINDOW_TILES)
+  /** `loaded` fades towards this (tiles fade in rather than pop). */
+  private readonly targetLoaded = new Float32Array(WINDOW_TILES * WINDOW_TILES)
 
   private readonly data: Uint8Array
   private available = new Set<string>()
@@ -215,9 +220,34 @@ export class NightLightTiles {
   private upload(): void {
     this.dirty = false
     this.detail.needsUpdate = true
-    this.origin.x = this.windowOrigin.x
-    this.origin.y = this.windowOrigin.y
-    this.loaded.set(this.windowLoaded)
+    const dx = this.windowOrigin.x - this.origin.x
+    const dy = this.windowOrigin.y - this.origin.y
+    if (dx !== 0 || dy !== 0) {
+      // Recentred: tiles still in the window keep how far they had faded in
+      // (they're still there); the rest start from the base map.
+      const previous = Float32Array.from(this.loaded)
+      for (let j = 0; j < WINDOW_TILES; ++j) {
+        for (let i = 0; i < WINDOW_TILES; ++i) {
+          const pi = i + dx
+          const pj = j + dy
+          const inside = pi >= 0 && pj >= 0 && pi < WINDOW_TILES && pj < WINDOW_TILES
+          this.loaded[j * WINDOW_TILES + i] = inside ? previous[pj * WINDOW_TILES + pi]! : 0
+        }
+      }
+      this.origin.x = this.windowOrigin.x
+      this.origin.y = this.windowOrigin.y
+    }
+    this.targetLoaded.set(this.windowLoaded)
+  }
+
+  /** Fades newly uploaded tiles in (call every frame). */
+  tick(delta: number): void {
+    const step = delta / TILE_FADE_S
+    for (let i = 0; i < this.loaded.length; ++i) {
+      const target = this.targetLoaded[i]!
+      const value = this.loaded[i]!
+      if (value !== target) this.loaded[i] = value < target ? Math.min(target, value + step) : target
+    }
   }
 
   dispose(): void {

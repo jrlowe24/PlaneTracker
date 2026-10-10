@@ -22,6 +22,8 @@ const STEP_UP = 1.08
 const TILE_TRADE_SCALE = 0.7
 const MAX_TILE_FACTOR = 1.5
 const TILE_STEP = 1.25
+/** Daytime tile cross-fade (see googleTiles.ts). */
+const TILE_FADE_MS = 600
 /** Tile error target multiplier at night (terrain barely visible). */
 const NIGHT_TILE_FACTOR = 2
 /** Seconds of averaging before a decision; going up needs longer. */
@@ -154,8 +156,14 @@ export const QualityApplier: FC = () => {
 
   useEffect(() => {
     if (config.tilesDisabled) return
-    getGoogleTiles({ apiKey: config.googleMapsApiKey }).errorTarget =
-      preset.tileErrorTarget * tileFactor * (dark ? NIGHT_TILE_FACTOR : 1)
+    const tiles = getGoogleTiles({ apiKey: config.googleMapsApiKey })
+    tiles.errorTarget = preset.tileErrorTarget * tileFactor * (dark ? NIGHT_TILE_FACTOR : 1)
+    // The tile cross-fade is a screen-door dither: at night it turned the
+    // lights drawn on fading terrain into a grid of dots (neighbouring
+    // pixels on different tiles). The terrain is barely visible then, so
+    // tiles swap at once; the lights fade in on their own.
+    const fade = tiles.getPluginByName('FADE_TILES_PLUGIN') as { fadeDuration: number } | null
+    if (fade != null) fade.fadeDuration = dark ? 1 : TILE_FADE_MS
   }, [preset.tileErrorTarget, tileFactor, dark])
 
   return null

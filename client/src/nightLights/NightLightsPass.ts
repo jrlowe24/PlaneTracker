@@ -70,6 +70,7 @@ uniform vec3 roadNorth[${ROAD_LEVELS}];
 uniform vec4 roadMercator[${ROAD_LEVELS}];
 uniform float roadCurvature[${ROAD_LEVELS}];
 uniform float roadLayers[${ROAD_LEVELS * WINDOW * WINDOW}];
+uniform float roadFade[${ROAD_LEVELS * WINDOW * WINDOW}];
 uniform int runwayCount;
 uniform vec4 runwayOrigin[${MAX_RUNWAYS}];
 uniform vec4 runwayAlong[${MAX_RUNWAYS}];
@@ -415,7 +416,9 @@ vec4 roadLevel(const int level, const vec3 offset, const float footprint, const 
   vec3 pools = texture(roadLights, vec3(fract(local), layer)).rgb;
   lamps = nearLamps(level, local, footprint, dX, dY, field);
   float edge = min(min(local.x, local.y), min(ROAD_WINDOW - local.x, ROAD_WINDOW - local.y));
-  return vec4(pools, smoothstep(0.0, 0.25, edge));
+  ivec2 cell = ivec2(floor(local));
+  float fade = roadFade[level * int(ROAD_WINDOW * ROAD_WINDOW) + cell.y * int(ROAD_WINDOW) + cell.x];
+  return vec4(pools, smoothstep(0.0, 0.25, edge) * fade);
 }
 
 void main() {
@@ -611,6 +614,7 @@ export class NightLightsPass extends Pass {
         roadMercator: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector4())),
         roadCurvature: new Uniform(new Float32Array(ROAD_LEVELS)),
         roadLayers: new Uniform(new Float32Array(ROAD_LEVELS * WINDOW * WINDOW).fill(-1)),
+        roadFade: new Uniform(new Float32Array(ROAD_LEVELS * WINDOW * WINDOW)),
         runwayCount: new Uniform(0),
         runwayOrigin: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         runwayAlong: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
@@ -657,6 +661,7 @@ export class NightLightsPass extends Pass {
     this.u<DataArrayTexture>('roadLamps').value = lamps
     const enabled = this.u<Float32Array>('roadEnabled').value
     const layers = this.u<Float32Array>('roadLayers').value
+    const fades = this.u<Float32Array>('roadFade').value
     levels.forEach((level, i) => {
       enabled[i] = level.enabled ? 1 : 0
       this.u<Vector3[]>('roadAnchor').value[i]!.copy(level.anchor)
@@ -667,6 +672,7 @@ export class NightLightsPass extends Pass {
       this.u<Float32Array>('roadTexelMeters').value[i] = level.metersPerTexel
       this.u<Vector2[]>('roadOrigin').value[i]!.set(...level.origin)
       layers.set(level.layers, i * WINDOW * WINDOW)
+      fades.set(level.fade, i * WINDOW * WINDOW)
     })
   }
 
