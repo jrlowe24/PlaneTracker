@@ -8,6 +8,7 @@ import { lightAnchor } from '../aircraft/lightAnchor'
 import { cloudDepth } from '../clouds/cloudDepth'
 import { nightState } from '../scene/nightLighting'
 import { isMobileDevice, qualityStore } from '../state/quality'
+import { viewSolarHours } from '../state/skyTime'
 import { NightLightsPass } from './NightLightsPass'
 import { nightEmission, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
@@ -50,6 +51,7 @@ class NightLightsController {
     const { effect, tiles } = this
     effect.mainCamera = camera
     effect.setSun(states.sunDirection)
+    effect.setLocalHour(viewSolarHours())
     // Cloud base sphere for the clouds' underglow (from city lights).
     if (cloudDepth.baseAltitude > 0 && cloudDepth.fade > 0) {
       const g = ecefToGeodetic(camera.position.x, camera.position.y, camera.position.z)
@@ -91,7 +93,7 @@ class NightLightsController {
     effect.setDetail(detail, tiles.origin, tiles.loaded, m.detail.tileDegrees, m.detail.columns)
     if (this.roads != null) {
       this.roads.update(camera)
-      effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.levels.map(l => l.uniforms))
+      effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.buildings, this.roads.levels.map(l => l.uniforms))
       this.roads.runways.update(camera.position)
       effect.setRunways(this.roads.runways.uniforms)
     }

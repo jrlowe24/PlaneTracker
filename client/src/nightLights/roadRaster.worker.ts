@@ -36,6 +36,12 @@ export interface RoadRasterResponse {
    * B = color index (LAMP_COLORS, 0 = none), A = intensity.
    */
   lamps: Uint8Array | null
+  /**
+   * Buildings (zoom 14 only), two bytes per pixel: R = height / 2 m
+   * (OSM render_height), G = a random byte per building (window patterns).
+   * Null where the tile has no building data.
+   */
+  buildings?: Uint8Array | null
   /** Whole runways near the tile, for exact runway lighting (runwayLights.ts). */
   runways?: RunwayRecord[]
   error?: string
@@ -218,7 +224,7 @@ function fillRings(ctx: Ctx, rings: Point[][], style: string): void {
 async function render(
   request: RoadRasterRequest,
   data: ArrayBuffer
-): Promise<{ pixels: Uint8ClampedArray; lamps: Uint8Array; runways: RunwayRecord[] }> {
+): Promise<{ pixels: Uint8ClampedArray; lamps: Uint8Array; buildings: Uint8Array | null; runways: RunwayRecord[] }> {
   const { size, metersPerPixel: mpp } = request
   lampSize = size
   poolsEnabled = mpp < 8
@@ -331,12 +337,18 @@ async function render(
   // where the tile has buildings (zoom 14 only; farther out roofs are a
   // pixel or less).
   const buildings = tile.layers.building
+  let buildingMap: Uint8Array | null = null
   if (buildings != null && buildings.length > 0) {
     const mask = new OffscreenCanvas(size, size)
     const mctx = mask.getContext('2d')!
+    // Heights and ids for lit windows (NightLightsPass): drawn lowest
+    // first, so a tower wins over the podium it stands on.
+    const heights = new OffscreenCanvas(size, size)
+    const hctx = heights.getContext('2d')!
     ctx.globalCompositeOperation = 'source-over'
     ctx.fillStyle = 'black'
     mctx.fillStyle = 'white'
+    const parts: Array<{ rings: Point[][]; height: number; id: number }> = []
     for (let i = 0; i < buildings.length; ++i) {
       const feature = buildings.feature(i)
       if (feature.type !== 3) continue
@@ -346,6 +358,19 @@ async function render(
         for (const ring of rings) ring.forEach((p, k) => (k === 0 ? target.moveTo(p.x, p.y) : target.lineTo(p.x, p.y)))
         target.fill('evenodd')
       }
+      const height = Number(feature.properties.render_height ?? 0)
+      const first = rings[0]?.[0]
+      if (!(height > 0) || first == null) continue
+      // World-fixed per building (its first vertex), the same from any tile.
+      const id = hash(Math.round(request.x * size + first.x), Math.round(request.y * size + first.y), 71)
+      parts.push({ rings, height, id })
+    }
+    parts.sort((a, b) => a.height - b.height)
+    for (const part of parts) {
+      hctx.fillStyle = `rgb(${Math.min(255, Math.round(part.height / 2))}, ${Math.floor(part.id * 256)}, 0)`
+      hctx.beginPath()
+      for (const ring of part.rings) ring.forEach((p, k) => (k === 0 ? hctx.moveTo(p.x, p.y) : hctx.lineTo(p.x, p.y)))
+      hctx.fill('evenodd')
     }
     const inside = mctx.getImageData(0, 0, size, size).data
     for (let i = 0; i < size * size; ++i) {
@@ -354,11 +379,19 @@ async function render(
       lampCells[i * 4 + 2] = 0
       lampEnergy[i] = 0
     }
+    if (parts.length > 0) {
+      const rgba = hctx.getImageData(0, 0, size, size).data
+      buildingMap = new Uint8Array(size * size * 2)
+      for (let i = 0; i < size * size; ++i) {
+        buildingMap[i * 2] = rgba[i * 4]!
+        buildingMap[i * 2 + 1] = rgba[i * 4 + 1]!
+      }
+    }
   }
 
   const pixels = ctx.getImageData(0, 0, size, size).data
   for (let i = 0; i < size * size; ++i) pixels[i * 4 + 3] = Math.min(255, Math.round(lampEnergy[i]! * 255))
-  return { pixels, lamps: lampCells, runways: index?.runways ?? [] }
+  return { pixels, lamps: lampCells, buildings: buildingMap, runways: index?.runways ?? [] }
 }
 
 /** Lamps on a jittered grid inside polygons (clipped to them). */
@@ -655,9 +688,11 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
   try {
     const response = await fetch(request.url)
     if (!response.ok) throw new Error(`tile ${response.status}`)
-    const { pixels, lamps, runways } = await render(request, await response.arrayBuffer())
-    const message: RoadRasterResponse = { id: request.id, pixels, lamps, runways }
-    ;(self as unknown as Worker).postMessage(message, [pixels.buffer, lamps.buffer])
+    const { pixels, lamps, buildings, runways } = await render(request, await response.arrayBuffer())
+    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, runways }
+    const transfer = [pixels.buffer, lamps.buffer]
+    if (buildings != null) transfer.push(buildings.buffer)
+    ;(self as unknown as Worker).postMessage(message, transfer)
   } catch (error) {
     const message: RoadRasterResponse = {
       id: request.id,

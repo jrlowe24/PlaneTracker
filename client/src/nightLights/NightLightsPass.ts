@@ -75,6 +75,12 @@ uniform float roadLayers[${ROAD_LEVELS * MAX_WINDOW * MAX_WINDOW}];
 uniform float roadFade[${ROAD_LEVELS * MAX_WINDOW * MAX_WINDOW}];
 /** Tiles per side of each level's window. */
 uniform float roadWindow[${ROAD_LEVELS}];
+// Buildings of the finest street level's tiles: R = height / 2 m,
+// G = random byte per building (RoadLightTiles.buildings).
+uniform highp sampler2DArray buildingMap;
+uniform float windowGain;
+/** Share of lit windows now (by the hour at the view): homes, offices. */
+uniform vec2 windowShares;
 uniform int runwayCount;
 uniform vec4 runwayOrigin[${MAX_RUNWAYS}];
 uniform vec4 runwayAlong[${MAX_RUNWAYS}];
@@ -507,6 +513,175 @@ vec3 runwayLights(const vec3 offset, const float footprint, const vec3 dX, const
   return rwSum / max(1.0, rwCover);
 }
 
+
+float hash1(const uvec2 v) {
+  return float(pcg2d(v).x & 0xffffu) / 65535.0;
+}
+
+/** Length of the overlap of [a0, a1] and [b0, b1]. */
+float overlap(const float a0, const float a1, const float b0, const float b1) {
+  return max(0.0, min(a1, b1) - max(a0, b0));
+}
+
+/** Building traits for its windows (set per pixel by buildingWindows). */
+bool wOffice;
+float wShare;
+uvec2 wBuilding;
+uint wSide;
+float wTint;
+
+/** Light of one window cell (column, floor): its color if lit, else 0. */
+vec3 windowAt(const ivec2 cell) {
+  uvec2 wid = uvec2(uint(cell.x + 65536) + wSide * 131071u, uint(cell.y + 65536)) ^ (wBuilding * 2654435761u);
+  uvec2 hw = pcg2d(wid);
+  float rw = float(hw.x & 0xffffu) / 65535.0;
+  float rc = float(hw.y & 0xffffu) / 65535.0;
+  if (wOffice) {
+    // Whole floors on or off (all the way round), a few stragglers.
+    bool floorOn = hash1(uvec2(uint(cell.y + 65536), 0u) ^ wBuilding) < wShare;
+    if (rw >= (floorOn ? 0.8 : 0.03)) return vec3(0.0);
+    vec3 office = wTint < 0.6 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.9, 0.74);
+    return office * mix(0.6, 0.9, rc);
+  }
+  if (rw >= wShare) return vec3(0.0);
+  // Warm bulbs mostly, some white LED, now and then a TV's blue.
+  vec3 color = rc < 0.55 ? vec3(1.0, 0.62, 0.32)
+    : rc < 0.82 ? vec3(1.0, 0.8, 0.58)
+    : rc < 0.94 ? vec3(0.86, 0.9, 1.0)
+    : vec3(0.42, 0.58, 1.0) * 0.5;
+  // Curtains and blinds dim many of them.
+  return color * mix(0.3, 1.0, fract(rc * 31.7));
+}
+
+/** Lit share of a floor: offices by the floor, homes the building's share. */
+float floorLit(const int row) {
+  if (!wOffice) return wShare;
+  return hash1(uvec2(uint(row + 65536), 0u) ^ wBuilding) < wShare ? 0.8 : 0.03;
+}
+
+/**
+ * Lit windows on building walls: OSM footprints with a height, in the
+ * finest street level's tiles. A wall pixel looks up the building a couple
+ * of meters inside it; windows sit on a world-fixed grid (floors by
+ * altitude, columns along the wall) so they hold still as the camera
+ * moves. Each building gets a use (offices among the tall ones), a floor
+ * height, window size and how busy it is; each window (offices: each
+ * floor) is lit or not by a hash and the hour. Where windows are under a
+ * couple of pixels they blend into their average light instead of
+ * shimmering. Returns the windows' emitted light.
+ */
+vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX, const vec3 dY) {
+  if (roadEnabled[0] < 0.5) return vec3(0.0);
+  vec3 east = roadEast[0];
+  vec3 north = roadNorth[0];
+  vec3 n = normalize(surfaceNormal);
+  if (dot(n, offset) > 0.0) n = -n;
+  vec2 h = vec2(dot(n, east), dot(n, north));
+  if (dot(h, h) < 1e-4) return vec3(0.0);
+  h = normalize(h);
+  // The building behind this wall: a few meters in (OSM footprints and
+  // the photographed walls are often meters apart), the tallest found.
+  vec3 inward = east * h.x + north * h.y;
+  float window = roadWindow[0];
+  vec2 b = vec2(0.0);
+  ivec2 tile = ivec2(0);
+  for (int i = 0; i < 3; ++i) {
+    vec2 local = roadLocal(0, offset - inward * (i == 0 ? 2.0 : i == 1 ? 5.0 : 9.0));
+    if (any(lessThan(local, vec2(0.0))) || any(greaterThanEqual(local, vec2(window)))) continue;
+    ivec2 t = ivec2(floor(local));
+    float layer = roadLayer(0, t);
+    if (layer < 0.0) continue;
+    vec2 found = texelFetch(buildingMap, ivec3(ivec2(fract(local) * float(TILE)), int(layer)), 0).rg * 255.0;
+    if (found.r > b.r) {
+      b = found;
+      tile = t;
+    }
+    if (b.r >= 4.5) break;
+  }
+  float height = b.r * 2.0;
+  // Houses and garages: no window grid (too small to read as windows).
+  if (height < 9.0) return vec3(0.0);
+  vec2 local = roadLocal(0, offset);
+  float fade = roadFade[tile.y * int(window) + tile.x];
+  float edge = min(min(local.x, local.y), min(window - local.x, window - local.y));
+  fade *= smoothstep(0.0, 0.25, edge);
+  if (fade <= 0.0) return vec3(0.0);
+
+  // Per building: world-fixed id (its byte, made unique by its tile).
+  uvec2 tileId = uvec2(ivec2(roadOrigin[0]) + tile);
+  uvec2 bid = uvec2(uint(b.g + 0.5) + tileId.x * 256u, tileId.y);
+  uvec2 hb = pcg2d(bid);
+  float r0 = float(hb.x & 0xffffu) / 65535.0;
+  float r1 = float(hb.x >> 16u) / 65535.0;
+  float r2 = float(hb.y & 0xffffu) / 65535.0;
+  float r3 = float(hb.y >> 16u) / 65535.0;
+  bool office = r0 < smoothstep(20.0, 90.0, height) * 0.75;
+  float floorHeight = office ? mix(3.7, 4.3, r1) : mix(2.9, 3.4, r1);
+  float columnWidth = office ? mix(1.6, 3.2, r2) : mix(2.6, 4.0, r2);
+  // How busy this building is; a few stand dark (vacant, closed, parking).
+  float busy = r3 < 0.08 ? 0.0 : mix(0.35, 1.5, fract(r3 * 13.7));
+  float share = clamp((office ? windowShares.y : windowShares.x) * busy, 0.0, 0.95);
+
+  // Wall coordinates: altitude, and along the wall (the anchor's east or
+  // north axis, whichever the wall runs closer to: robust to the noisy
+  // photogrammetry normals; walls at an angle get somewhat wider windows).
+  vec3 pl = offset - roadAnchor[0];
+  float altitude = dot(pl, normalize(cross(east, north)));
+  bool facesEast = abs(h.x) > abs(h.y);
+  float along = facesEast ? dot(pl, north) : dot(pl, east);
+  uint side = facesEast ? (h.x > 0.0 ? 0u : 1u) : (h.y > 0.0 ? 2u : 3u);
+  vec2 cellF = vec2((along + r2 * 7.0) / columnWidth, (altitude + r1 * 5.0) / floorHeight);
+  // Pixel size on the wall along each axis, in cells: floors (tall) stay
+  // sharp farther than columns (narrow), and grazing walls blur along.
+  vec3 alongAxis = facesEast ? north : east;
+  vec3 upAxis = normalize(cross(east, north));
+  vec2 w = vec2(
+    max(abs(dot(dX, alongAxis)), abs(dot(dY, alongAxis))) / columnWidth,
+    max(abs(dot(dX, upAxis)), abs(dot(dY, upAxis))) / floorHeight);
+
+  // Window opening within its cell: offices nearly continuous glass,
+  // homes punched windows.
+  vec2 x01 = office ? vec2(0.1, 0.9) : vec2(0.2, 0.8);
+  vec2 y01 = office ? vec2(0.25, 0.88) : vec2(0.32, 0.86);
+
+  wOffice = office;
+  wShare = share;
+  wBuilding = bid;
+  wSide = side;
+  wTint = r1;
+  vec3 meanColor = office ? (r1 < 0.6 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.9, 0.74)) * 0.75 : vec3(1.0, 0.72, 0.45) * 0.6;
+  float wallLit = office ? share * 0.8 + (1.0 - share) * 0.03 : share;
+
+  // Exact box filter: the share of this pixel (in cell units, w wide)
+  // each window opening covers, over the up to 2x2 cells it touches, so
+  // windows fade in and out smoothly as the view moves instead of
+  // twinkling. Wider than a cell: the floor's, then the wall's average.
+  vec2 halfW = max(w, vec2(1e-4)) * 0.5;
+  vec2 lo = cellF - halfW;
+  vec2 hi = cellF + halfW;
+  ivec2 first = ivec2(floor(lo));
+  vec3 sharp = vec3(0.0);
+  vec3 row = vec3(0.0);
+  for (int j = 0; j < 2; ++j) {
+    int y = first.y + j;
+    float oy = overlap(lo.y, hi.y, float(y) + y01.x, float(y) + y01.y) / (2.0 * halfW.y);
+    if (oy <= 0.0) continue;
+    row += meanColor * floorLit(y) * (x01.y - x01.x) * oy;
+    for (int i = 0; i < 2; ++i) {
+      int x = first.x + i;
+      float ox = overlap(lo.x, hi.x, float(x) + x01.x, float(x) + x01.y) / (2.0 * halfW.x);
+      if (ox > 0.0) sharp += windowAt(ivec2(x, y)) * ox * oy;
+    }
+  }
+  // Blurred, lit windows read darker than their average light (to the eye
+  // a facade far away is dark with points of light, not a lit wall).
+  const float BLURRED = 0.4;
+  vec3 wall = meanColor * wallLit * (x01.y - x01.x) * (y01.y - y01.x) * BLURRED;
+  vec3 windows = mix(sharp, row * BLURRED, smoothstep(0.7, 1.0, w.x));
+  windows = mix(windows, wall, smoothstep(0.7, 1.0, w.y));
+  return windows * fade;
+}
+
 /**
  * One street level at this pixel: pools (rgb) and coverage (a: inside the
  * window and loaded, fading out over its outer quarter tile), and its
@@ -632,6 +807,13 @@ void main() {
   vec3 field = fieldLamps * lampGain * smoothstep(0.35, 0.85, upness) * fieldOn;
   vec3 light = lit * gain + field;
   float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
+  // Lit windows on walls (not on roofs or the ground).
+  float wall = 1.0 - smoothstep(0.3, 0.55, upness);
+  if (wall > 0.0 && normalLength > 1e-12) {
+    vec3 windows = buildingWindows(offset, normal, dX, dY) * windowGain * wall * night;
+    light += windows;
+    glow += lightLuminance(windows) * 0.25;
+  }
   // Never NaN or infinite: one such pixel turns the whole glow (and with it
   // every light on screen) black.
   if (any(isnan(light)) || any(isinf(light)) || isnan(glow) || isinf(glow)) {
@@ -642,6 +824,22 @@ void main() {
   outColor = vec4(max(light, vec3(0.0)), max(glow, 0.0));
 }
 `
+
+/**
+ * Share of lit windows by hour (solar time at the view), every 2 hours
+ * from midnight: homes busiest in the evening and nearly dark before dawn;
+ * offices lit as people leave, then whole floors here and there (cleaning,
+ * late work) through the night.
+ */
+const HOME_LIT = [0.1, 0.045, 0.03, 0.07, 0.15, 0.1, 0.08, 0.08, 0.12, 0.22, 0.25, 0.18]
+const OFFICE_LIT = [0.06, 0.04, 0.04, 0.08, 0.3, 0.5, 0.5, 0.5, 0.5, 0.32, 0.18, 0.1]
+
+function litShare(table: readonly number[], hour: number): number {
+  const h = ((((hour % 24) + 24) % 24) / 2)
+  const i = Math.floor(h)
+  const t = h - i
+  return table[i]! + (table[(i + 1) % 12]! - table[i]!) * t * t * (3 - 2 * t)
+}
 
 /** Glow around night lights (blurred light added to them). */
 const NIGHT_GLOW = 0.45
@@ -772,6 +970,9 @@ export class NightLightsPass extends Pass {
         roadLights: new Uniform(null),
         roadLamps: new Uniform(null),
         lampGain: new Uniform(0.12),
+        buildingMap: new Uniform(null),
+        windowGain: new Uniform(0.02),
+        windowShares: new Uniform(new Vector2(0.2, 0.2)),
         roadTexelMeters: new Uniform(new Float32Array(ROAD_LEVELS)),
         roadOrigin: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector2())),
         roadEnabled: new Uniform(new Float32Array(ROAD_LEVELS)),
@@ -850,9 +1051,10 @@ export class NightLightsPass extends Pass {
     this.u<number>('tileDegrees').value = tileDegrees
   }
 
-  setRoads(texture: DataArrayTexture, lamps: DataArrayTexture, levels: readonly RoadLevelUniforms[]): void {
+  setRoads(texture: DataArrayTexture, lamps: DataArrayTexture, buildings: DataArrayTexture, levels: readonly RoadLevelUniforms[]): void {
     this.u<DataArrayTexture>('roadLights').value = texture
     this.u<DataArrayTexture>('roadLamps').value = lamps
+    this.u<DataArrayTexture>('buildingMap').value = buildings
     const enabled = this.u<Float32Array>('roadEnabled').value
     const layers = this.u<Float32Array>('roadLayers').value
     const fades = this.u<Float32Array>('roadFade').value
@@ -888,6 +1090,11 @@ export class NightLightsPass extends Pass {
 
   setAirfieldOn(value: number): void {
     this.u<number>('airfieldOn').value = value
+  }
+
+  /** Solar time at the view (hours): sets how many windows are lit. */
+  setLocalHour(hour: number): void {
+    this.u<Vector2>('windowShares').value.set(litShare(HOME_LIT, hour), litShare(OFFICE_LIT, hour))
   }
 
   setSun(direction: Vector3): void {

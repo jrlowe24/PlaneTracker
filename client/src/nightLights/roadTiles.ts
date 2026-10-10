@@ -5,6 +5,7 @@ import {
   NearestFilter,
   NoColorSpace,
   RGBAFormat,
+  RGFormat,
   UnsignedByteType,
   Vector3,
   type Camera
@@ -44,6 +45,8 @@ const LEVELS = [
 /** First texture layer of each level's window. */
 const LAYER_BASE = LEVELS.map((_, i) => LEVELS.slice(0, i).reduce((sum, l) => sum + l.window * l.window, 0))
 const LAYER_COUNT = LEVELS.reduce((sum, l) => sum + l.window * l.window, 0)
+/** Building layers: the finest level's tiles (the first layers). */
+const BUILDING_LAYERS = LEVELS[0]!.window * LEVELS[0]!.window
 export const ROAD_LEVELS = LEVELS.length
 const WORKERS = 2
 const MAX_IN_FLIGHT = 6
@@ -213,6 +216,12 @@ export class RoadLightTiles {
   readonly texture: DataArrayTexture
   /** Exact lamp positions per texel cell (nearest filtering, no mips). */
   readonly lamps: DataArrayTexture
+  /**
+   * Building height and id per texel of the finest level's tiles (one
+   * layer per window slot; see RoadRasterResponse.buildings), for lit
+   * windows.
+   */
+  readonly buildings: DataArrayTexture
   readonly levels = LEVELS.map((l, i) => new Level(i, l.z, l.window))
   /** Whole runways seen in the tiles, lit exactly by the shader. */
   readonly runways = new RunwayLights()
@@ -226,6 +235,7 @@ export class RoadLightTiles {
   private readonly failed = new Map<string, number>()
   private readonly data: Uint8Array
   private readonly lampData: Uint8Array
+  private readonly buildingData: Uint8Array
 
   constructor() {
     this.data = new Uint8Array(SIZE * SIZE * 4 * LAYER_COUNT)
@@ -251,6 +261,16 @@ export class RoadLightTiles {
     texture.generateMipmaps = false
     texture.needsUpdate = true
     this.texture = texture
+    this.buildingData = new Uint8Array(SIZE * SIZE * 2 * BUILDING_LAYERS)
+    const buildings = new DataArrayTexture(this.buildingData, SIZE, SIZE, BUILDING_LAYERS)
+    buildings.format = RGFormat
+    buildings.type = UnsignedByteType
+    buildings.colorSpace = NoColorSpace
+    buildings.minFilter = NearestFilter
+    buildings.magFilter = NearestFilter
+    buildings.generateMipmaps = false
+    buildings.needsUpdate = true
+    this.buildings = buildings
     void this.init()
   }
 
@@ -369,6 +389,13 @@ export class RoadLightTiles {
     this.lampData.set(response.lamps, layer * SIZE * SIZE * 4)
     this.lamps.addLayerUpdate(layer)
     this.lamps.needsUpdate = true
+    if (layer < BUILDING_LAYERS) {
+      const offset = layer * SIZE * SIZE * 2
+      if (response.buildings != null) this.buildingData.set(response.buildings, offset)
+      else this.buildingData.fill(0, offset, offset + SIZE * SIZE * 2)
+      this.buildings.addLayerUpdate(layer)
+      this.buildings.needsUpdate = true
+    }
     s.loaded = true
     s.loadedAt = performance.now()
   }
@@ -421,5 +448,6 @@ export class RoadLightTiles {
     for (const worker of this.workers) worker.terminate()
     this.texture.dispose()
     this.lamps.dispose()
+    this.buildings.dispose()
   }
 }
