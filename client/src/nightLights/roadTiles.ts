@@ -11,6 +11,7 @@ import {
 } from 'three'
 
 import type { RoadRasterRequest, RoadRasterResponse } from './roadRaster.worker'
+import { RunwayLights } from './runwayLights'
 
 /**
  * Street, area and airport lighting from OpenStreetMap (OpenFreeMap vector
@@ -182,6 +183,8 @@ export class RoadLightTiles {
   /** Exact lamp positions per texel cell (nearest filtering, no mips). */
   readonly lamps: DataArrayTexture
   readonly levels = LEVELS.map((l, i) => new Level(i, l.z))
+  /** Whole runways seen in the tiles, lit exactly by the shader. */
+  readonly runways = new RunwayLights()
   /** False until OpenFreeMap's tile URL is known; stays false if it fails. */
   available = false
   private template: string | null = null
@@ -314,6 +317,7 @@ export class RoadLightTiles {
     const entry = this.pending.get(response.id)
     if (entry == null) return
     this.pending.delete(response.id)
+    if (response.runways != null) this.runways.add(response.runways)
     const { level, slot, key } = entry
     const s = level.slots[slot]!
     if (response.pixels == null || response.lamps == null) {

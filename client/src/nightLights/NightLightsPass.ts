@@ -21,6 +21,7 @@ import {
 
 import { WINDOW_TILES } from './nightLightTiles'
 import { ROAD_LEVELS, ROAD_TILE_SIZE, WINDOW, type RoadLevelUniforms } from './roadTiles'
+import { MAX_RUNWAYS, type RunwayUniforms } from './runwayLights'
 
 const drawingBuffer = new Vector2()
 
@@ -69,6 +70,11 @@ uniform vec3 roadNorth[${ROAD_LEVELS}];
 uniform vec4 roadMercator[${ROAD_LEVELS}];
 uniform float roadCurvature[${ROAD_LEVELS}];
 uniform float roadLayers[${ROAD_LEVELS * WINDOW * WINDOW}];
+uniform int runwayCount;
+uniform vec4 runwayOrigin[${MAX_RUNWAYS}];
+uniform vec4 runwayAlong[${MAX_RUNWAYS}];
+uniform vec4 runwayAcross[${MAX_RUNWAYS}];
+uniform vec4 runwayApproach[${MAX_RUNWAYS}];
 
 const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
 const float ROAD_WINDOW = ${WINDOW.toFixed(1)};
@@ -267,6 +273,133 @@ vec3 carpet(const int level, const vec2 local, const float footprint, const floa
 }
 
 /**
+ * Runway lighting, drawn exactly from each runway's axis (runwayLights.ts):
+ * every lamp at its true place in the runway's own frame (along, across,
+ * meters), so rows are straight, spacing exact and approach lights in line
+ * with the runway at any distance. Per pixel, each row of lamps only
+ * evaluates the few lamps nearest it.
+ *
+ * - edge lights (precision every 30 m, else 60 m; dimmer on small fields),
+ * - centerline every 15 m (precision),
+ * - threshold: green bar just outside the end, red just inside (small
+ *   fields: a few at each corner),
+ * - ALSF-2 (precision): 5-lamp barrettes every 30 m, crossbars at 150 and
+ *   300 m, red side barrettes over the inner 270 m;
+ * - MALSR (instrument): barrettes every 60 m to 420 m, crossbar at 300 m,
+ *   single sequenced flashers beyond.
+ */
+vec2 rwP;
+mat2 rwToPixel;
+float rwR;
+float rwGlare;
+float rwK;
+vec3 rwSum;
+float rwCover;
+
+void runwayLamp(const vec2 at, const vec3 color, const float intensity) {
+  vec2 d2 = rwToPixel * (at - rwP);
+  float d = dot(d2, d2);
+  float spot = exp(-d / (rwR * rwR));
+  float light = spot * 1.8 + exp(-d / (rwGlare * rwGlare)) * 0.08;
+  rwSum += color * intensity * rwK * light;
+  rwCover += spot;
+}
+
+/** Lamps at origin + i·step·dir, i = 0 … count-1: the three nearest. */
+void lampRow(const vec2 origin, const vec2 dir, const float step, const float count, const vec3 color, const float intensity) {
+  if (count < 1.0) return;
+  float i0 = clamp(floor(dot(rwP - origin, dir) / step + 0.5), 0.0, count - 1.0);
+  for (float k = -1.0; k <= 1.0; k += 1.0) {
+    float i = i0 + k;
+    if (i < 0.0 || i > count - 1.0) continue;
+    runwayLamp(origin + dir * (i * step), color, intensity);
+  }
+}
+
+/**
+ * Rows centered on origin + j·rowStep·rowDir (j = 0 … rows-1), each
+ * count lamps, spaced by lampStep along lampDir: the three nearest rows.
+ */
+void lampRows(const vec2 origin, const vec2 rowDir, const float rowStep, const float rows, const vec2 lampDir, const float lampStep, const float count, const vec3 color, const float intensity) {
+  if (rows < 1.0) return;
+  float j0 = clamp(floor(dot(rwP - origin, rowDir) / rowStep + 0.5), 0.0, rows - 1.0);
+  for (float k = -1.0; k <= 1.0; k += 1.0) {
+    float j = j0 + k;
+    if (j < 0.0 || j > rows - 1.0) continue;
+    vec2 start = origin + rowDir * (j * rowStep) - lampDir * (lampStep * (count - 1.0) * 0.5);
+    lampRow(start, lampDir, lampStep, count, color, intensity);
+  }
+}
+
+vec3 runwayLights(const vec3 offset, const float footprint, const vec3 dX, const vec3 dY) {
+  rwSum = vec3(0.0);
+  rwCover = 0.0;
+  float physical = 0.35 / max(footprint, 1e-3);
+  rwR = max(0.8, physical * 0.6);
+  // A little glare close up only: far away it filled the gaps between the
+  // rows, and the glow pass adds the halo anyway.
+  rwGlare = rwR + clamp(physical, 0.0, 2.0);
+  rwK = max(AIRFIELD_FLOOR, pow(distantFade(physical / 0.8), 0.4));
+  vec3 RUNWAY_WHITE = LAMP_COLORS[8];
+  vec3 GREEN_LIGHT = LAMP_COLORS[5];
+  vec3 RED_LIGHT = LAMP_COLORS[7];
+  const vec2 ALONG = vec2(1.0, 0.0);
+  const vec2 ACROSS = vec2(0.0, 1.0);
+  for (int n = 0; n < ${MAX_RUNWAYS}; ++n) {
+    if (n >= runwayCount) break;
+    vec4 o = runwayOrigin[n];
+    vec4 al = runwayAlong[n];
+    vec3 ac = runwayAcross[n].xyz;
+    vec2 approach = runwayApproach[n].xy;
+    float len = o.w;
+    vec3 v = offset - o.xyz;
+    rwP = vec2(dot(v, al.xyz), dot(v, ac));
+    if (rwP.x < -approach.x - 60.0 || rwP.x > len + approach.y + 60.0 || abs(rwP.y) > 60.0) continue;
+    mat2 toLocal = mat2(dot(dX, al.xyz), dot(dX, ac), dot(dY, al.xyz), dot(dY, ac));
+    if (abs(determinant(toLocal)) < 1e-10) continue;
+    rwToPixel = inverse(toLocal);
+    int lighting = int(al.w + 0.5);
+    bool basic = lighting == 0;
+    bool isPrecision = lighting == 2;
+    float halfWidth = basic ? 12.0 : 23.0;
+    // Edge lights, and the centerline.
+    float spacing = isPrecision ? 30.0 : 60.0;
+    lampRows(vec2(spacing * 0.5, 0.0), ALONG, spacing, floor((len - spacing * 0.5) / spacing) + 1.0, ACROSS, 2.0 * halfWidth, 2.0, RUNWAY_WHITE, basic ? 0.6 : 1.0);
+    if (isPrecision) lampRow(vec2(7.5, 0.0), ALONG, 15.0, floor((len - 7.5) / 15.0) + 1.0, RUNWAY_WHITE, 0.25);
+    for (int e = 0; e < 2; ++e) {
+      vec2 end = vec2(e == 0 ? 0.0 : len, 0.0);
+      vec2 outward = vec2(e == 0 ? -1.0 : 1.0, 0.0);
+      float reach = e == 0 ? approach.x : approach.y;
+      if (basic) {
+        for (int s = 0; s < 2; ++s) {
+          float side = s == 0 ? -1.0 : 1.0;
+          lampRow(end + outward * 2.0 + ACROSS * (side * (halfWidth - 1.5)), -side * ACROSS, 3.0, 3.0, GREEN_LIGHT, 0.7);
+          lampRow(end - outward * 2.0 + ACROSS * (side * (halfWidth - 1.5)), -side * ACROSS, 3.0, 3.0, RED_LIGHT, 0.45);
+        }
+        continue;
+      }
+      lampRow(end + outward * 2.0 - ACROSS * 21.0, ACROSS, 3.0, 15.0, GREEN_LIGHT, 1.0);
+      lampRow(end - outward * 2.0 - ACROSS * 19.5, ACROSS, 3.0, 14.0, RED_LIGHT, 0.6);
+      if (reach < 30.0) continue;
+      if (isPrecision) {
+        lampRows(end + outward * 30.0, outward, 30.0, floor((reach - 30.0) / 30.0) + 1.0, ACROSS, 1.0, 5.0, RUNWAY_WHITE, 0.85);
+        if (reach >= 150.0) lampRow(end + outward * 150.0 - ACROSS * 9.0, ACROSS, 1.5, 13.0, RUNWAY_WHITE, 0.85);
+        if (reach >= 300.0) lampRow(end + outward * 300.0 - ACROSS * 15.0, ACROSS, 1.5, 21.0, RUNWAY_WHITE, 0.85);
+        float sideRows = floor((min(reach, 270.0) - 30.0) / 30.0) + 1.0;
+        lampRows(end + outward * 30.0 - ACROSS * 12.9, outward, 30.0, sideRows, ACROSS, 1.5, 3.0, RED_LIGHT, 0.7);
+        lampRows(end + outward * 30.0 + ACROSS * 12.9, outward, 30.0, sideRows, ACROSS, 1.5, 3.0, RED_LIGHT, 0.7);
+      } else {
+        lampRows(end + outward * 60.0, outward, 60.0, floor((min(reach, 420.0) - 60.0) / 60.0) + 1.0, ACROSS, 1.0, 5.0, RUNWAY_WHITE, 0.85);
+        if (reach >= 300.0) lampRow(end + outward * 300.0 - ACROSS * 10.5, ACROSS, 1.5, 15.0, RUNWAY_WHITE, 0.85);
+        if (reach >= 480.0) lampRow(end + outward * 480.0, outward, 60.0, floor((reach - 480.0) / 60.0) + 1.0, RUNWAY_WHITE, 0.85);
+      }
+    }
+  }
+  // Overlapping lamps (far away) blend to their own brightness.
+  return rwSum / max(1.0, rwCover);
+}
+
+/**
  * One street level at this pixel: pools (rgb) and coverage (a: inside the
  * window and loaded, fading out over its outer quarter tile), and its
  * lamps, drawn as points.
@@ -329,6 +462,7 @@ void main() {
     if (level == ${ROAD_LEVELS - 1}) coarse = w;
     remaining -= w;
   }
+  fieldLamps += runwayLights(offset, footprint, dX, dY);
 
   // Street light lands on the ground, not on walls: only on surfaces that
   // face up (normal from depth derivatives).
@@ -476,7 +610,12 @@ export class NightLightsPass extends Pass {
         roadNorth: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector3())),
         roadMercator: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector4())),
         roadCurvature: new Uniform(new Float32Array(ROAD_LEVELS)),
-        roadLayers: new Uniform(new Float32Array(ROAD_LEVELS * WINDOW * WINDOW).fill(-1))
+        roadLayers: new Uniform(new Float32Array(ROAD_LEVELS * WINDOW * WINDOW).fill(-1)),
+        runwayCount: new Uniform(0),
+        runwayOrigin: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
+        runwayAlong: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
+        runwayAcross: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
+        runwayApproach: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4()))
       }
     })
     this.fullscreenMaterial = this.material
@@ -529,6 +668,16 @@ export class NightLightsPass extends Pass {
       this.u<Vector2[]>('roadOrigin').value[i]!.set(...level.origin)
       layers.set(level.layers, i * WINDOW * WINDOW)
     })
+  }
+
+  setRunways(runways: RunwayUniforms): void {
+    this.u<number>('runwayCount').value = runways.count
+    for (let i = 0; i < runways.count; ++i) {
+      this.u<Vector4[]>('runwayOrigin').value[i]!.copy(runways.origin[i]!)
+      this.u<Vector4[]>('runwayAlong').value[i]!.copy(runways.along[i]!)
+      this.u<Vector4[]>('runwayAcross').value[i]!.copy(runways.across[i]!)
+      this.u<Vector4[]>('runwayApproach').value[i]!.copy(runways.approach[i]!)
+    }
   }
 
   setSun(direction: Vector3): void {

@@ -78,6 +78,8 @@ class NightLightsController {
     if (this.roads != null) {
       this.roads.update(camera)
       effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.levels.map(l => l.uniforms))
+      this.roads.runways.update(camera.position)
+      effect.setRunways(this.roads.runways.uniforms)
     }
 
     this.sinceFlush += delta
