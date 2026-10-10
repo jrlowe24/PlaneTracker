@@ -78,6 +78,11 @@ const HEIGHT_TIME_CONSTANT = 60
 const CHOSEN_TIME_CONSTANT = 1.5
 const CHOSEN_DURATION = 8
 
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)))
+  return t * t * (3 - 2 * t)
+}
+
 /** Manual mode: takram's default layer heights at the slider's coverage. */
 /**
  * Chosen weather instead of the live forecast (0 clear … 1 overcast):
@@ -86,9 +91,10 @@ const CHOSEN_DURATION = 8
  */
 function manualSpec(coverage: number): CloudWeatherSpec {
   const c = Math.min(1, Math.max(0, coverage))
+  const deck = smoothstep(0.55, 0.9, c)
   return {
     coverage: c,
-    low: { altitude: 900, height: 700 + 600 * c, coverage: c },
+    low: { altitude: 900, height: (700 + 600 * c) * (1 - deck) + 600 * deck, coverage: c },
     mid: { altitude: 3200, height: 900, coverage: Math.max(0, (c - 0.45) * 1.6) },
     high: { altitude: 8000, height: 500, coverage: c === 0 ? 0 : 0.15 + 0.4 * c },
     convective: { altitude: 900, height: 0, coverage: 0 }
@@ -239,12 +245,24 @@ export const VolumetricClouds: FC = () => {
       if (layer == null) continue
       layer.weatherExponent = 1
       layer.coverageFilterWidth = FILTER_WIDTH
-      // Towers stay wide most of the way up (lower bias), cumulus round off.
-      layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35
+      // As a layer approaches overcast, blend its cloud shape from distinct
+      // puffs toward a flatter, more connected deck. Keep the change gradual
+      // so a weather-cell boundary doesn't make the cloud texture pop.
+      const deck = i === 0
+        ? smoothstep(0.5, 0.82, cover[i]!)
+        : i === 1
+          ? smoothstep(0.4, 0.78, cover[i]!)
+          : 0
+      layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35 - 0.17 * deck
       layer.densityScale =
         i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : i === 3 ? CONVECTIVE_DENSITY : LOW_MID_DENSITY
-      layer.shapeAmount = i === 2 ? 0.4 : 1
-      layer.shapeDetailAmount = i === 2 ? 0 : 1
+      // Reduce large-scale spherical erosion as the deck fills in, while
+      // retaining enough fine detail to keep its edges and top from looking
+      // like a featureless slab.
+      layer.shapeAmount = i === 2 ? 0.4 : 1 - (i === 0 ? 0.88 : 0.8) * deck
+      layer.shapeDetailAmount = i === 2 ? 0 : 1 - (i === 0 ? 0.65 : 0.55) * deck
+      const baseFill = 0.25 + 0.48 * deck
+      layer.densityProfile.set(0, 0, 1 - baseFill, baseFill)
       layer.shadow = i !== 2 && shadows
     }
     // Cover per layer: from the regional grid at each sample's position

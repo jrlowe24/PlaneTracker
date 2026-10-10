@@ -68,8 +68,10 @@ interface NoiseStyle {
 }
 
 const STYLES: [NoiseStyle, NoiseStyle, NoiseStyle, NoiseStyle] = [
-  // Low: cumulus blobs, a few km across.
-  { periodX: 12, periodY: 12, octaves: 5, seed: 11, persistence: 0.6 },
+  // Low clouds use a broad, irregular envelope. The volumetric shape and
+  // detail textures supply the smaller puffs; putting those into the weather
+  // mask too made high-cover fields read as evenly spaced cotton balls.
+  { periodX: 5, periodY: 4, octaves: 5, seed: 11, persistence: 0.58 },
   // Mid: broader sheets (altostratus/altocumulus).
   { periodX: 5, periodY: 5, octaves: 4, seed: 23 },
   // High: streaky cirrus.
