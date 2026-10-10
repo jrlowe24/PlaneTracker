@@ -173,19 +173,51 @@ const RESOLVE_MARKER = '/* window-seat nan guard */'
 export function patchCloudsResolve(material: ShaderMaterial): boolean {
   if (material.fragmentShader.includes(RESOLVE_MARKER)) return true
   const current = '  vec4 currentColor = texelFetch(colorBuffer, coord, 0);'
+  const lowResCurrent = '  vec4 currentColor = texelFetch(colorBuffer, lowResCoord, 0);'
   const history = '  vec4 historyColor = texture(colorHistoryBuffer, prevUv);'
   const blend = '  outputColor = mix(clippedColor, currentColor, temporalAlpha);'
+  const fresh = '    // Use the texel just rendered without any accumulation.\n    outputColor = currentColor;'
   const source = material.fragmentShader
   const anchor = 'void temporalUpscale('
-  if (!source.includes(current) || !source.includes(history) || !source.includes(blend) || !source.includes(anchor)) {
+  if (
+    !source.includes(current) ||
+    !source.includes(lowResCurrent) ||
+    !source.includes(history) ||
+    !source.includes(blend) ||
+    !source.includes(fresh) ||
+    !source.includes(anchor)
+  ) {
     return false
   }
   // After the raw shader's own precision/defines header.
   material.fragmentShader = source
     .replace(anchor, `${RESOLVE_MARKER}\nbool badColor(const vec4 c) { return any(isnan(c)) || any(isinf(c)); }\n\n${anchor}`)
     .replace(current, `${current}\n  if (badColor(currentColor)) currentColor = vec4(0.0);`)
+    .replace(lowResCurrent, `${lowResCurrent}\n  if (badColor(currentColor)) currentColor = vec4(0.0);`)
     .replaceAll(history, `${history}\n  if (badColor(historyColor)) historyColor = currentColor;`)
     .replace(blend, `${blend}\n  if (badColor(outputColor)) outputColor = currentColor;`)
+    .replace(fresh, FRESH_SAMPLE)
   material.needsUpdate = true
   return true
 }
+
+/**
+ * Temporal upscaling marches one pixel in 16 per frame and, as shipped,
+ * shows that fresh sample as is: the march's jitter noise (largest in thin
+ * cloud) then sits on screen untouched, refreshed every 16 frames, which
+ * read as static along every cloud edge. Blend it with its (clipped)
+ * history like the plain temporal path does; a cut (temporalAlpha 1)
+ * still takes the fresh sample alone.
+ */
+const FRESH_ALPHA = 0.3
+const FRESH_SAMPLE = `    outputColor = currentColor;
+    if (temporalAlpha < 1.0) {
+      vec2 freshPrevUv = vUv - getClosestFragment(lowResCoord).gb;
+      if (all(greaterThanEqual(freshPrevUv, vec2(0.0))) && all(lessThanEqual(freshPrevUv, vec2(1.0)))) {
+        vec4 freshHistory = texture(colorHistoryBuffer, freshPrevUv);
+        if (!badColor(freshHistory)) {
+          vec4 clipped = varianceClipping(colorBuffer, vUv, currentColor, freshHistory, varianceGamma);
+          outputColor = mix(clipped, currentColor, ${FRESH_ALPHA.toFixed(2)});
+        }
+      }
+    }`

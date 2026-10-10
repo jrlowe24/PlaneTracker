@@ -314,6 +314,9 @@ export const VolumetricClouds: FC = () => {
         }
       }}
       qualityPreset={preset.clouds}
+      // Upscaled from 1 in 16 pixels a frame; the resolve is patched to
+      // average the fresh samples too (patchCloudsResolve), or their march
+      // noise showed as static along cloud edges.
       temporalUpscale
       resolutionScale={preset.cloudResolution}
       lightShafts={preset.lightShafts}
