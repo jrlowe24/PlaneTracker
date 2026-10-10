@@ -69,14 +69,14 @@ interface RoadStyle {
 }
 
 const ROADS: Record<string, RoadStyle> = {
-  motorway: { spacing: 60, bothSides: true, width: 34, pool: 0.32, lamp: 0.9, colors: [0.55, [SODIUM, NEUTRAL_LED]] },
-  trunk: { spacing: 50, bothSides: true, width: 28, pool: 0.32, lamp: 0.9, colors: [0.5, [SODIUM, NEUTRAL_LED]] },
-  primary: { spacing: 38, bothSides: true, width: 24, pool: 0.36, lamp: 1.0, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
-  secondary: { spacing: 38, bothSides: true, width: 20, pool: 0.32, lamp: 0.9, colors: [0.35, [SODIUM, NEUTRAL_LED]] },
-  tertiary: { spacing: 36, bothSides: false, width: 16, pool: 0.26, lamp: 0.75, colors: [0.45, [SODIUM, WARM_LED]] },
-  busway: { spacing: 38, bothSides: false, width: 16, pool: 0.26, lamp: 0.75, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
-  minor: { spacing: 34, bothSides: false, width: 12, pool: 0.2, lamp: 0.6, colors: [0.5, [SODIUM, WARM_LED]] },
-  service: { spacing: 45, bothSides: false, width: 7, pool: 0.08, lamp: 0.3, colors: [0.5, [SODIUM, WARM_LED]] }
+  motorway: { spacing: 70, bothSides: true, width: 34, pool: 0.32, lamp: 1.0, colors: [0.55, [SODIUM, NEUTRAL_LED]] },
+  trunk: { spacing: 60, bothSides: true, width: 28, pool: 0.32, lamp: 1.0, colors: [0.5, [SODIUM, NEUTRAL_LED]] },
+  primary: { spacing: 50, bothSides: true, width: 24, pool: 0.36, lamp: 1.0, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
+  secondary: { spacing: 50, bothSides: true, width: 20, pool: 0.32, lamp: 1.0, colors: [0.35, [SODIUM, NEUTRAL_LED]] },
+  tertiary: { spacing: 55, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.45, [SODIUM, WARM_LED]] },
+  busway: { spacing: 50, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
+  minor: { spacing: 65, bothSides: false, width: 12, pool: 0.2, lamp: 0.85, colors: [0.5, [SODIUM, WARM_LED]] },
+  service: { spacing: 70, bothSides: false, width: 7, pool: 0.08, lamp: 0.5, colors: [0.5, [SODIUM, WARM_LED]] }
 }
 
 /** Diffuse glow of whole areas (parking lots, yards, signage, porch lights). */
@@ -166,8 +166,9 @@ function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, base: 
   if (!pool || !poolsEnabled) return
   const r = Math.max(1.5, radius * 2)
   const gradient = ctx.createRadialGradient(x, y, 0, x, y, r)
-  gradient.addColorStop(0, rgba(color, intensity * 0.16))
-  gradient.addColorStop(0.5, rgba(color, intensity * 0.05))
+  gradient.addColorStop(0, rgba(color, intensity * 0.45))
+  gradient.addColorStop(0.4, rgba(color, intensity * 0.2))
+  gradient.addColorStop(0.75, rgba(color, intensity * 0.05))
   gradient.addColorStop(1, 'rgb(0,0,0)')
   ctx.fillStyle = gradient
   ctx.fillRect(x - r, y - r, 2 * r, 2 * r)
@@ -242,14 +243,13 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
       // Some districts are brighter than others.
       const level = 0.6 + 0.8 * district(mid.x, mid.y, 2)
       const width = Math.max(1, style.width / mpp)
-      // Soft-edged pool, faint: the lamps carry the light.
-      if (poolsEnabled) {
-        strokeLine(ctx, line, width * 1.5, rgba(color, style.pool * 0.12 * level))
-        strokeLine(ctx, line, width * 0.7, rgba(color, style.pool * 0.22 * level))
-      }
+      // Barely any continuous light along the road: the light comes from
+      // each lamp's pool, islands of light with darkness between them.
+      if (poolsEnabled) strokeLine(ctx, line, width, rgba(color, style.pool * 0.04 * level))
       const spacing = style.spacing / mpp
       const side = (style.width * 0.4) / mpp
-      const radius = 5 / mpp
+      // Pool radius (lamp() draws it twice this): ~18 m on the ground.
+      const radius = 9 / mpp
       let n = 0
       along(line, spacing, spacing * hash(i, 7), (x, y, dx, dy) => {
         const s = style.bothSides ? (n++ % 2 === 0 ? 1 : -1) : 1

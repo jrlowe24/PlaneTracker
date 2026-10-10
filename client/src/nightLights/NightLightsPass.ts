@@ -160,7 +160,7 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
   // Fixture ~0.7 m; drawn at least ~1 px, dimmed as that outgrows it.
   float physical = 0.35 / max(footprint, 1e-3);
   float core = max(0.8, physical);
-  float fade = min(1.0, pow(physical / 0.8, 0.9));
+  float fade = min(1.0, pow(physical / 0.8, 0.6));
   // The 3x3 cell search reaches about a texel from this pixel in every
   // direction: radii (pixels) beyond that would be clipped into dashes
   // where a pixel spans a lot of ground (grazing views).
@@ -222,7 +222,7 @@ vec3 carpet(const int level, const vec2 local, const float footprint, const floa
       if (r.x >= density) continue;
       vec2 position = vec2(c) + 0.15 + 0.7 * vec2(fract(r.y * 7.13), fract(r.y * 13.7));
       float d = length(texel - position) * meters;
-      float i = 0.45 + 0.75 * fract(r.y * 31.1);
+      float i = 0.7 + 0.8 * fract(r.y * 31.1);
       vec3 color = fract(r.y * 3.7) < 0.55 ? LAMP_COLORS[1] : LAMP_COLORS[2];
       sum += color * i * fade * exp(-d * d / (radius * radius));
     }
@@ -299,7 +299,7 @@ void main() {
 
   // Residential carpet where only the coarse level's main roads are drawn,
   // and a faint glow beyond every window.
-  float density = smoothstep(0.1, 0.6, value) * 0.6;
+  float density = smoothstep(0.1, 0.6, value) * 0.35;
   float land = 1.0 - waterScore(albedo.rgb);
   if (coarse > 0.0) lit += carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * coarse * land;
   lit += vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
