@@ -20,8 +20,7 @@ import { NavGlowEffect } from '../aircraft/NavGlowEffect'
 import { cloudDepth } from '../clouds/cloudDepth'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
 import { NightLights } from '../nightLights/NightLights'
-import { nightLightsPass } from '../nightLights/nightLightsStore'
-import { NIGHT_LIGHT_MAX_EMISSION } from '../nightLights/NightLightsEffect'
+import { nightEmission } from '../nightLights/nightLightsStore'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
@@ -38,16 +37,6 @@ import { nightState, updateNightLighting } from './nightLighting'
  * that hit no cloud store the scene's view Z and fail it.
  */
 const CLOUD_DEPTH_TEST = /* glsl */ `
-/**
- * City light radiance passed in the alpha channel by NightLightsEffect
- * (alpha = 1 − emission / max): warm sodium where dim, whiter LED where
- * bright.
- */
-vec3 cityLight(const float alpha) {
-  float emission = (1.0 - clamp(alpha, 0.0, 1.0)) * ${NIGHT_LIGHT_MAX_EMISSION.toFixed(3)};
-  return emission * mix(vec3(1.0, 0.42, 0.1), vec3(1.0, 0.82, 0.6), smoothstep(0.006, 0.03, emission));
-}
-
 bool isAircraftPixel(const vec2 uv) {
   #ifdef HAS_LIGHTING_MASK
   return texture(lightingMaskBuffer, uv).LIGHTING_MASK_CHANNEL_ < 0.5;
@@ -123,7 +112,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   const shader = source
     .replace(
       'void mainImage(',
-      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\nuniform float cloudFade;\n${CLOUD_DEPTH_TEST}\nvoid mainImage(`
+      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\nuniform float cloudFade;\nuniform sampler2D nightEmissionBuffer;\nuniform float nightEmissionOn;\n${CLOUD_DEPTH_TEST}\nvoid mainImage(`
     )
     // Light shafts are half resolution too: the shadow length behind an
     // aircraft (rays reaching the ground) bleeds onto its pixels as in-
@@ -149,7 +138,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     )
     .replace(
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
-      'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);\n    radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient;\n    radiance += cityLight(inputColor.a);'
+      'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);\n    radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient;\n    radiance += nightEmissionOn * texture(nightEmissionBuffer, uv).rgb;'
     )
     // Aircraft are lit forward (sun/sky lights) and kept as rendered, but
     // three.js lights don't know about cloud shadows: darken aircraft
@@ -159,16 +148,15 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       'radiance = mix(inputColor.rgb, radiance, lightingMask);',
       'radiance = mix(inputColor.rgb * mix(1.0, max(sunTransmittance, 0.35), 0.7), radiance, lightingMask);'
     )
-    // City lights arrive in the alpha channel (NightLightsEffect); terrain
-    // is opaque, so restore it.
+    // Terrain is opaque.
     .replace('outputColor = vec4(radiance, inputColor.a);', 'outputColor = vec4(radiance, 1.0);')
     .replace(
       '#else // SKY\n    outputColor = inputColor;',
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;'
     )
   if (
-    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|cityLight\(|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.35/g) ?? [])
-      .length < 17
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|nightEmissionBuffer, uv|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.35/g) ?? [])
+      .length < 16
   ) {
     // takram's shader changed: night light only partly applied.
     console.warn('[night] AerialPerspective shader patch did not fully apply')
@@ -178,6 +166,8 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   effect.uniforms.set('cloudDepthBuffer', new Uniform(null))
   effect.uniforms.set('hasCloudDepth', new Uniform(0))
   effect.uniforms.set('cloudFade', new Uniform(1))
+  effect.uniforms.set('nightEmissionBuffer', new Uniform(null))
+  effect.uniforms.set('nightEmissionOn', new Uniform(0))
   ;(effect as unknown as { setFragmentShader: (s: string) => void }).setFragmentShader(shader)
 }
 
@@ -211,15 +201,6 @@ function patchLightingMask(pass: LightingMaskPass): void {
 }
 
 /** Enables the night-lights pass only when NightLights says it's needed. */
-function applyNightLightsPass(composer: EffectComposerImpl | null): void {
-  if (composer == null) return
-  for (const pass of composer.passes) {
-    const effects = (pass as { effects?: Array<{ name: string }> }).effects
-    if (effects?.some(e => e.name === 'NightLightsEffect') === true) {
-      pass.enabled = nightLightsPass.enabled
-    }
-  }
-}
 
 const up = new Vector3()
 
@@ -265,7 +246,6 @@ export const PostEffects: FC = () => {
   // GlobeControls changes near/far every frame; effects reconstructing
   // positions from depth must use the same values.
   useFrame(({ gl }, delta) => {
-    applyNightLightsPass(composerRef.current)
     const aerial = aerialRef.current
     if (aerial != null) {
       // Our own uniforms, added by patchNightLight.
@@ -276,6 +256,10 @@ export const PostEffects: FC = () => {
       if (has != null) has.value = cloudDepth.texture != null ? 1 : 0
       const fade = uniforms.get('cloudFade')
       if (fade != null) fade.value = cloudsEnabled ? cloudDepth.fade : 0
+      const emission = uniforms.get('nightEmissionBuffer')
+      if (emission != null) emission.value = nightEmission.texture
+      const emissionOn = uniforms.get('nightEmissionOn')
+      if (emissionOn != null) emissionOn.value = nightEmission.enabled && nightEmission.texture != null ? 1 : 0
     }
     if (transientStates != null) {
       updateNightLighting(

@@ -38,6 +38,9 @@ importers:
       3d-tiles-renderer:
         specifier: 0.5.3
         version: 0.5.3(@react-three/fiber@9.6.1(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0)
+      '@mapbox/vector-tile':
+        specifier: 2.0.3
+        version: 2.0.3
       '@react-three/drei':
         specifier: 10.7.7
         version: 10.7.7(@react-three/fiber@9.6.1(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0))(@types/react@19.2.14)(@types/three@0.184.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0)
@@ -62,6 +65,9 @@ importers:
       '@windowseat/shared':
         specifier: workspace:*
         version: link:../shared
+      pbf:
+        specifier: 4.0.1
+        version: 4.0.1
       postprocessing:
         specifier: 6.39.1
         version: 6.39.1(three@0.184.0)
@@ -656,8 +662,8 @@ packages:
   '@mapbox/point-geometry@1.1.0':
     resolution: {integrity: sha512-YGcBz1cg4ATXDCM/71L9xveh4dynfGmcLDqufR+nQQy3fKwsAZsWd/x4621/6uJaeB9mwOHE6hPeDgXz9uViUQ==}
 
-  '@mapbox/vector-tile@2.0.5':
-    resolution: {integrity: sha512-pXj8m7KTsqZt+1jsE0xIpGvqTSbblfkuEJL/NJmNePMtEwxO8V3XMDo9WMSfDeqHvCtBI9Lmt4mGcGR10zecmw==}
+  '@mapbox/vector-tile@2.0.3':
+    resolution: {integrity: sha512-Fq8PzBAaBeG3sEZA7Bomlv+8ZJcS5KCD6MRlCqiFrroOLnwZFFSJVydk1J9sneScJq9q4yyGfxKa+i7x2TLG8A==}
 
   '@mediapipe/tasks-vision@0.10.17':
     resolution: {integrity: sha512-CZWV/q6TTe8ta61cZXjfnnHsfWIdFhms03M9T7Cnd5y2mdpylJM0rF1qRq+wsQVRMLz1OYPVEBU9ph2Bx8cxrg==}
@@ -1486,8 +1492,8 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  pbf@4.0.2:
-    resolution: {integrity: sha512-J0ajxARhZfpUEebxYs1vhMGMuLSXtBe1e+fFPDrf2uA2hgo+UshKfNUWOz92HJNz6/NFEXseQPddnHkTreWRqg==}
+  pbf@4.0.1:
+    resolution: {integrity: sha512-SuLdBvS42z33m8ejRbInMapQe8n0D3vN/Xd5fmWM3tufNgRQFBpaW2YVJxQZV4iPNqb0vEFvssMEo5w9c6BTIA==}
     hasBin: true
 
   picocolors@1.1.1:
@@ -1907,8 +1913,8 @@ snapshots:
 
   3d-tiles-renderer@0.5.3(@react-three/fiber@9.6.1(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0):
     dependencies:
-      '@mapbox/vector-tile': 2.0.5
-      pbf: 4.0.2
+      '@mapbox/vector-tile': 2.0.3
+      pbf: 4.0.1
       pmtiles: 4.5.0
     optionalDependencies:
       '@react-three/fiber': 9.6.1(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(three@0.184.0)
@@ -2312,11 +2318,11 @@ snapshots:
 
   '@mapbox/point-geometry@1.1.0': {}
 
-  '@mapbox/vector-tile@2.0.5':
+  '@mapbox/vector-tile@2.0.3':
     dependencies:
       '@mapbox/point-geometry': 1.1.0
       '@types/geojson': 7946.0.16
-      pbf: 4.0.2
+      pbf: 4.0.1
 
   '@mediapipe/tasks-vision@0.10.17': {}
 
@@ -3141,7 +3147,7 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  pbf@4.0.2:
+  pbf@4.0.1:
     dependencies:
       resolve-protobuf-schema: 2.1.0
 

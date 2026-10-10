@@ -63,6 +63,7 @@ const GoogleAttribution: FC = () => {
 /** NASA Black Marble while city lights are visible. */
 const NightLightsCredit: FC = () => {
   const credit = useStore(nightLightsStore, s => s.credit)
+  const streets = useStore(nightLightsStore, s => s.streets)
   if (credit == null) return null
   return (
     <>
@@ -70,6 +71,15 @@ const NightLightsCredit: FC = () => {
       <a href='https://science.nasa.gov/earth/earth-observatory/earth-at-night/' target='_blank' rel='noreferrer'>
         {credit}
       </a>
+      {streets && (
+        <>
+          {' · '}
+          <a href='https://www.openstreetmap.org/copyright' target='_blank' rel='noreferrer'>
+            Street lights © OpenStreetMap contributors
+          </a>{' '}
+          (<a href='https://openfreemap.org' target='_blank' rel='noreferrer'>OpenFreeMap</a>)
+        </>
+      )}
     </>
   )
 }

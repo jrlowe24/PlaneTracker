@@ -7,9 +7,10 @@ import type { Camera } from 'three'
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { nightState } from '../scene/nightLighting'
 import { isMobileDevice, qualityStore } from '../state/quality'
-import { NightLightsEffect } from './NightLightsEffect'
-import { nightLightsPass, nightLightsStore } from './nightLightsStore'
+import { NightLightsPass } from './NightLightsPass'
+import { nightEmission, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
+import { RoadLightTiles } from './roadTiles'
 
 /** Detail tiles stream only below this camera altitude (horizon ~2,800 km). */
 const DETAIL_MAX_ALTITUDE = 600_000
@@ -17,16 +18,19 @@ const FLUSH_INTERVAL_S = 0.25
 
 class NightLightsController {
   readonly tiles = new NightLightTiles()
-  readonly effect: NightLightsEffect
+  private roads: RoadLightTiles | null = null
+  readonly effect: NightLightsPass
   private ready = false
   private active = false
   private sinceFlush = 0
 
   constructor(camera: Camera) {
-    this.effect = new NightLightsEffect(camera)
+    this.effect = new NightLightsPass(camera)
+    this.effect.enabled = false
     // Phones: the 8192×4096 light map alone is ~180 MB of GPU memory, enough
     // to get textures evicted on iOS (black terrain and sky).
     if (isMobileDevice()) return
+    this.roads = new RoadLightTiles()
     void this.tiles.load().then(ok => {
       if (!ok) return
       this.effect.setMaps(this.tiles.base, this.tiles.detail)
@@ -35,6 +39,9 @@ class NightLightsController {
   }
 
   update(camera: Camera, states: AtmosphereTransientStates, delta: number): void {
+    // Set every frame: a remounted controller must not leave a stale one.
+    nightEmission.texture = this.effect.texture
+    nightEmission.enabled = this.ready && this.effect.enabled
     if (!this.ready) return
     const { effect, tiles } = this
     effect.mainCamera = camera
@@ -51,12 +58,11 @@ class NightLightsController {
     const active = elevation < reach + margin
     if (active !== this.active) {
       this.active = active
-      // Toggle the pass, not the blend function: changing the blend
-      // function recompiles the pass (a hitch at every day/night change).
-      nightLightsPass.enabled = active
+      this.effect.enabled = active
+      nightEmission.enabled = active
     }
     if (!active) {
-      if (nightLightsStore.get().credit != null) nightLightsStore.set({ credit: null })
+      if (nightLightsStore.get().credit != null) nightLightsStore.set({ credit: null, streets: false })
       return
     }
 
@@ -68,19 +74,30 @@ class NightLightsController {
     }
     const m = tiles.manifest!
     effect.setDetail(detail, tiles.origin, tiles.loaded, m.detail.tileDegrees, m.detail.columns)
+    if (this.roads != null) {
+      this.roads.update(camera)
+      effect.setRoads(this.roads.texture, this.roads.levels.map(l => l.uniforms))
+    }
 
     this.sinceFlush += delta
     if (this.sinceFlush >= FLUSH_INTERVAL_S) {
       this.sinceFlush = 0
       tiles.flush()
       const credit = nightState.night > 0.05 ? m.credit : null
-      if (nightLightsStore.get().credit !== credit) nightLightsStore.set({ credit })
+      const streets = credit != null && (this.roads?.levels.some(l => l.uniforms.enabled) ?? false)
+      const store = nightLightsStore.get()
+      if (store.credit !== credit || store.streets !== streets) nightLightsStore.set({ credit, streets })
     }
   }
 
   dispose(): void {
+    if (nightEmission.texture === this.effect.texture) {
+      nightEmission.texture = null
+      nightEmission.enabled = false
+    }
     this.effect.dispose()
     this.tiles.dispose()
+    this.roads?.dispose()
   }
 }
 
