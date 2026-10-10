@@ -803,3 +803,92 @@ kbd {
     padding: 6px 8px;
   }
 }
+
+/* Camera mode bar (while following / window seat). */
+.mode-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(46px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+}
+
+.mode-target {
+  font: inherit;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mode-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f2781e;
+  box-shadow: 0 0 6px #f2781e;
+}
+
+.mode-segments {
+  display: flex;
+  gap: 4px;
+}
+
+.mode-segments button {
+  font: inherit;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mode-segments button.active {
+  background: #f2781e;
+  color: #fff;
+}
+
+.mode-segments button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+@media (pointer: coarse) {
+  .mode-segments kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .mode-bar {
+    left: 8px;
+    right: 8px;
+    transform: none;
+    justify-content: space-between;
+    bottom: calc(40px + env(safe-area-inset-bottom));
+  }
+
+  .mode-segments button {
+    padding: 9px 11px;
+  }
+
+  /* The bar holds the views; the details card sits above it. */
+  .app:has(.mode-bar) .left-stack {
+    bottom: calc(100px + env(safe-area-inset-bottom));
+  }
+}

@@ -55,7 +55,6 @@ export const AircraftPanel: FC = () => {
 
   const mode = useStore(cameraModeStore, s => s.mode)
   const targetHex = useStore(cameraModeStore, s => s.targetHex)
-  const windowSide = useStore(cameraModeStore, s => s.windowSide)
   const attached = mode !== 'globe' && targetHex === hex
 
   useEffect(() => {
@@ -149,51 +148,31 @@ export const AircraftPanel: FC = () => {
         <dt className='secondary'>Position age</dt>
         <dd className='secondary'>{ageS.toFixed(0)} s</dd>
       </dl>
-      <div className='aircraft-actions'>
-        {attached && mode === 'follow' ? (
-          <button type='button' className='primary' onClick={() => { enterWindowView(state.hex) }}>
+      {/* View controls live in the mode bar while following; here only
+          the way into a view (or to switch to this aircraft). */}
+      {!attached && (
+        <div className='aircraft-actions'>
+          <button type='button' className='primary' onClick={() => { followAircraft(state.hex) }}>
+            {mode === 'globe' ? 'Follow' : 'Follow this one'} <kbd>F</kbd>
+          </button>
+          <button type='button' onClick={() => { enterWindowView(state.hex) }}>
             Window seat <kbd>W</kbd>
           </button>
-        ) : attached && mode === 'window' ? (
-          <>
-            <button type='button' onClick={() => { followAircraft(state.hex) }}>
-              Chase view <kbd>F</kbd>
-            </button>
-            <button
-              type='button'
-              onClick={() => {
-                cameraModeStore.set({ windowSide: windowSide === 'left' ? 'right' : 'left' })
-              }}
-            >
-              {windowSide === 'left' ? 'Left' : 'Right'} side <kbd>S</kbd>
-            </button>
-          </>
-        ) : (
-          <>
-            <button type='button' className='primary' onClick={() => { followAircraft(state.hex) }}>
-              Follow <kbd>F</kbd>
-            </button>
-            <button type='button' onClick={() => { enterWindowView(state.hex) }}>
-              Window seat <kbd>W</kbd>
-            </button>
-          </>
-        )}
-        {attached && (
-          <button type='button' onClick={exitToGlobe}>
-            Exit <kbd>Esc</kbd>
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
 
+/** Closes the details; if the camera is riding with this aircraft, stops that too. */
 const CloseButton: FC = () => (
   <button
     type='button'
     className='icon-button'
     aria-label='Close'
     onClick={() => {
+      const { mode, targetHex } = cameraModeStore.get()
+      if (mode !== 'globe' && targetHex === selectionStore.get().selectedHex) exitToGlobe()
       selectionStore.set({ selectedHex: null })
     }}
   >

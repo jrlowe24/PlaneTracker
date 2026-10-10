@@ -7,6 +7,7 @@ import { AircraftPanel } from './ui/AircraftPanel'
 import { Attribution } from './ui/Attribution'
 import { ContextLost } from './ui/ContextLost'
 import { DevPanel } from './ui/DevPanel'
+import { ModeBar } from './ui/ModeBar'
 import { QualityMenu } from './ui/QualityMenu'
 import { TileErrorBanner } from './ui/TileErrorBanner'
 import { TopBar } from './ui/Welcome'
@@ -30,6 +31,7 @@ export const App: FC = () => (
     </div>
     <DevPanel />
     <TopBar />
+    <ModeBar />
     <div className='corner-quality'>
       <QualityMenu />
     </div>

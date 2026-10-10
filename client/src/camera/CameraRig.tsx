@@ -24,7 +24,11 @@ const EXIT_DURATION_S = 2.2
 const MIN_DISTANCE = 12
 const MAX_DISTANCE = 60_000
 /** Where the camera ends up when leaving follow mode. */
-const EXIT_ORBIT: Orbit = { yaw: 0, pitch: 35, distance: 12_000 }
+/**
+ * Free look after following: pull well back and look down on the area, so
+ * it's clear the camera is yours again (12 km left it hanging by the plane).
+ */
+const EXIT_ORBIT: Orbit = { yaw: 0, pitch: 55, distance: 40_000 }
 
 interface Transition {
   elapsed: number
