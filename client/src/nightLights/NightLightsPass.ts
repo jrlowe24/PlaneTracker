@@ -166,6 +166,11 @@ float glowShare(const float share) {
   return pow(min(1.0, share / 0.15), 1.4);
 }
 
+uvec2 pcg2d(uvec2 v);
+const int QUIET_FLAG = 16;
+/** 0 in busy areas … 1 in quiet ones (NASA's map), set per pixel. */
+float quietness;
+
 float lampFade(const float radius) {
   float share = 0.5 / radius;
   return min(1.0, pow(share, 0.9) * pow(min(1.0, share / 0.1), 0.7));
@@ -209,6 +214,13 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
       vec4 lamp = texelFetch(roadLamps, ivec3(c - cell * TILE, int(layer)), 0);
       int index = int(lamp.b * 255.0 + 0.5);
       if (index == 0) continue;
+      // Quiet-street lamps (residential, service): fewer where NASA's map
+      // says the area is quiet, by a world-fixed per-lamp hash.
+      if (index >= QUIET_FLAG) {
+        index -= QUIET_FLAG;
+        uvec2 h = pcg2d(uvec2(ivec2(roadOrigin[level]) * TILE + c));
+        if (float(h.x & 0xffffu) / 65535.0 < quietness * 0.6) continue;
+      }
       vec2 position = vec2(c) + lamp.rg * (255.0 / 256.0) + 0.5 / 256.0;
       float d = length(toPixel * (position - texel));
       // Airfield lights are high-intensity, focused toward approaching
@@ -516,6 +528,7 @@ void main() {
   // Airfield lights are kept everywhere (rural airports are lit too), so
   // there is no early out for dark areas.
   float urban = smoothstep(0.08, 0.4, value);
+  quietness = 1.0 - smoothstep(0.3, 0.7, value);
   float footprint = length(offset) * pixelAngle;
   vec3 dX = dFdx(offset);
   vec3 dY = dFdy(offset);

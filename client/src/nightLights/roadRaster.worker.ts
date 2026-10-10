@@ -77,7 +77,17 @@ interface RoadStyle {
   lamp: number
   /** Color choice: [district share using the first palette entry, palette]. */
   colors: readonly [number, readonly Rgb[]]
+  /** Share of poles without a lamp (beyond the usual few out). */
+  off?: number
+  /**
+   * Residential / service streets: the shader thins them further where
+   * NASA's map says the area is quiet (lamp color index + QUIET_FLAG).
+   */
+  quiet?: boolean
 }
+
+/** Added to a lamp's color index for quiet-street lamps (see RoadStyle.quiet). */
+const QUIET_FLAG = 16
 
 const ROADS: Record<string, RoadStyle> = {
   motorway: { spacing: 70, bothSides: false, width: 34, pool: 0.32, lamp: 1.0, colors: [0.55, [SODIUM, NEUTRAL_LED]] },
@@ -86,8 +96,11 @@ const ROADS: Record<string, RoadStyle> = {
   secondary: { spacing: 50, bothSides: true, width: 20, pool: 0.32, lamp: 1.0, colors: [0.35, [SODIUM, NEUTRAL_LED]] },
   tertiary: { spacing: 55, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.45, [SODIUM, WARM_LED]] },
   busway: { spacing: 50, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
-  minor: { spacing: 65, bothSides: false, width: 12, pool: 0.2, lamp: 0.85, colors: [0.5, [SODIUM, WARM_LED]] },
-  service: { spacing: 70, bothSides: false, width: 7, pool: 0.08, lamp: 0.5, colors: [0.5, [SODIUM, WARM_LED]] }
+  // Residential streets: a lamp every ~90 m, some streets' poles bare
+  // (US suburbs often light mainly intersections).
+  minor: { spacing: 90, bothSides: false, width: 12, pool: 0.2, lamp: 0.8, colors: [0.5, [SODIUM, WARM_LED]], off: 0.15, quiet: true },
+  // Driveways, alleys, parking aisles: few and dim.
+  service: { spacing: 110, bothSides: false, width: 7, pool: 0.06, lamp: 0.4, colors: [0.5, [SODIUM, WARM_LED]], off: 0.4, quiet: true }
 }
 
 /** Diffuse glow of whole areas (parking lots, yards, signage, porch lights). */
@@ -152,7 +165,7 @@ let poolsEnabled = true
  * far-distance channel, and the pool of light it casts on the ground into
  * the image (`radius` in px).
  */
-function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, base: number, pool = true): void {
+function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, base: number, pool = true, quiet = false): void {
   // Real lamps differ: aging, wattage, a few out. (Airfield lights don't.)
   let intensity = base
   if (pool) {
@@ -168,7 +181,7 @@ function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, base: 
     if (value > lampCells[i * 4 + 3]!) {
       lampCells[i * 4] = Math.min(255, Math.floor((x - cx) * 256))
       lampCells[i * 4 + 1] = Math.min(255, Math.floor((y - cy) * 256))
-      lampCells[i * 4 + 2] = Math.max(1, LAMP_COLORS.indexOf(color))
+      lampCells[i * 4 + 2] = Math.max(1, LAMP_COLORS.indexOf(color)) + (quiet ? QUIET_FLAG : 0)
       lampCells[i * 4 + 3] = value
     }
     lampEnergy[i] = lampEnergy[i]! + intensity
@@ -271,7 +284,8 @@ async function render(
         const s = style.bothSides ? (n++ % 2 === 0 ? 1 : -1) : 1
         // Real poles aren't evenly spaced: shift each along the road.
         const j = (hash(Math.round(x * 8), Math.round(y * 8), 5) - 0.5) * 0.4 * spacing
-        lamp(ctx, x + dx * j - dy * side * s, y + dy * j + dx * side * s, radius, color, style.lamp * level)
+        if (style.off != null && hash(Math.round(x * 8), Math.round(y * 8), 9) < style.off) return
+        lamp(ctx, x + dx * j - dy * side * s, y + dy * j + dx * side * s, radius, color, style.lamp * level, true, style.quiet)
       })
     }
   }
