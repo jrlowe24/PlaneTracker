@@ -97,6 +97,7 @@ const LOW_MID_DENSITY = 0.2
 const CIRRUS_DENSITY = 0.004
 /** Towering cumulus / cumulonimbus: denser than fair-weather cumulus. */
 const CONVECTIVE_DENSITY = 0.3
+const CONVECTIVE_ENABLED = false
 
 /**
  * Volumetric clouds (takram three-clouds), following its 3DTilesRenderer
@@ -197,7 +198,9 @@ export const VolumetricClouds: FC = () => {
       if (layer == null) continue
       layer.altitude = h.altitude
       // An empty layer (no towers forecast) costs no ray marching.
-      layer.height = i === 3 && cover[3]! < 0.005 ? 0 : h.height
+      // Convective towers are disabled until their shapes are finished
+      // (work in progress on branch wip-storm-clouds).
+      layer.height = i === 3 && (!CONVECTIVE_ENABLED || cover[3]! < 0.005) ? 0 : h.height
     }
     // Static shape parameters are re-applied every frame: <Clouds> resets
     // its layers to takram's defaults after mount.
