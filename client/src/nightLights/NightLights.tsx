@@ -109,6 +109,15 @@ class NightLightsController {
     }
   }
 
+  /** Set after update() threw: the lights stay off for this page load. */
+  failed = false
+
+  fail(): void {
+    this.failed = true
+    this.effect.enabled = false
+    nightEmission.enabled = false
+  }
+
   dispose(): void {
     if (nightEmission.texture === this.effect.texture) {
       nightEmission.texture = null
@@ -157,7 +166,15 @@ export const NightLights: FC = () => {
     [controller]
   )
   useFrame((_, delta) => {
-    if (transientStates != null) controller.update(camera, transientStates, delta)
+    if (transientStates == null || controller.failed) return
+    try {
+      controller.update(camera, transientStates, delta)
+    } catch (error) {
+      // An error thrown here stops the whole render loop (a frozen globe):
+      // switch the night lights off instead and keep going.
+      console.error('[night lights] disabled after an error', error)
+      controller.fail()
+    }
   })
   return <primitive object={controller.effect} dispose={null} />
 }

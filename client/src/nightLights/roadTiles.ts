@@ -145,6 +145,7 @@ class Level {
 
   /** Re-centers the window if `center` (tile coords) left its middle. */
   place(center: { x: number; y: number }): boolean {
+    if (!Number.isFinite(center.x) || !Number.isFinite(center.y)) return false
     const ox = Math.floor(center.x - this.window / 2 + 0.5)
     const oy = Math.floor(center.y - this.window / 2 + 0.5)
     if (Number.isFinite(this.ox) && Math.abs(ox - this.ox) < 1 && Math.abs(oy - this.oy) < 1) return false
@@ -191,6 +192,13 @@ class Level {
 
   updateUniforms(camera: Vector3, strength: number): void {
     this.uniforms.enabled = strength > 0 && Number.isFinite(this.ox)
+    // Never placed yet (the lights came on with the camera above this
+    // level's range): nothing to show, and no cells to look up.
+    if (!Number.isFinite(this.ox) || !Number.isFinite(this.oy)) {
+      this.uniforms.layers.fill(-1)
+      this.uniforms.fade.fill(0)
+      return
+    }
     this.uniforms.anchor.copy(this.anchorEcef).sub(camera)
     const now = performance.now()
     for (let cy = 0; cy < this.window; ++cy) {
