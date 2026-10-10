@@ -5,6 +5,8 @@ import {
   type MeshStandardMaterialParameters
 } from 'three'
 
+import { MAX_SURFACE_LIGHTS, surfaceLights } from './navLightsStore'
+
 /**
  * Aircraft materials are lit by SunLight/SkyLight (light sources, not post
  * lighting). A shading vector carries:
@@ -14,8 +16,34 @@ import {
  * Instanced meshes read it from an `instanceShading` attribute; single
  * meshes from a per-material uniform (`userData.shading`). Single meshes
  * also get `userData.groundLight`: irradiance from street and apron lights
- * around them at night.
+ * around them at night, and the aircraft's own nav lights, beacons and
+ * strobes light the surfaces around them (navLightsStore.surfaceLights).
  */
+/**
+ * Point lights evaluated in the shader rather than as three.js lights, so
+ * the instanced aircraft and every other lit material keep their programs.
+ * Positions are camera-relative world; rotated into view space here. The
+ * window ends each light's reach smoothly at its range.
+ */
+const NAV_LIGHTS_FRAGMENT = /* glsl */ `
+#if defined( RE_Direct )
+for (int i = 0; i < ${MAX_SURFACE_LIGHTS}; ++i) {
+  vec4 navPosition = navLightPosition[i];
+  if (navPosition.w <= 0.0) continue;
+  vec3 toLight = mat3(viewMatrix) * navPosition.xyz - geometryPosition;
+  float d2 = dot(toLight, toLight);
+  float reach = saturate(1.0 - pow2(d2 / (navPosition.w * navPosition.w)));
+  if (reach <= 0.0) continue;
+  IncidentLight navLight;
+  navLight.direction = toLight * inversesqrt(d2);
+  // The lens sits in its housing: no singularity on the surface around it.
+  navLight.color = navLightColor[i] * pow2(reach) / max(d2, 0.5);
+  navLight.visible = true;
+  RE_Direct(navLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+}
+#endif
+#include <lights_fragment_end>`
+
 export function patchAircraftMaterial(material: MeshStandardMaterial, instanced: boolean): void {
   const shading = new Uniform(new Vector3(0, 1, 1))
   material.userData.shading = shading
@@ -26,6 +54,10 @@ export function patchAircraftMaterial(material: MeshStandardMaterial, instanced:
     previous(shader, renderer)
     shader.uniforms.aircraftShading = shading
     shader.uniforms.aircraftGroundLight = groundLight
+    if (!instanced) {
+      shader.uniforms.navLightPosition = { value: surfaceLights.position }
+      shader.uniforms.navLightColor = { value: surfaceLights.color }
+    }
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -39,7 +71,14 @@ varying vec3 vShading;`
 vShading = ${instanced ? 'instanceShading' : 'aircraftShading'};`
       )
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vShading;\nuniform vec3 aircraftGroundLight;')
+      .replace(
+        '#include <common>',
+        `#include <common>\nvarying vec3 vShading;\nuniform vec3 aircraftGroundLight;${
+          instanced
+            ? ''
+            : `\nuniform vec4 navLightPosition[${MAX_SURFACE_LIGHTS}];\nuniform vec3 navLightColor[${MAX_SURFACE_LIGHTS}];`
+        }`
+      )
       .replace(
         'getDirectionalLightInfo( directionalLight, directLight );',
         'getDirectionalLightInfo( directionalLight, directLight );\n\t\tdirectLight.color *= vShading.y;'
@@ -53,6 +92,7 @@ vShading = ${instanced ? 'instanceShading' : 'aircraftShading'};`
         'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal );',
         'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal ) * vShading.z + aircraftGroundLight;'
       )
+      .replace('#include <lights_fragment_end>', instanced ? '#include <lights_fragment_end>' : NAV_LIGHTS_FRAGMENT)
       .replace(
         '#include <emissivemap_fragment>',
         '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vShading.x;'

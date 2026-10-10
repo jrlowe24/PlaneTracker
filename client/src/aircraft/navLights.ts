@@ -15,7 +15,7 @@ import { nightState } from '../scene/nightLighting'
 import { AIRFRAMES } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
-import { glowLights, glowState } from './navLightsStore'
+import { glowLights, glowState, MAX_SURFACE_LIGHTS, surfaceLights } from './navLightsStore'
 
 /**
  * Aircraft navigation lights: red left wingtip, green right wingtip, white
@@ -44,6 +44,35 @@ const RED: [number, number, number] = [3.2, 0.12, 0.06]
 const GREEN: [number, number, number] = [0.12, 2.8, 0.9]
 const WHITE: [number, number, number] = [2.2, 2.2, 2.2]
 const STROBE: [number, number, number] = [7, 7, 7.4]
+
+/**
+ * Light the lights throw on the detailed model around them (wingtip,
+ * winglet, tail cone; the beacons and strobes reach the fuselage and
+ * wings), in candela. Converted to renderer irradiance with the same
+ * perceptual night scale as moonlight (nightLighting.ts): by day they're
+ * lost in sunlight, as they are in reality.
+ */
+const SURFACE_CD = { nav: 40, tail: 20, beacon: 35, strobe: 200 }
+/** Renderer irradiance per lux at full night (FULL_MOON / 0.25 lux, toned down). */
+const NIGHT_LUX = 0.03
+/** Reach of a light on the model (m): steady lights only their own surroundings. */
+const SURFACE_RANGE = { nav: 4.5, tail: 5, beacon: 9, strobe: 18 }
+/** Only aircraft this close have their surfaces lit (detailed models anyway). */
+const SURFACE_MAX_DISTANCE = 3000
+
+interface SurfaceLight {
+  x: number
+  y: number
+  z: number
+  distance: number
+  range: number
+  r: number
+  g: number
+  b: number
+}
+const surfacePool: SurfaceLight[] = []
+let surfaceCount = 0
+const byDistance = (a: SurfaceLight, b: SurfaceLight): number => a.distance - b.distance
 
 /** Stable per-aircraft phase so lights don't flash in sync. */
 function phaseOf(hex: string): number {
@@ -110,7 +139,8 @@ export class NavLights {
       z: number,
       distance: number,
       color: readonly [number, number, number],
-      intensity: number
+      intensity: number,
+      size = 1
     ): void => {
       if (intensity <= 0) return
       const minSize = MIN_PIXELS * distance * pixelToWorld
@@ -141,7 +171,7 @@ export class NavLights {
       colors[n * 3 + 2] = color[2] * k
       ++n
       if (distance < GLOW_MAX_DISTANCE) {
-        const g = (glowLights[glowState.count] ??= { x: 0, y: 0, z: 0, distance: 0, r: 0, g: 0, b: 0 })
+        const g = (glowLights[glowState.count] ??= { x: 0, y: 0, z: 0, distance: 0, r: 0, g: 0, b: 0, size: 1 })
         g.x = x
         g.y = y
         g.z = z
@@ -149,10 +179,36 @@ export class NavLights {
         g.r = color[0] * k * glowScale
         g.g = color[1] * k * glowScale
         g.b = color[2] * k * glowScale
+        g.size = size
         ++glowState.count
       }
     }
     glowState.count = 0
+    surfaceCount = 0
+    const surfaceScale = NIGHT_LUX * nightState.night
+    /** A light on a detailed model, lighting the model around it. */
+    const lightSurface = (
+      x: number,
+      y: number,
+      z: number,
+      distance: number,
+      color: readonly [number, number, number],
+      candela: number,
+      range: number
+    ): void => {
+      if (candela <= 0 || surfaceScale <= 0) return
+      const s = (surfacePool[surfaceCount++] ??= { x: 0, y: 0, z: 0, distance: 0, range: 0, r: 0, g: 0, b: 0 })
+      // Hue of the light, normalized so candela sets the brightness.
+      const k = (candela * surfaceScale) / Math.max(color[0], color[1], color[2])
+      s.x = x
+      s.y = y
+      s.z = z
+      s.distance = distance
+      s.range = range
+      s.r = color[0] * k
+      s.g = color[1] * k
+      s.b = color[2] * k
+    }
 
     for (const aircraft of list) {
       const pose = aircraft.pose
@@ -194,6 +250,7 @@ export class NavLights {
       const strobeT = t % 1.3
       const strobe = !pose.onGround && (strobeT < 0.05 || (strobeT > 0.15 && strobeT < 0.2)) ? 1 : 0
       const isDetailed = detailedHexes.has(aircraft.hex)
+      const lit = isDetailed && distance < SURFACE_MAX_DISTANCE
 
       // A glTF model's own light positions when it's drawn; else the class
       // placeholder's proportions.
@@ -201,25 +258,47 @@ export class NavLights {
       const tip = anchors?.wingtip
       const [lx, ly, lz] = tip != null ? at(tip.x, tip.y, tip.z) : at(halfSpan, wingY, tipZ)
       put(lx, ly, lz, distance, RED, 1)
+      if (lit) lightSurface(lx, ly, lz, distance, RED, SURFACE_CD.nav, SURFACE_RANGE.nav)
       const [rx, ry, rz] = tip != null ? at(-tip.x, tip.y, tip.z) : at(-halfSpan, wingY, tipZ)
       put(rx, ry, rz, distance, GREEN, 1)
+      if (lit) lightSurface(rx, ry, rz, distance, GREEN, SURFACE_CD.nav, SURFACE_RANGE.nav)
       const tailAt = anchors?.tail
       const [tx, ty, tz] = tailAt != null ? at(0, tailAt.y, tailAt.z) : at(0, r * 0.3, (-p.length / 2) * ls)
       put(tx, ty, tz, distance, WHITE, 1)
+      if (lit) lightSurface(tx, ty, tz, distance, WHITE, SURFACE_CD.tail, SURFACE_RANGE.tail)
       const topAt = anchors?.top
       const [bx, by, bz] = topAt != null ? at(0, topAt.y + 0.15, topAt.z) : at(0, r * 1.02, 0)
-      put(bx, by, bz, distance, RED, beacon * 1.6)
+      put(bx, by, bz, distance, RED, beacon * 1.6, 1.5)
+      if (lit) lightSurface(bx, by, bz, distance, RED, beacon * SURFACE_CD.beacon, SURFACE_RANGE.beacon)
       // Belly beacon and strobes only when close enough to matter.
       if (isDetailed || distance < 20_000) {
         const bottomAt = anchors?.bottom
         const [ux, uy, uz] =
           bottomAt != null ? at(0, bottomAt.y - 0.15, bottomAt.z) : at(0, -r * 1.02, -r)
-        put(ux, uy, uz, distance, RED, ((t + 0.5) % 1 < 0.12 ? 1 : 0) * 1.6)
+        const belly = (t + 0.5) % 1 < 0.12 ? 1 : 0
+        put(ux, uy, uz, distance, RED, belly * 1.6, 1.5)
+        if (lit) lightSurface(ux, uy, uz, distance, RED, belly * SURFACE_CD.beacon, SURFACE_RANGE.beacon)
       }
-      put(lx, ly, lz, distance, STROBE, strobe)
-      put(rx, ry, rz, distance, STROBE, strobe)
+      put(lx, ly, lz, distance, STROBE, strobe, 1.8)
+      put(rx, ry, rz, distance, STROBE, strobe, 1.8)
+      if (lit) {
+        lightSurface(lx, ly, lz, distance, STROBE, strobe * SURFACE_CD.strobe, SURFACE_RANGE.strobe)
+        lightSurface(rx, ry, rz, distance, STROBE, strobe * SURFACE_CD.strobe, SURFACE_RANGE.strobe)
+      }
     }
     this.mesh.count = n
+
+    // The nearest lights light the models (unused slots: range 0).
+    const nearest = surfacePool.slice(0, surfaceCount).sort(byDistance)
+    for (let i = 0; i < MAX_SURFACE_LIGHTS; ++i) {
+      const s = nearest[i]
+      if (s == null) {
+        surfaceLights.position[i]!.w = 0
+        continue
+      }
+      surfaceLights.position[i]!.set(s.x, s.y, s.z, s.range)
+      surfaceLights.color[i]!.set(s.r, s.g, s.b)
+    }
     this.mesh.instanceMatrix.needsUpdate = true
     this.mesh.instanceColor!.needsUpdate = true
   }

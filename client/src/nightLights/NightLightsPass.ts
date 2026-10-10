@@ -398,7 +398,8 @@ void approachLights(const vec2 end, const vec2 outward, const float reach, const
  * Runway lights for this pixel. dir, dirX, dirY: the view ray and its
  * screen derivatives (approach lights are placed where the ray meets the
  * level plane through the runway end: they stand on poles level with the
- * runway, not on the ground beyond it, and hide behind nearer terrain).
+ * runway, not on the ground beyond it; where the ground in the approach
+ * area rises above that level they top it, and nearer terrain hides them).
  */
 vec3 runwayLights(const vec3 offset, const float footprint, const vec3 dX, const vec3 dY, const vec3 dir, const vec3 dirX, const vec3 dirY) {
   rwSum = vec3(0.0);
@@ -473,19 +474,31 @@ vec3 runwayLights(const vec3 offset, const float footprint, const vec3 dX, const
         float facing = dot(dir, normal);
         if (abs(facing) < 1e-4) continue;
         float t = dot(point, normal) / facing;
-        // Behind the camera, or with terrain (or a building) in front.
-        if (t <= 0.0 || t > groundDistance + 3.0 + 0.003 * t) continue;
-        vec3 q = dir * t;
-        vec3 qv = q - o.xyz;
-        rwP = vec2(dot(qv, al.xyz), dot(qv, ac));
-        float beyond = dot(rwP - end, outward);
-        if (beyond < -40.0 || beyond > reach + 40.0 || abs(rwP.y) > 40.0) continue;
-        vec3 qX = dirX * t - dir * (t * dot(dirX, normal) / facing);
-        vec3 qY = dirY * t - dir * (t * dot(dirY, normal) / facing);
-        mat2 local = mat2(dot(qX, al.xyz), dot(qX, ac), dot(qY, al.xyz), dot(qY, ac));
-        if (abs(determinant(local)) < 1e-10) continue;
-        rwToPixel = inverse(local);
-        runwayLampScale(t * pixelAngle);
+        if (t <= 0.0) continue;
+        if (t > groundDistance + 3.0 + 0.003 * t) {
+          // Ground (trees, a roof, an embankment) above the threshold's
+          // level where the ray meets it. Inside the approach area the
+          // poles stand taller than that: the lamps ride on top of it.
+          // Anywhere else it's terrain in front, hiding them.
+          if (!groundOk) continue;
+          float over = dot(ground - end, outward);
+          if (over < -40.0 || over > reach + 40.0 || abs(ground.y) > 40.0) continue;
+          rwP = ground;
+          rwToPixel = groundToPixel;
+          runwayLampScale(footprint);
+        } else {
+          vec3 q = dir * t;
+          vec3 qv = q - o.xyz;
+          rwP = vec2(dot(qv, al.xyz), dot(qv, ac));
+          float beyond = dot(rwP - end, outward);
+          if (beyond < -40.0 || beyond > reach + 40.0 || abs(rwP.y) > 40.0) continue;
+          vec3 qX = dirX * t - dir * (t * dot(dirX, normal) / facing);
+          vec3 qY = dirY * t - dir * (t * dot(dirY, normal) / facing);
+          mat2 local = mat2(dot(qX, al.xyz), dot(qX, ac), dot(qY, al.xyz), dot(qY, ac));
+          if (abs(determinant(local)) < 1e-10) continue;
+          rwToPixel = inverse(local);
+          runwayLampScale(t * pixelAngle);
+        }
       }
       approachLights(end, outward, reach, isPrecision);
     }

@@ -13,10 +13,14 @@ import { glowLights, glowState } from './navLightsStore'
 
 /** Halos drawn per frame (nearest lights first). */
 const MAX_GLOWS = 48
-/** Physical glow radius around a light, meters. */
-const GLOW_RADIUS_M = 1.2
-const MIN_RADIUS_PX = 3
-const MAX_RADIUS_PX = 14
+/**
+ * Physical glow radius around a steady light, meters (beacons and strobes
+ * flare wider: GlowLight.size). Small: a steady nav light is a bright
+ * point with a little glare, not a ball of light.
+ */
+const GLOW_RADIUS_M = 0.5
+const MIN_RADIUS_PX = 2.5
+const MAX_RADIUS_PX = 9
 const GLOW_GAIN = 0.35
 
 const fragmentShader = /* glsl */ `
@@ -37,7 +41,9 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
     // light sitting on its own aircraft's surface).
     float sceneDistance = -getViewZ(readDepth(g.xy));
     if (sceneDistance < g.z - max(3.0, g.z * 0.01)) continue;
-    float glow = exp(-q) * 0.7 + 0.3 / (1.0 + q * 3.0);
+    // Bright core with a faint, quickly fading skirt (a long skirt read as
+    // a flat glowing disc around every light).
+    float glow = exp(-q) * 0.8 + 0.12 / (1.0 + q * 4.0);
     sum += glowColors[i] * glow;
   }
   outputColor = vec4(inputColor.rgb + sum * ${GLOW_GAIN.toFixed(3)}, inputColor.a);
@@ -89,7 +95,9 @@ export class NavGlowEffect extends Effect {
       relative.set(light.x, light.y, light.z)
       projected.copy(relative).add(camera.position).project(camera)
       if (projected.z > 1 || Math.abs(projected.x) > 1.1 || Math.abs(projected.y) > 1.1) continue
-      const radius = Math.min(MAX_RADIUS_PX, Math.max(MIN_RADIUS_PX, GLOW_RADIUS_M / (light.distance * pixelAngle)))
+      const radius =
+        light.size *
+        Math.min(MAX_RADIUS_PX, Math.max(MIN_RADIUS_PX, GLOW_RADIUS_M / (light.distance * pixelAngle)))
       // View-space distance along the camera axis, comparable to getViewZ.
       const viewZ = relative.dot(camera.getWorldDirection(projected.clone()))
       glows[n]!.set(projected.x * 0.5 + 0.5, projected.y * 0.5 + 0.5, viewZ, radius)
