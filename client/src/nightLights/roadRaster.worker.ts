@@ -324,26 +324,24 @@ function scatterLamps(
   ctx.restore()
 }
 
+/**
+ * Taxiways: a dim green centerline. Taxiways with centerline lights don't
+ * have edge lights, and OpenStreetMap maps many parallel taxiways and
+ * taxilanes: blue edges on every one turned the field into a mass of dots.
+ */
 function drawTaxiway(ctx: Ctx, line: Point[], mpp: number): void {
-  const r = 2.5 / mpp
-  // Green centerline (every 15 m), blue edges (every 30 m).
-  along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
-    lamp(ctx, x, y, r, GREEN, 0.7, false)
-  })
-  const edge = 12 / mpp
-  along(line, 30 / mpp, 15 / mpp, (x, y, dx, dy) => {
-    lamp(ctx, x - dy * edge, y + dx * edge, r, BLUE, 0.55, false)
-    lamp(ctx, x + dy * edge, y - dx * edge, r, BLUE, 0.55, false)
+  along(line, 30 / mpp, 15 / mpp, (x, y) => {
+    lamp(ctx, x, y, 2 / mpp, GREEN, 0.2, false)
   })
 }
 
 /**
- * Runway lighting (CAT II/III style): white edge lights every 60 m and
- * centerline every 15 m. Ends that fall inside the tile (not where the tile
- * cut the runway) are real thresholds: green threshold and red end bars,
- * touchdown zone barrettes over the first 900 m, and an ALSF-2 approach
- * light system: centerline barrettes every 30 m out to 900 m, a crossbar
- * at 300 m, and red side-row barrettes over the inner 300 m.
+ * Runway lighting, in order of brightness: white edge lights (every 30 m,
+ * the runway's outline, brightest), green threshold and red end bars at
+ * ends inside the tile (not where the tile cut the runway), an approach
+ * light system there (centerline barrettes every 30 m out to 900 m, a
+ * crossbar at 300 m, red side rows over the inner 300 m), and a dim
+ * centerline every 30 m.
  */
 function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
   const half = 23 / mpp
@@ -352,12 +350,18 @@ function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
     p.x + ox * (along / mpp) - oy * (across / mpp),
     p.y + oy * (along / mpp) + ox * (across / mpp)
   ]
-  along(line, 60 / mpp, 30 / mpp, (x, y, dx, dy) => {
+  // Spill from the edge lights across the pavement (the surface's own
+  // color shows: markings, centerline paint), strongest near the edges.
+  if (poolsEnabled) {
+    strokeLine(ctx, line, Math.max(1, 56 / mpp), rgba(RUNWAY, 0.016))
+    strokeLine(ctx, line, Math.max(1, 30 / mpp), rgba(RUNWAY, 0.01))
+  }
+  along(line, 30 / mpp, 15 / mpp, (x, y, dx, dy) => {
     lamp(ctx, x - dy * half, y + dx * half, r, RUNWAY, 1, false)
     lamp(ctx, x + dy * half, y - dx * half, r, RUNWAY, 1, false)
   })
-  along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
-    lamp(ctx, x, y, r * 0.7, RUNWAY, 0.75, false)
+  along(line, 30 / mpp, 15 / mpp, (x, y) => {
+    lamp(ctx, x, y, r * 0.6, RUNWAY, 0.25, false)
   })
   const margin = size * 0.01
   const inside = (p: Point): boolean => p.x > margin && p.y > margin && p.x < size - margin && p.y < size - margin
@@ -372,24 +376,16 @@ function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
     // Unit vector pointing outward from the runway at this end.
     const ox = (end.x - next.x) / length
     const oy = (end.y - next.y) / length
-    // Threshold (green, just outside) and end (red, just inside) bars.
     for (let k = -8; k <= 8; ++k) {
       lamp(ctx, ...at(end, ox, oy, 3, k * 3), r * 0.8, GREEN, 1, false)
-      lamp(ctx, ...at(end, ox, oy, -3, k * 3), r * 0.8, RED, 0.8, false)
+      lamp(ctx, ...at(end, ox, oy, -3, k * 3), r * 0.8, RED, 0.9, false)
     }
-    // Touchdown zone: barrettes of 3 either side of the centerline.
-    for (let d = 60; d <= 900; d += 30) {
-      for (const side of [-1, 1]) {
-        for (let k = 0; k < 3; ++k) lamp(ctx, ...at(end, ox, oy, -d, side * (10 + k * 1.5)), r * 0.7, RUNWAY, 0.85, false)
-      }
-    }
-    // Approach lights.
     for (let d = 30; d <= 900; d += 30) {
       const bar = d === 300 ? 15 : 2
-      for (let k = -bar; k <= bar; ++k) lamp(ctx, ...at(end, ox, oy, d, k * 1.5), r * 0.8, RUNWAY, 1, false)
+      for (let k = -bar; k <= bar; ++k) lamp(ctx, ...at(end, ox, oy, d, k * 1.5), r * 0.8, RUNWAY, 0.85, false)
       if (d <= 270) {
         for (const side of [-1, 1]) {
-          for (let k = 0; k < 3; ++k) lamp(ctx, ...at(end, ox, oy, d, side * (10 + k * 1.5)), r * 0.8, RED, 0.9, false)
+          for (let k = 0; k < 3; ++k) lamp(ctx, ...at(end, ox, oy, d, side * (10 + k * 1.5)), r * 0.8, RED, 0.8, false)
         }
       }
     }
