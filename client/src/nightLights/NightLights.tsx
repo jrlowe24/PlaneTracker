@@ -76,7 +76,7 @@ class NightLightsController {
     effect.setDetail(detail, tiles.origin, tiles.loaded, m.detail.tileDegrees, m.detail.columns)
     if (this.roads != null) {
       this.roads.update(camera)
-      effect.setRoads(this.roads.texture, this.roads.levels.map(l => l.uniforms))
+      effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.levels.map(l => l.uniforms))
     }
 
     this.sinceFlush += delta

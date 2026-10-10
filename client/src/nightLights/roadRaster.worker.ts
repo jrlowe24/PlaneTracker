@@ -27,7 +27,13 @@ export interface RoadRasterRequest {
 
 export interface RoadRasterResponse {
   id: number
+  /** RGB: light pools and areas; A: lamp energy (for distant lamps, via mips). */
   pixels: Uint8ClampedArray | null
+  /**
+   * Lamps, one per pixel cell: R, G = position within the cell (/256),
+   * B = color index (LAMP_COLORS, 0 = none), A = intensity.
+   */
+  lamps: Uint8Array | null
   error?: string
 }
 
@@ -41,6 +47,9 @@ const WHITE: Rgb = [0.92, 0.94, 1.0]
 const GREEN: Rgb = [0.15, 1.0, 0.35]
 const BLUE: Rgb = [0.2, 0.35, 1.0]
 const RED: Rgb = [1.0, 0.08, 0.05]
+
+/** Lamp color palette (index 0 = no lamp); the shader has the same table. */
+export const LAMP_COLORS: readonly Rgb[] = [[0, 0, 0], SODIUM, WARM_LED, NEUTRAL_LED, WHITE, GREEN, BLUE, RED]
 
 interface RoadStyle {
   /** Lamp spacing along the road, meters. */
@@ -114,12 +123,37 @@ function along(line: Point[], spacing: number, phase: number, visit: (x: number,
   }
 }
 
-/** A lamp: bright core with a soft falloff (radius in px). */
-function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, intensity: number): void {
-  const r = Math.max(0.8, radius)
+/** Lamps of the tile being rendered (see RoadRasterResponse.lamps). */
+let lampCells = new Uint8Array(0)
+let lampEnergy = new Float32Array(0)
+let lampSize = 0
+
+/**
+ * A lamp: its exact position goes into the lamp cells (the shader draws it
+ * as a sharp point of the right size at any distance), its energy into the
+ * far-distance channel, and the pool of light it casts on the ground into
+ * the image (`radius` in px).
+ */
+function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, intensity: number, pool = true): void {
+  const cx = Math.floor(x)
+  const cy = Math.floor(y)
+  if (cx >= 0 && cy >= 0 && cx < lampSize && cy < lampSize) {
+    const i = cy * lampSize + cx
+    const value = Math.round(Math.min(1, intensity) * 255)
+    if (value > lampCells[i * 4 + 3]!) {
+      lampCells[i * 4] = Math.min(255, Math.floor((x - cx) * 256))
+      lampCells[i * 4 + 1] = Math.min(255, Math.floor((y - cy) * 256))
+      lampCells[i * 4 + 2] = Math.max(1, LAMP_COLORS.indexOf(color))
+      lampCells[i * 4 + 3] = value
+    }
+    lampEnergy[i] = lampEnergy[i]! + intensity
+  }
+  // Airfield lights are inset fixtures: no pool on the ground.
+  if (!pool) return
+  const r = Math.max(1.5, radius * 2)
   const gradient = ctx.createRadialGradient(x, y, 0, x, y, r)
-  gradient.addColorStop(0, rgba(color, intensity))
-  gradient.addColorStop(0.35, rgba(color, intensity * 0.35))
+  gradient.addColorStop(0, rgba(color, intensity * 0.16))
+  gradient.addColorStop(0.5, rgba(color, intensity * 0.05))
   gradient.addColorStop(1, 'rgb(0,0,0)')
   ctx.fillStyle = gradient
   ctx.fillRect(x - r, y - r, 2 * r, 2 * r)
@@ -140,8 +174,11 @@ function fillRings(ctx: Ctx, rings: Point[][], style: string): void {
   ctx.fill('evenodd')
 }
 
-function render(request: RoadRasterRequest, data: ArrayBuffer): Uint8ClampedArray {
+function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8ClampedArray; lamps: Uint8Array } {
   const { size, metersPerPixel: mpp } = request
+  lampSize = size
+  lampCells = new Uint8Array(size * size * 4)
+  lampEnergy = new Float32Array(size * size)
   const canvas = new OffscreenCanvas(size, size)
   const ctx = canvas.getContext('2d')!
   ctx.fillStyle = 'black'
@@ -224,7 +261,9 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): Uint8ClampedArra
     }
   }
 
-  return ctx.getImageData(0, 0, size, size).data
+  const pixels = ctx.getImageData(0, 0, size, size).data
+  for (let i = 0; i < size * size; ++i) pixels[i * 4 + 3] = Math.min(255, Math.round(lampEnergy[i]! * 255))
+  return { pixels, lamps: lampCells }
 }
 
 /** Lamps on a jittered grid inside polygons (clipped to them). */
@@ -271,12 +310,12 @@ function scatterLamps(
 function drawTaxiway(ctx: Ctx, line: Point[], mpp: number): void {
   const r = 2.5 / mpp
   along(line, 30 / mpp, 15 / mpp, (x, y) => {
-    lamp(ctx, x, y, r, GREEN, 0.4)
+    lamp(ctx, x, y, r, GREEN, 0.4, false)
   })
   const edge = 12 / mpp
   along(line, 60 / mpp, 30 / mpp, (x, y, dx, dy) => {
-    lamp(ctx, x - dy * edge, y + dx * edge, r, BLUE, 0.3)
-    lamp(ctx, x + dy * edge, y - dx * edge, r, BLUE, 0.3)
+    lamp(ctx, x - dy * edge, y + dx * edge, r, BLUE, 0.3, false)
+    lamp(ctx, x + dy * edge, y - dx * edge, r, BLUE, 0.3, false)
   })
 }
 
@@ -290,12 +329,12 @@ function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
   const r = 3 / mpp
   // Edge lights (white, every 60 m).
   along(line, 60 / mpp, 30 / mpp, (x, y, dx, dy) => {
-    lamp(ctx, x - dy * half, y + dx * half, r, WHITE, 0.9)
-    lamp(ctx, x + dy * half, y - dx * half, r, WHITE, 0.9)
+    lamp(ctx, x - dy * half, y + dx * half, r, WHITE, 0.9, false)
+    lamp(ctx, x + dy * half, y - dx * half, r, WHITE, 0.9, false)
   })
   // Centerline (every 15 m, dimmer).
   along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
-    lamp(ctx, x, y, r * 0.7, WHITE, 0.4)
+    lamp(ctx, x, y, r * 0.7, WHITE, 0.4, false)
   })
   const margin = size * 0.01
   const inside = (p: Point): boolean => p.x > margin && p.y > margin && p.x < size - margin && p.y < size - margin
@@ -313,15 +352,15 @@ function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
     // Threshold bar (green, just outside) and end bar (red, just inside).
     for (let k = -8; k <= 8; ++k) {
       const across = (k * 3) / mpp
-      lamp(ctx, end.x + ox * (3 / mpp) - oy * across, end.y + oy * (3 / mpp) + ox * across, r * 0.8, GREEN, 0.9)
-      lamp(ctx, end.x - ox * (3 / mpp) - oy * across, end.y - oy * (3 / mpp) + ox * across, r * 0.8, RED, 0.7)
+      lamp(ctx, end.x + ox * (3 / mpp) - oy * across, end.y + oy * (3 / mpp) + ox * across, r * 0.8, GREEN, 0.9, false)
+      lamp(ctx, end.x - ox * (3 / mpp) - oy * across, end.y - oy * (3 / mpp) + ox * across, r * 0.8, RED, 0.7, false)
     }
     // Approach lights: barrettes every 30 m out to 900 m, crossbar at 300 m.
     for (let d = 30; d <= 900; d += 30) {
       const bar = d === 300 ? 15 : 2
       for (let k = -bar; k <= bar; ++k) {
         const across = (k * 1.5) / mpp
-        lamp(ctx, end.x + ox * (d / mpp) - oy * across, end.y + oy * (d / mpp) + ox * across, r * 0.8, WHITE, 0.8)
+        lamp(ctx, end.x + ox * (d / mpp) - oy * across, end.y + oy * (d / mpp) + ox * across, r * 0.8, WHITE, 0.8, false)
       }
     }
   }
@@ -332,13 +371,14 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
   try {
     const response = await fetch(request.url)
     if (!response.ok) throw new Error(`tile ${response.status}`)
-    const pixels = render(request, await response.arrayBuffer())
-    const message: RoadRasterResponse = { id: request.id, pixels }
-    ;(self as unknown as Worker).postMessage(message, [pixels.buffer])
+    const { pixels, lamps } = render(request, await response.arrayBuffer())
+    const message: RoadRasterResponse = { id: request.id, pixels, lamps }
+    ;(self as unknown as Worker).postMessage(message, [pixels.buffer, lamps.buffer])
   } catch (error) {
     const message: RoadRasterResponse = {
       id: request.id,
       pixels: null,
+      lamps: null,
       error: error instanceof Error ? error.message : String(error)
     }
     ;(self as unknown as Worker).postMessage(message)

@@ -17,7 +17,7 @@ import {
 } from 'three'
 
 import { WINDOW_TILES } from './nightLightTiles'
-import { ROAD_LEVELS, WINDOW, type RoadLevelUniforms } from './roadTiles'
+import { ROAD_LEVELS, ROAD_TILE_SIZE, WINDOW, type RoadLevelUniforms } from './roadTiles'
 
 const drawingBuffer = new Vector2()
 /** Grid for world-fixed procedural detail (windows, districts), meters. */
@@ -60,6 +60,9 @@ uniform vec3 cameraFraction;
 
 // Street / airport light rasters (RoadLightTiles), two windows.
 uniform sampler2DArray roadLights;
+uniform highp sampler2DArray roadLamps;
+uniform float lampGain;
+uniform float roadTexelMeters[${ROAD_LEVELS}];
 uniform float roadEnabled[${ROAD_LEVELS}];
 uniform vec3 roadAnchor[${ROAD_LEVELS}];
 uniform vec3 roadEast[${ROAD_LEVELS}];
@@ -72,6 +75,11 @@ const float CELL = ${CELL.toFixed(1)};
 const float WINDOW_SPACING = 3.2;
 const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
 const float ROAD_WINDOW = ${WINDOW.toFixed(1)};
+const int TILE = ${ROAD_TILE_SIZE};
+// Same table as LAMP_COLORS in roadRaster.worker.ts.
+const vec3 LAMP_COLORS[8] = vec3[8](
+  vec3(0.0), vec3(1.0, 0.42, 0.1), vec3(1.0, 0.68, 0.36), vec3(0.95, 0.85, 0.7),
+  vec3(0.92, 0.94, 1.0), vec3(0.15, 1.0, 0.35), vec3(0.2, 0.35, 1.0), vec3(1.0, 0.08, 0.05));
 
 vec3 offsetFromDepth(const vec2 uv, const float depth) {
   vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -124,29 +132,79 @@ float windows(const vec3 offset, const float footprint) {
   vec3 f = abs(rel - base - 0.5);
   float size = 0.22 + 0.5 * footprint / WINDOW_SPACING;
   float inside = 1.0 - smoothstep(size - 0.06, size, max(f.x, max(f.y, f.z)));
-  return step(r.x, 0.24) * inside * (0.4 + 0.9 * r.y * r.y);
+  return step(r.x, 0.12) * inside * (0.3 + 0.7 * r.y * r.y);
 }
 
-/**
- * Light from one road window, and how much of this pixel it covers (fading
- * out over the outer quarter tile so the next level takes over smoothly).
- */
-vec4 roadLevel(const int level, const vec3 offset) {
-  if (roadEnabled[level] < 0.5) return vec4(0.0);
+/** Window tile coordinates of a camera-relative point (local Mercator). */
+vec2 roadLocal(const int level, const vec3 offset) {
   vec3 d = offset - roadAnchor[level];
   float e = dot(d, roadEast[level]);
   float n = dot(d, roadNorth[level]);
   float t = n * roadCurvature[level];
   vec4 m = roadMercator[level];
-  vec2 local = vec2(m.x + m.z * e * (1.0 + t), m.y - m.w * n * (1.0 + 0.5 * t));
+  return vec2(m.x + m.z * e * (1.0 + t), m.y - m.w * n * (1.0 + 0.5 * t));
+}
+
+float roadLayer(const int level, const ivec2 cell) {
+  if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell, ivec2(int(ROAD_WINDOW))))) return -1.0;
+  return roadLayers[level * int(ROAD_WINDOW * ROAD_WINDOW) + cell.y * int(ROAD_WINDOW) + cell.x];
+}
+
+/**
+ * Lamps near this pixel drawn exactly: each texel cell holds at most one
+ * lamp's precise position, so they're sharp points of a physical size
+ * (~0.7 m, at least ~1.5 px) at any zoom, with a faint glow around them.
+ */
+vec3 nearLamps(const int level, const vec2 local, const float footprint) {
+  float meters = roadTexelMeters[level];
+  vec2 texel = local * float(TILE);
+  ivec2 base = ivec2(floor(texel));
+  float radius = max(0.35, 0.8 * footprint);
+  float glowRadius = radius * 2.5;
+  vec3 sum = vec3(0.0);
+  for (int dy = -1; dy <= 1; ++dy) {
+    for (int dx = -1; dx <= 1; ++dx) {
+      ivec2 c = base + ivec2(dx, dy);
+      ivec2 cell = ivec2(floor(vec2(c) / float(TILE)));
+      float layer = roadLayer(level, cell);
+      if (layer < 0.0) continue;
+      vec4 lamp = texelFetch(roadLamps, ivec3(c - cell * TILE, int(layer)), 0);
+      int index = int(lamp.b * 255.0 + 0.5);
+      if (index == 0) continue;
+      vec2 position = vec2(c) + lamp.rg * (255.0 / 256.0) + 0.5 / 256.0;
+      float d = length(texel - position) * meters;
+      float core = exp(-d * d / (radius * radius));
+      float glow = exp(-d * d / (glowRadius * glowRadius)) * 0.06;
+      sum += LAMP_COLORS[index] * lamp.a * (core + glow);
+    }
+  }
+  return sum;
+}
+
+/**
+ * Light from one road window: pools (rgb), its lamps, and how much of the
+ * pixel it covers (fading out over the outer quarter tile so the next
+ * level takes over smoothly).
+ */
+vec4 roadLevel(const int level, const vec3 offset, const float footprint, out vec3 lamps) {
+  lamps = vec3(0.0);
+  if (roadEnabled[level] < 0.5) return vec4(0.0);
+  vec2 local = roadLocal(level, offset);
   if (any(lessThan(local, vec2(0.0))) || any(greaterThanEqual(local, vec2(ROAD_WINDOW)))) return vec4(0.0);
-  ivec2 cell = ivec2(floor(local));
-  float layer = roadLayers[level * int(ROAD_WINDOW * ROAD_WINDOW) + cell.y * int(ROAD_WINDOW) + cell.x];
+  float layer = roadLayer(level, ivec2(floor(local)));
   if (layer < 0.0) return vec4(0.0);
   // Gradients of the continuous coordinates: no mip spikes at tile seams.
-  vec3 light = textureGrad(roadLights, vec3(fract(local), layer), dFdx(local), dFdy(local)).rgb;
+  vec4 light = textureGrad(roadLights, vec3(fract(local), layer), dFdx(local), dFdy(local));
+  // Far: lamp energy averaged by the mips, in the pools' color (white where
+  // there are none, e.g. runway lights).
+  float poolLuma = max(light.r, max(light.g, light.b));
+  vec3 farColor = poolLuma > 0.004 ? light.rgb / poolLuma : vec3(0.92, 0.94, 1.0);
+  vec3 far = farColor * light.a * 1.5;
+  float meters = roadTexelMeters[level];
+  float nearWeight = smoothstep(meters * 1.2, meters * 0.5, footprint);
+  lamps = nearWeight > 0.0 ? mix(far, nearLamps(level, local, footprint), nearWeight) : far;
   float edge = min(min(local.x, local.y), min(ROAD_WINDOW - local.x, ROAD_WINDOW - local.y));
-  return vec4(light, smoothstep(0.0, 0.25, edge));
+  return vec4(light.rgb, smoothstep(0.0, 0.25, edge));
 }
 
 void main() {
@@ -165,16 +223,20 @@ void main() {
   // OpenStreetMap streets, areas and airports, nearest window first. Kept
   // where the satellite map says the area is actually lit: rural roads and
   // farm tracks stay dark (MSFS lights them like suburbs).
-  vec4 a = roadLevel(0, offset);
-  vec4 b = roadLevel(1, offset);
+  vec3 lampsA;
+  vec3 lampsB;
+  vec4 a = roadLevel(0, offset, footprint, lampsA);
+  vec4 b = roadLevel(1, offset, footprint, lampsB);
   float covered = a.a + (1.0 - a.a) * b.a;
-  vec3 roads = a.rgb * a.a + b.rgb * (1.0 - a.a) * b.a;
+  float wb = (1.0 - a.a) * b.a;
+  vec3 roads = a.rgb * a.a + b.rgb * wb;
+  vec3 lamps = lampsA * a.a + lampsB * wb;
   float urban = smoothstep(0.08, 0.4, value);
   // Street light lands on the ground, not on walls: only on surfaces that
   // face up (normal from depth derivatives).
   vec3 normal = normalize(cross(dFdx(offset), dFdy(offset)));
   float upness = abs(dot(normal, up));
-  vec3 emission = roads * roadGain * urban * smoothstep(0.55, 0.85, upness);
+  vec3 emission = (roads * roadGain + lamps * lampGain) * urban * smoothstep(0.55, 0.85, upness);
 
   // Lit windows on facades up close.
   float lit = smoothstep(0.28, 0.85, value);
@@ -240,6 +302,9 @@ export class NightLightsPass extends Pass {
         cameraCell: new Uniform(new Int32Array(3)),
         cameraFraction: new Uniform(new Vector3()),
         roadLights: new Uniform(null),
+        roadLamps: new Uniform(null),
+        lampGain: new Uniform(0.12),
+        roadTexelMeters: new Uniform(new Float32Array(ROAD_LEVELS)),
         roadEnabled: new Uniform(new Float32Array(ROAD_LEVELS)),
         roadAnchor: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector3())),
         roadEast: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector3())),
@@ -281,8 +346,9 @@ export class NightLightsPass extends Pass {
     this.u<number>('tileDegrees').value = tileDegrees
   }
 
-  setRoads(texture: DataArrayTexture, levels: readonly RoadLevelUniforms[]): void {
+  setRoads(texture: DataArrayTexture, lamps: DataArrayTexture, levels: readonly RoadLevelUniforms[]): void {
     this.u<DataArrayTexture>('roadLights').value = texture
+    this.u<DataArrayTexture>('roadLamps').value = lamps
     const enabled = this.u<Float32Array>('roadEnabled').value
     const layers = this.u<Float32Array>('roadLayers').value
     levels.forEach((level, i) => {
@@ -292,6 +358,7 @@ export class NightLightsPass extends Pass {
       this.u<Vector3[]>('roadNorth').value[i]!.copy(level.north)
       this.u<Vector4[]>('roadMercator').value[i]!.set(...level.mercator)
       this.u<Float32Array>('roadCurvature').value[i] = level.curvature
+      this.u<Float32Array>('roadTexelMeters').value[i] = level.metersPerTexel
       layers.set(level.layers, i * WINDOW * WINDOW)
     })
   }

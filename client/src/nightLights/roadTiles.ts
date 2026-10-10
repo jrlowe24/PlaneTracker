@@ -3,6 +3,7 @@ import {
   DataArrayTexture,
   LinearFilter,
   LinearMipmapLinearFilter,
+  NearestFilter,
   NoColorSpace,
   RGBAFormat,
   UnsignedByteType,
@@ -26,7 +27,8 @@ import type { RoadRasterRequest, RoadRasterResponse } from './roadRaster.worker'
  */
 
 export const WINDOW = 4
-const SIZE = 512
+export const ROAD_TILE_SIZE = 512
+const SIZE = ROAD_TILE_SIZE
 const LEVELS = [
   // z, max camera altitude (m) at which the level is used, how far ahead
   // of the camera the window centers (m).
@@ -70,6 +72,8 @@ export interface RoadLevelUniforms {
   /** Anchor in window tile coordinates; X / Y meters scale; tanφ / M. */
   mercator: [x0: number, y0: number, kx: number, ky: number]
   curvature: number
+  /** Ground meters per texel at the anchor. */
+  metersPerTexel: number
   /** Texture layer per window cell (row-major), −1 while not loaded. */
   layers: Float32Array
 }
@@ -87,6 +91,7 @@ class Level {
     north: new Vector3(),
     mercator: [0, 0, 0, 0],
     curvature: 0,
+    metersPerTexel: 1,
     layers: new Float32Array(WINDOW * WINDOW).fill(-1)
   }
   /** Window origin tile. */
@@ -128,6 +133,7 @@ class Level {
     const sec = 1 / Math.cos(lat)
     this.uniforms.mercator = [WINDOW / 2, WINDOW / 2, (s * sec) / nRadius, (s * sec) / m]
     this.uniforms.curvature = Math.tan(lat) / m
+    this.uniforms.metersPerTexel = ((2 * Math.PI * WGS84_A) / n) * Math.cos(lat) / SIZE
     return true
   }
 
@@ -167,6 +173,8 @@ const ground = new Vector3()
 
 export class RoadLightTiles {
   readonly texture: DataArrayTexture
+  /** Exact lamp positions per texel cell (nearest filtering, no mips). */
+  readonly lamps: DataArrayTexture
   readonly levels = LEVELS.map((l, i) => new Level(i, l.z))
   /** False until OpenFreeMap's tile URL is known; stays false if it fails. */
   available = false
@@ -177,9 +185,20 @@ export class RoadLightTiles {
   private readonly pending = new Map<number, { level: Level; slot: number; key: string }>()
   private readonly failed = new Map<string, number>()
   private readonly data: Uint8Array
+  private readonly lampData: Uint8Array
 
   constructor() {
     this.data = new Uint8Array(SIZE * SIZE * 4 * WINDOW * WINDOW * LEVELS.length)
+    this.lampData = new Uint8Array(this.data.length)
+    const lamps = new DataArrayTexture(this.lampData, SIZE, SIZE, WINDOW * WINDOW * LEVELS.length)
+    lamps.format = RGBAFormat
+    lamps.type = UnsignedByteType
+    lamps.colorSpace = NoColorSpace
+    lamps.minFilter = NearestFilter
+    lamps.magFilter = NearestFilter
+    lamps.generateMipmaps = false
+    lamps.needsUpdate = true
+    this.lamps = lamps
     const texture = new DataArrayTexture(this.data, SIZE, SIZE, WINDOW * WINDOW * LEVELS.length)
     texture.format = RGBAFormat
     texture.type = UnsignedByteType
@@ -288,7 +307,7 @@ export class RoadLightTiles {
     this.pending.delete(response.id)
     const { level, slot, key } = entry
     const s = level.slots[slot]!
-    if (response.pixels == null) {
+    if (response.pixels == null || response.lamps == null) {
       // Retry later; keep the slot empty.
       this.failed.set(key, performance.now() + 30_000)
       if (s.key === key) s.key = ''
@@ -299,11 +318,15 @@ export class RoadLightTiles {
     this.data.set(response.pixels, layer * SIZE * SIZE * 4)
     this.texture.addLayerUpdate(layer)
     this.texture.needsUpdate = true
+    this.lampData.set(response.lamps, layer * SIZE * SIZE * 4)
+    this.lamps.addLayerUpdate(layer)
+    this.lamps.needsUpdate = true
     s.loaded = true
   }
 
   dispose(): void {
     for (const worker of this.workers) worker.terminate()
     this.texture.dispose()
+    this.lamps.dispose()
   }
 }
