@@ -178,6 +178,7 @@ export const VolumetricClouds: FC = () => {
       (effect as CloudsPassInternals | null)?.cloudsPass?.currentRenderTarget?.depthVelocity ?? null
     if (effect == null) {
       cloudDepth.baseAltitude = 0
+      cloudDepth.slabs = []
       return
     }
     const altitude = ecefToGeodetic(camera.position.x, camera.position.y, camera.position.z).height
@@ -244,6 +245,20 @@ export const VolumetricClouds: FC = () => {
     // (night lights' cloud underglow).
     const base = [0, 1].find(i => cover[i]! > 0.02 && (layers[i]?.height ?? 0) > 0)
     cloudDepth.baseAltitude = base == null ? 0 : heights.current[base]!.altitude
+    cloudDepth.slabs = [0, 1, 2]
+      .filter(i => cover[i]! > 0.02 && (layers[i]?.height ?? 0) > 0)
+      .map(i => ({
+        bottom: heights.current[i]!.altitude,
+        top: heights.current[i]!.altitude + heights.current[i]!.height,
+        opacity: cover[i]!,
+        layer: i
+      }))
+    cloudDepth.coverAt = live
+      ? point => {
+          const c = regional.coverAtPoint(point)
+          return c == null ? null : [c.low, c.mid, c.high]
+        }
+      : null
     // Static shape parameters are re-applied every frame: <Clouds> resets
     // its layers to takram's defaults after mount.
     const shadows = QUALITY_PRESETS[qualityStore.get().level].cloudShadows

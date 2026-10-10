@@ -7,6 +7,9 @@ import {
   type PerspectiveCamera
 } from 'three'
 
+import { ecefToGeodetic } from '@windowseat/shared'
+
+import { cloudTransmittance } from '../clouds/cloudDepth'
 import { flightConnection } from '../data/flightConnection'
 import { nightState } from '../scene/nightLighting'
 import { AIRFRAMES } from './airframes'
@@ -94,6 +97,12 @@ export class NavLights {
     // Lights stand out most at dusk and night.
     const visibility = (0.12 + 0.88 * nightState.night) / Math.max(exposure, 1e-3)
 
+    // Halos are drawn over the finished image (NavGlowEffect, which has no
+    // texture unit left for the clouds): dim them by the cloud between
+    // camera and aircraft here instead.
+    const earthRadius = origin.length() - ecefToGeodetic(origin.x, origin.y, origin.z).height
+    let glowScale = 1
+
     let n = 0
     const put = (
       x: number,
@@ -137,9 +146,9 @@ export class NavLights {
         g.y = y
         g.z = z
         g.distance = distance
-        g.r = color[0] * k
-        g.g = color[1] * k
-        g.b = color[2] * k
+        g.r = color[0] * k * glowScale
+        g.g = color[1] * k * glowScale
+        g.b = color[2] * k * glowScale
         ++glowState.count
       }
     }
@@ -153,6 +162,10 @@ export class NavLights {
       const dz = pose.position.z - origin.z
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
       if (distance > MAX_DISTANCE) continue
+      glowScale =
+        distance < GLOW_MAX_DISTANCE
+          ? cloudTransmittance(pose.position, pose.position.length() - earthRadius, origin.length() - earthRadius)
+          : 1
       // The camera sits inside the followed aircraft in window view; its own
       // wingtip light is still visible, which is right.
       const p = AIRFRAMES[aircraft.cls]
