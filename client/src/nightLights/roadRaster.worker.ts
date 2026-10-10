@@ -312,6 +312,36 @@ async function render(
     }
   }
 
+  // Nothing on roofs: lamps are drawn on any upward surface at their place,
+  // so lamps (and pools) inside building footprints lit roofs. Clear them
+  // where the tile has buildings (zoom 14 only; farther out roofs are a
+  // pixel or less).
+  const buildings = tile.layers.building
+  if (buildings != null && buildings.length > 0) {
+    const mask = new OffscreenCanvas(size, size)
+    const mctx = mask.getContext('2d')!
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.fillStyle = 'black'
+    mctx.fillStyle = 'white'
+    for (let i = 0; i < buildings.length; ++i) {
+      const feature = buildings.feature(i)
+      if (feature.type !== 3) continue
+      const rings = geometry(feature)
+      for (const target of [ctx, mctx]) {
+        target.beginPath()
+        for (const ring of rings) ring.forEach((p, k) => (k === 0 ? target.moveTo(p.x, p.y) : target.lineTo(p.x, p.y)))
+        target.fill('evenodd')
+      }
+    }
+    const inside = mctx.getImageData(0, 0, size, size).data
+    for (let i = 0; i < size * size; ++i) {
+      if (inside[i * 4]! < 128) continue
+      lampCells[i * 4 + 3] = 0
+      lampCells[i * 4 + 2] = 0
+      lampEnergy[i] = 0
+    }
+  }
+
   const pixels = ctx.getImageData(0, 0, size, size).data
   for (let i = 0; i < size * size; ++i) pixels[i * 4 + 3] = Math.min(255, Math.round(lampEnergy[i]! * 255))
   return { pixels, lamps: lampCells, runways: index?.runways ?? [] }
