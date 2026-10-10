@@ -23,6 +23,8 @@ export interface RoadRasterRequest {
   size: number
   /** Ground meters per pixel at the tile's latitude. */
   metersPerPixel: number
+  /** Tile URL template ({z}/{x}/{y}), for the runway index (see runwayIndex). */
+  template: string
 }
 
 export interface RoadRasterResponse {
@@ -191,7 +193,7 @@ function fillRings(ctx: Ctx, rings: Point[][], style: string): void {
   ctx.fill('evenodd')
 }
 
-function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8ClampedArray; lamps: Uint8Array } {
+async function render(request: RoadRasterRequest, data: ArrayBuffer): Promise<{ pixels: Uint8ClampedArray; lamps: Uint8Array }> {
   const { size, metersPerPixel: mpp } = request
   lampSize = size
   poolsEnabled = mpp < 8
@@ -265,11 +267,23 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
   // Airports.
   const aeroway = tile.layers.aeroway
   const runways: Point[][] = []
+  let lit = false
   for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
     const feature = aeroway!.feature(i)
-    if (feature.type !== 2 || String(feature.properties.class) !== 'runway') continue
+    const cls = String(feature.properties.class)
+    if (feature.type === 2 && (cls === 'runway' || cls === 'taxiway')) lit = true
+    if (feature.type !== 2 || cls !== 'runway') continue
     for (const line of geometry(feature)) if (line.length >= 2) runways.push(line)
   }
+  // How each runway is lit depends on its size (whole runway, from a
+  // coarser tile: this one may show only part of it).
+  const index = lit ? await runwayIndex(request).catch(() => null) : null
+  const toIndex = (p: Point): Point => {
+    const k = 2 ** (request.z - INDEX_ZOOM)
+    return { x: (request.x + p.x / size) / k, y: (request.y + p.y / size) / k }
+  }
+  const lightingAt = (p: Point, near: number): RunwayLighting =>
+    index == null ? 'instrument' : (index.lightingNear(toIndex(p), near) ?? 'basic')
   for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
     const feature = aeroway!.feature(i)
     const cls = String(feature.properties.class)
@@ -283,10 +297,12 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
     if (feature.type !== 2) continue
     for (const line of geometry(feature)) {
       if (line.length < 2) continue
-      if (cls === 'taxiway') drawTaxiway(ctx, line, mpp)
+      if (cls === 'taxiway') drawTaxiway(ctx, line, mpp, lightingAt(line[Math.floor(line.length / 2)]!, 2000))
     }
   }
-  for (const line of runways) drawRunway(ctx, line, runways, mpp, size)
+  for (const line of runways) {
+    drawRunway(ctx, line, runways, mpp, size, lightingAt(midpoint(line), 100))
+  }
 
   const pixels = ctx.getImageData(0, 0, size, size).data
   for (let i = 0; i < size * size; ++i) pixels[i * 4 + 3] = Math.min(255, Math.round(lampEnergy[i]! * 255))
@@ -335,11 +351,15 @@ function scatterLamps(
 }
 
 /**
- * Taxiways: a dim green centerline. Taxiways with centerline lights don't
- * have edge lights, and OpenStreetMap maps many parallel taxiways and
- * taxilanes: blue edges on every one turned the field into a mass of dots.
+ * Taxiways: a dim green centerline at airports with instrument runways.
+ * Taxiways with centerline lights don't have edge lights, and
+ * OpenStreetMap maps many parallel taxiways and taxilanes: blue edges on
+ * every one turned the field into a mass of dots. Small fields: none (at
+ * most their parallel taxiway has blue edge lights, but the tiles don't
+ * tell it from the unlit taxilanes between hangar rows).
  */
-function drawTaxiway(ctx: Ctx, line: Point[], mpp: number): void {
+function drawTaxiway(ctx: Ctx, line: Point[], mpp: number, lighting: RunwayLighting): void {
+  if (lighting === 'unlit' || lighting === 'basic') return
   along(line, 30 / mpp, 15 / mpp, (x, y) => {
     lamp(ctx, x, y, 2 / mpp, GREEN, 0.2, false)
   })
@@ -360,19 +380,40 @@ function distanceToLine(p: Point, line: Point[]): number {
 }
 
 /**
- * Runway lighting, in order of brightness: white edge lights (every 30 m,
- * the runway's outline, brightest), green threshold and red end bars at the runway's real ends, an
- * approach light system there (centerline barrettes every 30 m out to
- * 900 m, a crossbar at 300 m, red side rows over the inner 270 m), and a
- * dim centerline every 15 m.
+ * Runway lighting by runway class (see runwayLighting), in order of
+ * brightness: white edge lights (the runway's outline, brightest), green
+ * threshold and red end bars at the runway's real ends, an approach light
+ * system there, and a dim centerline.
+ *
+ * - precision (airline runways): edge lights every 30 m, full-width
+ *   threshold bars, ALSF-2 approach lights (centerline barrettes every
+ *   30 m out to 900 m, a crossbar at 300 m, red side rows over the inner
+ *   270 m), centerline lights every 15 m;
+ * - instrument (regional): edge lights every 60 m, full-width threshold
+ *   bars, MALSR (barrettes every 60 m out to 420 m, a crossbar at 300 m,
+ *   single sequenced flashers out to 720 m), no centerline lights;
+ * - basic (general aviation): dimmer edge lights every 60 m on a narrower
+ *   runway, a few threshold lights at each corner, no approach lights;
+ * - unlit (short strips): nothing.
  *
  * OpenStreetMap often splits a runway into several ways (at displaced
  * thresholds, crossings, edits): an end of a way is a real end only if it
  * is inside the tile (not where the tile cut the runway) and no other
  * runway way continues from it. Approach lights stop at other runways.
  */
-function drawRunway(ctx: Ctx, line: Point[], runways: Point[][], mpp: number, size: number): void {
-  const half = 23 / mpp
+function drawRunway(
+  ctx: Ctx,
+  line: Point[],
+  runways: Point[][],
+  mpp: number,
+  size: number,
+  lighting: RunwayLighting
+): void {
+  if (lighting === 'unlit') return
+  const precision = lighting === 'precision'
+  const basic = lighting === 'basic'
+  const halfWidth = basic ? 12 : 23
+  const half = halfWidth / mpp
   const r = 3 / mpp
   const at = (p: Point, ox: number, oy: number, along: number, across: number): Point => ({
     x: p.x + ox * (along / mpp) - oy * (across / mpp),
@@ -380,16 +421,20 @@ function drawRunway(ctx: Ctx, line: Point[], runways: Point[][], mpp: number, si
   })
   const others = runways.filter(other => other !== line)
   const onRunway = (p: Point, distance: number): boolean => runways.some(other => distanceToLine(p, other) < distance)
-  along(line, 30 / mpp, 15 / mpp, (x, y, dx, dy) => {
-    // Low fixtures aimed along the runway: they light no pavement, so the
-    // runway between the rows stays dark, as it is.
-    lamp(ctx, x - dy * half, y + dx * half, r, RUNWAY, 1, false)
-    lamp(ctx, x + dy * half, y - dx * half, r, RUNWAY, 1, false)
+  // Low fixtures aimed along the runway: they light no pavement, so the
+  // runway between the rows stays dark, as it is.
+  const edgeSpacing = precision ? 30 : 60
+  const edge = basic ? 0.6 : 1
+  along(line, edgeSpacing / mpp, edgeSpacing / 2 / mpp, (x, y, dx, dy) => {
+    lamp(ctx, x - dy * half, y + dx * half, r, RUNWAY, edge, false)
+    lamp(ctx, x + dy * half, y - dx * half, r, RUNWAY, edge, false)
   })
-  // Centerline at twice the edge lights' density.
-  along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
-    lamp(ctx, x, y, r * 0.6, RUNWAY, 0.25, false)
-  })
+  if (precision) {
+    // Centerline at twice the edge lights' density.
+    along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
+      lamp(ctx, x, y, r * 0.6, RUNWAY, 0.25, false)
+    })
+  }
   const margin = size * 0.01
   const inside = (p: Point): boolean => p.x > margin && p.y > margin && p.x < size - margin && p.y < size - margin
   const ends: Array<[Point, Point]> = [
@@ -404,22 +449,31 @@ function drawRunway(ctx: Ctx, line: Point[], runways: Point[][], mpp: number, si
     // Unit vector pointing outward from the runway at this end.
     const ox = (end.x - next.x) / length
     const oy = (end.y - next.y) / length
-    for (let k = -7; k <= 7; ++k) {
-      const green = at(end, ox, oy, 2, k * 3)
-      const red = at(end, ox, oy, -2, k * 3 + 1.5)
-      lamp(ctx, green.x, green.y, r * 0.8, GREEN, 1, false)
-      lamp(ctx, red.x, red.y, r * 0.8, RED, 0.6, false)
+    const threshold = (across: number): void => {
+      const green = at(end, ox, oy, 2, across)
+      const red = at(end, ox, oy, -2, across + 1.5)
+      lamp(ctx, green.x, green.y, r * 0.8, GREEN, basic ? 0.7 : 1, false)
+      lamp(ctx, red.x, red.y, r * 0.8, RED, basic ? 0.45 : 0.6, false)
     }
-    for (let d = 60; d <= 900; d += 30) {
+    if (basic) {
+      // A few lights at each corner, leaving the middle dark.
+      for (const side of [-1, 1]) for (let k = 0; k < 3; ++k) threshold(side * (halfWidth - 1.5 - k * 3))
+      continue
+    }
+    for (let k = -7; k <= 7; ++k) threshold(k * 3)
+    const outTo = precision ? 900 : 720
+    const step = precision ? 30 : 60
+    for (let d = 60; d <= outTo; d += step) {
       const center = at(end, ox, oy, d, 0)
       // Off the end of this runway only: not across another one.
       if (onRunway(center, 35 / mpp)) break
-      const bar = d === 300 ? 7 : 1
+      // MALSR: single sequenced flashers beyond its barrettes.
+      const bar = d === 300 ? 7 : !precision && d > 420 ? 0 : 1
       for (let k = -bar; k <= bar; ++k) {
         const p = at(end, ox, oy, d, k * 2.5)
         lamp(ctx, p.x, p.y, r * 0.8, RUNWAY, 0.85, false)
       }
-      if (d <= 270) {
+      if (precision && d <= 270) {
         for (const side of [-1, 1]) {
           for (let k = 0; k < 2; ++k) {
             const p = at(end, ox, oy, d, side * (11 + k * 3))
@@ -431,12 +485,196 @@ function drawRunway(ctx: Ctx, line: Point[], runways: Point[][], mpp: number, si
   }
 }
 
+function midpoint(line: Point[]): Point {
+  const a = line[0]!
+  const b = line[line.length - 1]!
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+/**
+ * How a runway is lit. OpenStreetMap has no lighting data (and the tiles
+ * don't say how big an airport is), so it goes by runway length, which
+ * separates them well: short strips are mostly unlit, general aviation
+ * runways (to ~1.5 km) have edge lights only, regional runways a simpler
+ * approach light system, airline runways (2.4 km and longer) everything.
+ */
+type RunwayLighting = 'unlit' | 'basic' | 'instrument' | 'precision'
+
+function runwayLighting(length: number): RunwayLighting {
+  if (length >= 2400) return 'precision'
+  if (length >= 1500) return 'instrument'
+  if (length >= 700) return 'basic'
+  return 'unlit'
+}
+
+/**
+ * Whole runways, measured from a coarse tile (a z14 tile, ~1.7 km across at
+ * mid latitudes, shows only part of a long runway). z11: z10 tiles drop
+ * pieces of some runways (most of Boeing Field's main one). Coordinates are in
+ * tile units at INDEX_ZOOM. Runways that the coarse tile cuts at its edge
+ * continue in the neighbouring tile, which is loaded too.
+ */
+const INDEX_ZOOM = 11
+
+interface RunwayIndex {
+  /** The lighting of the runway nearest `p` within `near` meters, or null. */
+  lightingNear(p: Point, near: number): RunwayLighting | null
+}
+
+interface Segment {
+  a: Point
+  b: Point
+}
+
+const indexTiles = new Map<string, Promise<Segment[]>>()
+const indexes = new Map<string, Promise<RunwayIndex>>()
+
+/** Runway segments of a coarse tile, clipped to its exact bounds. */
+function indexTile(template: string, x: number, y: number): Promise<Segment[]> {
+  const key = `${x}/${y}`
+  let tile = indexTiles.get(key)
+  if (tile == null) {
+    const url = template.replace('{z}', String(INDEX_ZOOM)).replace('{x}', String(x)).replace('{y}', String(y))
+    tile = fetch(url)
+      .then(response => {
+        if (!response.ok) throw new Error(`tile ${response.status}`)
+        return response.arrayBuffer()
+      })
+      .then(data => {
+        const layer = new VectorTile(new Pbf(new Uint8Array(data))).layers.aeroway
+        const segments: Segment[] = []
+        for (let i = 0; i < (layer?.length ?? 0); ++i) {
+          const feature = layer!.feature(i)
+          if (feature.type !== 2 || String(feature.properties.class) !== 'runway') continue
+          const k = 1 / feature.extent
+          for (const line of feature.loadGeometry()) {
+            for (let j = 1; j < line.length; ++j) {
+              const a = { x: x + line[j - 1]!.x * k, y: y + line[j - 1]!.y * k }
+              const b = { x: x + line[j]!.x * k, y: y + line[j]!.y * k }
+              const clipped = clipSegment(a, b, x, y, x + 1, y + 1)
+              if (clipped != null) segments.push(clipped)
+            }
+          }
+        }
+        return segments
+      })
+    tile.catch(() => indexTiles.delete(key))
+    if (indexTiles.size > 24) indexTiles.delete(indexTiles.keys().next().value!)
+    indexTiles.set(key, tile)
+  }
+  return tile
+}
+
+/** Liang–Barsky: the part of segment ab inside the box, or null. */
+function clipSegment(a: Point, b: Point, x0: number, y0: number, x1: number, y1: number): Segment | null {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  let t0 = 0
+  let t1 = 1
+  for (const [p, q] of [
+    [-dx, a.x - x0],
+    [dx, x1 - a.x],
+    [-dy, a.y - y0],
+    [dy, y1 - a.y]
+  ] as const) {
+    if (p === 0) {
+      if (q < 0) return null
+      continue
+    }
+    const t = q / p
+    if (p < 0) t0 = Math.max(t0, t)
+    else t1 = Math.min(t1, t)
+    if (t0 > t1) return null
+  }
+  return { a: { x: a.x + dx * t0, y: a.y + dy * t0 }, b: { x: a.x + dx * t1, y: a.y + dy * t1 } }
+}
+
+function runwayIndex(request: RoadRasterRequest): Promise<RunwayIndex> {
+  const k = 2 ** Math.max(0, request.z - INDEX_ZOOM)
+  const x = Math.floor(request.x / k)
+  const y = Math.floor(request.y / k)
+  const key = `${x}/${y}`
+  let index = indexes.get(key)
+  if (index == null) {
+    index = buildIndex(request.template, x, y)
+    index.catch(() => indexes.delete(key))
+    if (indexes.size > 16) indexes.delete(indexes.keys().next().value!)
+    indexes.set(key, index)
+  }
+  return index
+}
+
+async function buildIndex(template: string, x: number, y: number): Promise<RunwayIndex> {
+  const segments = [...(await indexTile(template, x, y))]
+  // Runways the tile edge cuts: add the neighbour's side of them.
+  const eps = 1e-9
+  const sides = new Set<string>()
+  for (const { a, b } of segments) {
+    for (const p of [a, b]) {
+      if (p.x < x + eps) sides.add(`${x - 1}/${y}`)
+      if (p.x > x + 1 - eps) sides.add(`${x + 1}/${y}`)
+      if (p.y < y + eps) sides.add(`${x}/${y - 1}`)
+      if (p.y > y + 1 - eps) sides.add(`${x}/${y + 1}`)
+    }
+  }
+  const n = 2 ** INDEX_ZOOM
+  for (const side of sides) {
+    // (Runways across the antimeridian or the poles: not worth it.)
+    const [sx, sy] = side.split('/').map(Number) as [number, number]
+    if (sx < 0 || sy < 0 || sx >= n || sy >= n) continue
+    segments.push(...(await indexTile(template, sx, sy).catch(() => [])))
+  }
+
+  // Meters per tile unit at this latitude.
+  const lat = Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 0.5)) / n)))
+  const meters = ((2 * Math.PI * 6378137) / n) * Math.cos(lat)
+
+  // Pieces of one runway: end to end (within 60 m) and in line. Crossing
+  // runways meet at an angle and stay separate.
+  const parent = segments.map((_, i) => i)
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)))
+  const join = 60 / meters
+  for (let i = 0; i < segments.length; ++i) {
+    for (let j = i + 1; j < segments.length; ++j) {
+      const s = segments[i]!
+      const t = segments[j]!
+      const close = [s.a, s.b].some(p => [t.a, t.b].some(q => Math.hypot(p.x - q.x, p.y - q.y) < join))
+      if (!close) continue
+      const sl = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y)
+      const tl = Math.hypot(t.b.x - t.a.x, t.b.y - t.a.y)
+      if (sl === 0 || tl === 0) continue
+      const cos = ((s.b.x - s.a.x) * (t.b.x - t.a.x) + (s.b.y - s.a.y) * (t.b.y - t.a.y)) / (sl * tl)
+      if (Math.abs(cos) > 0.98) parent[find(i)] = find(j)
+    }
+  }
+  const lengths = new Map<number, number>()
+  segments.forEach((s, i) => {
+    const root = find(i)
+    lengths.set(root, (lengths.get(root) ?? 0) + Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) * meters)
+  })
+
+  return {
+    lightingNear(p: Point, near: number): RunwayLighting | null {
+      let best = near / meters
+      let found = -1
+      segments.forEach((s, i) => {
+        const d = distanceToLine(p, [s.a, s.b])
+        if (d < best) {
+          best = d
+          found = i
+        }
+      })
+      return found < 0 ? null : runwayLighting(lengths.get(find(found)) ?? 0)
+    }
+  }
+}
+
 self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
   const request = event.data
   try {
     const response = await fetch(request.url)
     if (!response.ok) throw new Error(`tile ${response.status}`)
-    const { pixels, lamps } = render(request, await response.arrayBuffer())
+    const { pixels, lamps } = await render(request, await response.arrayBuffer())
     const message: RoadRasterResponse = { id: request.id, pixels, lamps }
     ;(self as unknown as Worker).postMessage(message, [pixels.buffer, lamps.buffer])
   } catch (error) {

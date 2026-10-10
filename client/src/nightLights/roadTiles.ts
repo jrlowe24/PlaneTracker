@@ -302,7 +302,8 @@ export class RoadLightTiles {
         x,
         y,
         size: SIZE,
-        metersPerPixel: ((2 * Math.PI * WGS84_A) / 2 ** level.z) * Math.cos((lat * Math.PI) / 180) / SIZE
+        metersPerPixel: ((2 * Math.PI * WGS84_A) / 2 ** level.z) * Math.cos((lat * Math.PI) / 180) / SIZE,
+        template: this.template
       }
       this.pending.set(request.id, { level, slot, key })
       this.workers[this.nextWorker++ % this.workers.length]!.postMessage(request)

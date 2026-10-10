@@ -308,6 +308,9 @@ void main() {
 }
 `
 
+/** Glow around night lights (blurred light added to them). */
+const NIGHT_GLOW = 0.45
+
 /**
  * Night light emission (linear RGB) into its own render target, read by
  * AerialPerspective (patched), which adds it to terrain radiance before
@@ -319,10 +322,40 @@ void main() {
  * - NASA Black Marble beyond them, and as the "is it lit" mask.
  */
 export class NightLightsPass extends Pass {
+  /** The lights alone (sharp). */
+  private readonly lights = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })
+  /** The lights plus their glow: what AerialPerspective (patched) adds. */
   readonly target = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })
-  /** The lights blurred: their glow (the aerial perspective patch in PostEffects adds it). */
+  /**
+   * The lights blurred: their glow, like the halo lights form in the eye
+   * and through the air. Only the lights glow: a bloom over the whole scene
+   * buffer washed everything white (stray huge values in it). Combined
+   * with the lights here so AerialPerspective reads one texture: its merged
+   * effect pass is at the 16 texture unit limit (black screen beyond it).
+   */
   private readonly blur = new MipmapBlurPass()
   private readonly material: ShaderMaterial
+  private readonly combine = new ShaderMaterial({
+    glslVersion: GLSL3,
+    vertexShader,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D lightsBuffer;
+      uniform sampler2D glowBuffer;
+      uniform float glowStrength;
+      in vec2 vUv;
+      out vec4 outColor;
+      void main() {
+        outColor = vec4(texture(lightsBuffer, vUv).rgb + texture(glowBuffer, vUv).rgb * glowStrength, 1.0);
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      lightsBuffer: new Uniform(null),
+      glowBuffer: new Uniform(null),
+      glowStrength: new Uniform(NIGHT_GLOW)
+    }
+  })
 
   constructor(private viewCamera: Camera) {
     super('NightLightsPass')
@@ -368,10 +401,6 @@ export class NightLightsPass extends Pass {
     this.fullscreenMaterial = this.material
     this.blur.levels = 7
     this.blur.radius = 0.75
-  }
-
-  get glowTexture(): Texture {
-    return this.blur.texture
   }
 
   private u<T>(name: string): { value: T } {
@@ -432,6 +461,7 @@ export class NightLightsPass extends Pass {
   }
 
   override setSize(width: number, height: number): void {
+    this.lights.setSize(width, height)
     this.target.setSize(width, height)
     this.blur.setSize(width, height)
     this.u<Vector2>('texelSize').value.set(1 / width, 1 / height)
@@ -449,15 +479,24 @@ export class NightLightsPass extends Pass {
     const position = this.u<Vector3>('cameraPositionECEF').value
     position.setFromMatrixPosition(camera.matrixWorld)
     this.u<Texture | null>('inputBuffer').value = inputBuffer?.texture ?? null
-    renderer.setRenderTarget(this.target)
+    renderer.setRenderTarget(this.lights)
+    this.fullscreenMaterial = this.material
     renderer.render(this.scene, this.camera)
-    this.blur.render(renderer, this.target, null)
+    this.blur.render(renderer, this.lights, null)
+    this.combine.uniforms.lightsBuffer!.value = this.lights.texture
+    this.combine.uniforms.glowBuffer!.value = this.blur.texture
+    renderer.setRenderTarget(this.target)
+    this.fullscreenMaterial = this.combine
+    renderer.render(this.scene, this.camera)
+    this.fullscreenMaterial = this.material
   }
 
   override dispose(): void {
     super.dispose()
+    this.lights.dispose()
     this.target.dispose()
     this.blur.dispose()
+    this.combine.dispose()
     this.material.dispose()
   }
 }

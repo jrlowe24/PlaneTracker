@@ -11,17 +11,15 @@ export const nightLightsStore = createStore<{ credit: string | null; streets: bo
 })
 
 /**
- * The night light emission buffer AerialPerspective adds to the terrain,
- * and whether it's current (the pass is skipped by day).
+ * The night light emission buffer (lights and their glow) AerialPerspective
+ * adds to the terrain, and whether it's current (the pass is skipped by day).
  */
 export const nightEmission: {
   texture: Texture | null
-  glow: Texture | null
   enabled: boolean
   roads: RoadLightTiles | null
 } = {
   texture: null,
-  glow: null,
   enabled: false,
   roads: null
 }

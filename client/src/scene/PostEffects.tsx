@@ -106,23 +106,11 @@ bool cloudInFrontOfAircraft(const vec2 uv) {
  * leaves bright lamps behind thick cloud as speckle, because the
  * half-resolution, temporally reconstructed alpha is noisy and a lamp is
  * many times brighter than the cloud. Thick cloud diffuses a point light
- * away entirely, so attenuate further (transmittance cubed overall);
- * the glow puts back the diffuse light the cloud scatters.
- *
- * The glow (blurred night lights, a halo like lights form in the eye and
- * through the air) is added here rather than in its own effect: here the
- * clouds in front are known, and a separate sampler for them went over
- * the merged pass's 16 texture units.
+ * away entirely, so attenuate further (transmittance cubed overall).
+ * The buffer holds the lights' glow too (NightLightsPass), which reaches
+ * over the sky near lit terrain.
  */
 const EMISSION_THROUGH_CLOUDS = /* glsl */ `
-vec3 nightGlowAt(const vec2 uv) {
-  return nightGlowStrength > 0.0 ? texture(nightGlowBuffer, uv).rgb * nightGlowStrength : vec3(0.0);
-}
-
-// Share of the glow that cloud in front scatters toward the camera: lights
-// below thick cloud become a soft patch of lit cloud.
-#define NIGHT_GLOW_CLOUD_SCATTER 0.3
-
 #ifdef HAS_OVERLAY
 float nightEmissionThroughClouds(const vec4 overlay) {
   float t = clamp(1.0 - overlay.a, 0.0, 1.0);
@@ -145,7 +133,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   const shader = source
     .replace(
       'void mainImage(',
-      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\nuniform float cloudFade;\nuniform sampler2D nightEmissionBuffer;\nuniform float nightEmissionOn;\nuniform sampler2D nightGlowBuffer;\nuniform float nightGlowStrength;\n${CLOUD_DEPTH_TEST}\n${EMISSION_THROUGH_CLOUDS}\nvoid mainImage(`
+      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\nuniform float cloudFade;\nuniform sampler2D nightEmissionBuffer;\nuniform float nightEmissionOn;\n${CLOUD_DEPTH_TEST}\n${EMISSION_THROUGH_CLOUDS}\nvoid mainImage(`
     )
     // Light shafts are half resolution too: the shadow length behind an
     // aircraft (rays reaching the ground) bleeds onto its pixels as in-
@@ -182,20 +170,10 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       'radiance = mix(inputColor.rgb * mix(1.0, max(sunTransmittance, 0.35), 0.7), radiance, lightingMask);'
     )
     // Terrain is opaque.
-    .replace(
-      'outputColor = vec4(radiance, inputColor.a);',
-      'outputColor = vec4(radiance, 1.0);\n  #ifndef HAS_OVERLAY\n  outputColor.rgb += nightGlowAt(uv);\n  #endif'
-    )
-    // Night-light glow behind clouds: dimmed like the lights, plus what the
-    // cloud scatters. (Full cloud cover returns early with the overlay.)
-    .replaceAll(
-      'outputColor.rgb = outputColor.rgb * (1.0 - overlay.a) + overlay.rgb;',
-      'outputColor.rgb = (outputColor.rgb + nightGlowAt(uv) * (1.0 - overlay.a)) * (1.0 - overlay.a) + overlay.rgb + NIGHT_GLOW_CLOUD_SCATTER * overlay.a * nightGlowAt(uv);'
-    )
-    .replace('outputColor = overlay;', 'outputColor = overlay;\n    outputColor.rgb += NIGHT_GLOW_CLOUD_SCATTER * nightGlowAt(uv);')
+    .replace('outputColor = vec4(radiance, inputColor.a);', 'outputColor = vec4(radiance, 1.0);')
     .replace(
       '#else // SKY\n    outputColor = inputColor;',
-      '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;\n    #ifndef HAS_OVERLAY\n    outputColor.rgb += nightGlowAt(uv);\n    #endif'
+      '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;\n    outputColor.rgb += nightEmissionOn * texture(nightEmissionBuffer, uv).rgb * nightEmissionThroughClouds(overlay);'
     )
   if (
     (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|nightEmissionBuffer, uv|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.35/g) ?? [])
@@ -211,8 +189,6 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   effect.uniforms.set('cloudFade', new Uniform(1))
   effect.uniforms.set('nightEmissionBuffer', new Uniform(null))
   effect.uniforms.set('nightEmissionOn', new Uniform(0))
-  effect.uniforms.set('nightGlowBuffer', new Uniform(null))
-  effect.uniforms.set('nightGlowStrength', new Uniform(0))
   ;(effect as unknown as { setFragmentShader: (s: string) => void }).setFragmentShader(shader)
 }
 
@@ -248,8 +224,6 @@ function patchLightingMask(pass: LightingMaskPass): void {
 /** Enables the night-lights pass only when NightLights says it's needed. */
 
 const up = new Vector3()
-/** Glow around night lights (blurred light added to the scene). */
-const NIGHT_GLOW = 0.45
 
 export const PostEffects: FC = () => {
   const camera = useThree(({ camera }) => camera)
@@ -307,12 +281,6 @@ export const PostEffects: FC = () => {
       if (emission != null) emission.value = nightEmission.texture
       const emissionOn = uniforms.get('nightEmissionOn')
       if (emissionOn != null) emissionOn.value = nightEmission.enabled && nightEmission.texture != null ? 1 : 0
-      const glow = uniforms.get('nightGlowBuffer')
-      if (glow != null) glow.value = nightEmission.glow
-      const glowStrength = uniforms.get('nightGlowStrength')
-      if (glowStrength != null) {
-        glowStrength.value = nightEmission.enabled && nightEmission.glow != null ? NIGHT_GLOW : 0
-      }
     }
     if (transientStates != null) {
       updateNightLighting(

@@ -41,7 +41,6 @@ class NightLightsController {
   update(camera: Camera, states: AtmosphereTransientStates, delta: number): void {
     // Set every frame: a remounted controller must not leave a stale one.
     nightEmission.texture = this.effect.texture
-    nightEmission.glow = this.effect.glowTexture
     nightEmission.enabled = this.ready && this.effect.enabled
     nightEmission.roads = this.roads
     if (!this.ready) return
@@ -95,7 +94,6 @@ class NightLightsController {
   dispose(): void {
     if (nightEmission.texture === this.effect.texture) {
       nightEmission.texture = null
-      nightEmission.glow = null
       nightEmission.enabled = false
       nightEmission.roads = null
     }
