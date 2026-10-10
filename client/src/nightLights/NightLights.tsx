@@ -42,6 +42,7 @@ class NightLightsController {
     // Set every frame: a remounted controller must not leave a stale one.
     nightEmission.texture = this.effect.texture
     nightEmission.enabled = this.ready && this.effect.enabled
+    nightEmission.roads = this.roads
     if (!this.ready) return
     const { effect, tiles } = this
     effect.mainCamera = camera
@@ -94,6 +95,7 @@ class NightLightsController {
     if (nightEmission.texture === this.effect.texture) {
       nightEmission.texture = null
       nightEmission.enabled = false
+      nightEmission.roads = null
     }
     this.effect.dispose()
     this.tiles.dispose()

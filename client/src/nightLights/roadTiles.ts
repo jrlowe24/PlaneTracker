@@ -332,6 +332,50 @@ export class RoadLightTiles {
     s.loaded = true
   }
 
+  /**
+   * Light from the streets and aprons around a ground point (ECEF), as
+   * irradiance for lighting aircraft standing there: the finest loaded
+   * level's pools and lamps averaged over ~40 m. False when not covered.
+   */
+  groundLight(position: Vector3, out: Vector3): boolean {
+    const g = ecefToGeodetic(position.x, position.y, position.z)
+    for (const level of this.levels) {
+      if (!level.uniforms.enabled) continue
+      const t = tileOf(g.lat, g.lon, level.z)
+      const tx = Math.floor(t.x)
+      const ty = Math.floor(t.y)
+      const slot = level.slotFor(tx, ty)
+      const s = level.slots[slot]!
+      if (!s.loaded || s.key !== `${level.z}/${tx}/${ty}`) continue
+      const half = Math.max(1, Math.round(20 / level.uniforms.metersPerTexel))
+      const cx = Math.floor((t.x - tx) * SIZE)
+      const cy = Math.floor((t.y - ty) * SIZE)
+      const base = level.layerOf(slot) * SIZE * SIZE * 4
+      let r = 0
+      let gr = 0
+      let b = 0
+      let lamps = 0
+      let n = 0
+      for (let y = Math.max(0, cy - half); y <= Math.min(SIZE - 1, cy + half); ++y) {
+        for (let x = Math.max(0, cx - half); x <= Math.min(SIZE - 1, cx + half); ++x) {
+          const i = base + (y * SIZE + x) * 4
+          r += this.data[i]!
+          gr += this.data[i + 1]!
+          b += this.data[i + 2]!
+          lamps += this.data[i + 3]!
+          ++n
+        }
+      }
+      if (n === 0) return false
+      // Pools carry the color; lamp energy adds (neutral) light.
+      const k = 1 / (n * 255)
+      const lamp = lamps * k * 0.15
+      out.set(r * k + lamp, gr * k + lamp * 0.9, b * k + lamp * 0.8)
+      return true
+    }
+    return false
+  }
+
   dispose(): void {
     for (const worker of this.workers) worker.terminate()
     this.texture.dispose()

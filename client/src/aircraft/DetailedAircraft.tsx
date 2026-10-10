@@ -6,8 +6,10 @@ import { Group, Matrix4, Mesh, PerspectiveCamera, Vector3, type Camera, type Obj
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
 import { isMobileDevice } from '../state/quality'
+import { nightEmission } from '../nightLights/nightLightsStore'
+import { nightState } from '../scene/nightLighting'
 import { selectionStore } from '../state/selection'
-import { shadingUniform } from './aircraftMaterial'
+import { groundLightUniform, shadingUniform } from './aircraftMaterial'
 import { aircraftClass } from './typeClasses'
 import { AIRFRAMES, type AircraftClass } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
@@ -44,7 +46,11 @@ interface DetailedEntry {
   modelUrl: string | null
 }
 
+/** Ground light map → aircraft irradiance (renderer units; sun ≈ 1.5). */
+const GROUND_LIGHT_GAIN = 0.6
+
 const basis = new Matrix4()
+const groundLight = new Vector3()
 const sun = new Vector3()
 const shading = { x: 0, y: 0, z: 0 }
 
@@ -205,11 +211,23 @@ class DetailedAircraftController {
         hex === selectedHex && cameraModeStore.get().mode === 'globe',
         shading
       )
+      // At night, the street and apron lights around an aircraft on or
+      // near the ground light it too.
+      groundLight.set(0, 0, 0)
+      const roads = nightEmission.roads
+      if (roads != null && nightEmission.enabled && aircraft?.groundHeight != null && nightState.night > 0) {
+        const agl = pose.height - aircraft.groundHeight
+        const near = 1 - Math.min(1, Math.max(0, (agl - 30) / 170))
+        if (near > 0 && roads.groundLight(pose.position, groundLight)) {
+          groundLight.multiplyScalar(GROUND_LIGHT_GAIN * near * nightState.night)
+        }
+      }
       object.traverse(child => {
         if (child instanceof Mesh) {
           const materials: unknown[] = Array.isArray(child.material) ? child.material : [child.material]
           for (const material of materials) {
             shadingUniform(material)?.value.set(shading.x, shading.y, shading.z)
+            groundLightUniform(material)?.value.copy(groundLight)
           }
         }
       })

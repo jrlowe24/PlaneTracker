@@ -47,9 +47,11 @@ const WHITE: Rgb = [0.92, 0.94, 1.0]
 const GREEN: Rgb = [0.15, 1.0, 0.35]
 const BLUE: Rgb = [0.2, 0.35, 1.0]
 const RED: Rgb = [1.0, 0.08, 0.05]
+/** Airfield white (its own palette entry: airfield lights are boosted). */
+const RUNWAY: Rgb = [1.0, 0.96, 0.86]
 
 /** Lamp color palette (index 0 = no lamp); the shader has the same table. */
-export const LAMP_COLORS: readonly Rgb[] = [[0, 0, 0], SODIUM, WARM_LED, NEUTRAL_LED, WHITE, GREEN, BLUE, RED]
+export const LAMP_COLORS: readonly Rgb[] = [[0, 0, 0], SODIUM, WARM_LED, NEUTRAL_LED, WHITE, GREEN, BLUE, RED, RUNWAY]
 
 interface RoadStyle {
   /** Lamp spacing along the road, meters. */
@@ -324,32 +326,38 @@ function scatterLamps(
 
 function drawTaxiway(ctx: Ctx, line: Point[], mpp: number): void {
   const r = 2.5 / mpp
-  along(line, 30 / mpp, 15 / mpp, (x, y) => {
-    lamp(ctx, x, y, r, GREEN, 0.4, false)
+  // Green centerline (every 15 m), blue edges (every 30 m).
+  along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
+    lamp(ctx, x, y, r, GREEN, 0.7, false)
   })
   const edge = 12 / mpp
-  along(line, 60 / mpp, 30 / mpp, (x, y, dx, dy) => {
-    lamp(ctx, x - dy * edge, y + dx * edge, r, BLUE, 0.3, false)
-    lamp(ctx, x + dy * edge, y - dx * edge, r, BLUE, 0.3, false)
+  along(line, 30 / mpp, 15 / mpp, (x, y, dx, dy) => {
+    lamp(ctx, x - dy * edge, y + dx * edge, r, BLUE, 0.55, false)
+    lamp(ctx, x + dy * edge, y - dx * edge, r, BLUE, 0.55, false)
   })
 }
 
 /**
- * Runway lighting. Ends that fall inside the tile (not where the tile cut
- * the runway) are real thresholds: they get green threshold and red end
- * bars and a 900 m approach lighting system with a crossbar at 300 m.
+ * Runway lighting (CAT II/III style): white edge lights every 60 m and
+ * centerline every 15 m. Ends that fall inside the tile (not where the tile
+ * cut the runway) are real thresholds: green threshold and red end bars,
+ * touchdown zone barrettes over the first 900 m, and an ALSF-2 approach
+ * light system: centerline barrettes every 30 m out to 900 m, a crossbar
+ * at 300 m, and red side-row barrettes over the inner 300 m.
  */
 function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
   const half = 23 / mpp
   const r = 3 / mpp
-  // Edge lights (white, every 60 m).
+  const at = (p: Point, ox: number, oy: number, along: number, across: number): [number, number] => [
+    p.x + ox * (along / mpp) - oy * (across / mpp),
+    p.y + oy * (along / mpp) + ox * (across / mpp)
+  ]
   along(line, 60 / mpp, 30 / mpp, (x, y, dx, dy) => {
-    lamp(ctx, x - dy * half, y + dx * half, r, WHITE, 0.9, false)
-    lamp(ctx, x + dy * half, y - dx * half, r, WHITE, 0.9, false)
+    lamp(ctx, x - dy * half, y + dx * half, r, RUNWAY, 1, false)
+    lamp(ctx, x + dy * half, y - dx * half, r, RUNWAY, 1, false)
   })
-  // Centerline (every 15 m, dimmer).
   along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
-    lamp(ctx, x, y, r * 0.7, WHITE, 0.4, false)
+    lamp(ctx, x, y, r * 0.7, RUNWAY, 0.75, false)
   })
   const margin = size * 0.01
   const inside = (p: Point): boolean => p.x > margin && p.y > margin && p.x < size - margin && p.y < size - margin
@@ -364,18 +372,25 @@ function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
     // Unit vector pointing outward from the runway at this end.
     const ox = (end.x - next.x) / length
     const oy = (end.y - next.y) / length
-    // Threshold bar (green, just outside) and end bar (red, just inside).
+    // Threshold (green, just outside) and end (red, just inside) bars.
     for (let k = -8; k <= 8; ++k) {
-      const across = (k * 3) / mpp
-      lamp(ctx, end.x + ox * (3 / mpp) - oy * across, end.y + oy * (3 / mpp) + ox * across, r * 0.8, GREEN, 0.9, false)
-      lamp(ctx, end.x - ox * (3 / mpp) - oy * across, end.y - oy * (3 / mpp) + ox * across, r * 0.8, RED, 0.7, false)
+      lamp(ctx, ...at(end, ox, oy, 3, k * 3), r * 0.8, GREEN, 1, false)
+      lamp(ctx, ...at(end, ox, oy, -3, k * 3), r * 0.8, RED, 0.8, false)
     }
-    // Approach lights: barrettes every 30 m out to 900 m, crossbar at 300 m.
+    // Touchdown zone: barrettes of 3 either side of the centerline.
+    for (let d = 60; d <= 900; d += 30) {
+      for (const side of [-1, 1]) {
+        for (let k = 0; k < 3; ++k) lamp(ctx, ...at(end, ox, oy, -d, side * (10 + k * 1.5)), r * 0.7, RUNWAY, 0.85, false)
+      }
+    }
+    // Approach lights.
     for (let d = 30; d <= 900; d += 30) {
       const bar = d === 300 ? 15 : 2
-      for (let k = -bar; k <= bar; ++k) {
-        const across = (k * 1.5) / mpp
-        lamp(ctx, end.x + ox * (d / mpp) - oy * across, end.y + oy * (d / mpp) + ox * across, r * 0.8, WHITE, 0.8, false)
+      for (let k = -bar; k <= bar; ++k) lamp(ctx, ...at(end, ox, oy, d, k * 1.5), r * 0.8, RUNWAY, 1, false)
+      if (d <= 270) {
+        for (const side of [-1, 1]) {
+          for (let k = 0; k < 3; ++k) lamp(ctx, ...at(end, ox, oy, d, side * (10 + k * 1.5)), r * 0.8, RED, 0.9, false)
+        }
       }
     }
   }

@@ -71,9 +71,12 @@ const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
 const float ROAD_WINDOW = ${WINDOW.toFixed(1)};
 const int TILE = ${ROAD_TILE_SIZE};
 // Same table as LAMP_COLORS in roadRaster.worker.ts.
-const vec3 LAMP_COLORS[8] = vec3[8](
+const vec3 LAMP_COLORS[9] = vec3[9](
   vec3(0.0), vec3(1.0, 0.42, 0.1), vec3(1.0, 0.68, 0.36), vec3(0.95, 0.85, 0.7),
-  vec3(0.92, 0.94, 1.0), vec3(0.15, 1.0, 0.35), vec3(0.2, 0.35, 1.0), vec3(1.0, 0.08, 0.05));
+  vec3(0.92, 0.94, 1.0), vec3(0.15, 1.0, 0.35), vec3(0.2, 0.35, 1.0), vec3(1.0, 0.08, 0.05),
+  vec3(1.0, 0.96, 0.86));
+/** Palette entries from here on are airfield lights. */
+const int AIRFIELD = 5;
 
 vec3 offsetFromDepth(const vec2 uv, const float depth) {
   vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -141,13 +144,27 @@ float lampFade(const float radius) {
  * lamp's precise position, so they're sharp points of a physical size
  * (~0.7 m, at least ~1.5 px) at any zoom, with a faint glow around them.
  */
-vec3 nearLamps(const int level, const vec2 local, const float footprint) {
+vec3 nearLamps(const int level, const vec2 local, const float footprint, const vec3 dX, const vec3 dY) {
   float meters = roadTexelMeters[level];
   vec2 texel = local * float(TILE);
   ivec2 base = ivec2(floor(texel));
-  float radius = max(0.35, 0.6 * footprint);
-  float fade = lampFade(radius);
-  float glowRadius = radius * 2.5;
+  // Screen pixels per texel offset: lamps are round on screen (they're
+  // lights, not discs on the ground, which grazing views squash into
+  // ovals) and sized in pixels.
+  vec4 m = roadMercator[level];
+  mat2 toTexel = float(TILE) * mat2(
+    m.z * dot(dX, roadEast[level]), -m.w * dot(dX, roadNorth[level]),
+    m.z * dot(dY, roadEast[level]), -m.w * dot(dY, roadNorth[level]));
+  if (abs(determinant(toTexel)) < 1e-8) return vec3(0.0);
+  mat2 toPixel = inverse(toTexel);
+  // Fixture ~0.7 m; drawn at least ~1 px, dimmed as that outgrows it.
+  float physical = 0.35 / max(footprint, 1e-3);
+  float core = max(0.8, physical);
+  float fade = min(1.0, pow(physical / 0.8, 0.9));
+  // The 3x3 cell search reaches about a texel from this pixel in every
+  // direction: radii (pixels) beyond that would be clipped into dashes
+  // where a pixel spans a lot of ground (grazing views).
+  float reach = max(0.6, meters / max(length(dX), length(dY)));
   vec3 sum = vec3(0.0);
   for (int dy = -1; dy <= 1; ++dy) {
     for (int dx = -1; dx <= 1; ++dx) {
@@ -159,10 +176,16 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint) {
       int index = int(lamp.b * 255.0 + 0.5);
       if (index == 0) continue;
       vec2 position = vec2(c) + lamp.rg * (255.0 / 256.0) + 0.5 / 256.0;
-      float d = length(texel - position) * meters;
-      float core = exp(-d * d / (radius * radius)) * fade;
-      float glow = exp(-d * d / (glowRadius * glowRadius)) * 0.06;
-      sum += LAMP_COLORS[index] * lamp.a * (core + glow);
+      float d = length(toPixel * (position - texel));
+      // Airfield lights are high-intensity, focused toward approaching
+      // aircraft: much brighter, with a few pixels of glare, and they carry
+      // farther.
+      bool airfield = index >= AIRFIELD;
+      float r = min(airfield ? max(0.8, physical * 0.6) : core, reach);
+      float glare = min(r + 2.0, reach);
+      float k = airfield ? sqrt(fade) : fade;
+      float light = exp(-d * d / (r * r)) * (airfield ? 3.0 : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.3 : 0.06);
+      sum += LAMP_COLORS[index] * lamp.a * k * light;
     }
   }
   return sum;
@@ -212,7 +235,7 @@ vec3 carpet(const int level, const vec2 local, const float footprint, const floa
  * window and loaded, fading out over its outer quarter tile), and its
  * lamps, drawn as points.
  */
-vec4 roadLevel(const int level, const vec3 offset, const float footprint, out vec3 lamps) {
+vec4 roadLevel(const int level, const vec3 offset, const float footprint, const vec3 dX, const vec3 dY, out vec3 lamps) {
   lamps = vec3(0.0);
   if (roadEnabled[level] < 0.5) return vec4(0.0);
   vec2 local = roadLocal(level, offset);
@@ -220,7 +243,7 @@ vec4 roadLevel(const int level, const vec3 offset, const float footprint, out ve
   float layer = roadLayer(level, ivec2(floor(local)));
   if (layer < 0.0) return vec4(0.0);
   vec3 pools = texture(roadLights, vec3(fract(local), layer)).rgb;
-  lamps = nearLamps(level, local, footprint);
+  lamps = nearLamps(level, local, footprint, dX, dY);
   float edge = min(min(local.x, local.y), min(ROAD_WINDOW - local.x, ROAD_WINDOW - local.y));
   return vec4(pools, smoothstep(0.0, 0.25, edge));
 }
@@ -241,6 +264,8 @@ void main() {
   float urban = smoothstep(0.08, 0.4, value);
   if (urban <= 0.0) return;
   float footprint = length(offset) * pixelAngle;
+  vec3 dX = dFdx(offset);
+  vec3 dY = dFdy(offset);
 
   // Street levels by on-screen size: each 4x coarser than the previous,
   // used where its texels are about a pixel (no mipmaps needed), blending
@@ -256,7 +281,7 @@ void main() {
     if (level < first || remaining <= 0.001) continue;
     float want = level == first ? 1.0 - fract(lod) : 1.0;
     vec3 levelLamps;
-    vec4 s = roadLevel(level, offset, footprint, levelLamps);
+    vec4 s = roadLevel(level, offset, footprint, dX, dY, levelLamps);
     float w = min(remaining, want) * s.a;
     pools += s.rgb * w;
     lamps += levelLamps * w;
@@ -266,7 +291,7 @@ void main() {
 
   // Street light lands on the ground, not on walls: only on surfaces that
   // face up (normal from depth derivatives).
-  vec3 normal = normalize(cross(dFdx(offset), dFdy(offset)));
+  vec3 normal = normalize(cross(dX, dY));
   float upness = abs(dot(normal, up));
   // Lamps are light sources; their pools light the surface, so they show
   // its own color (dark asphalt, markings, sidewalks) rather than glowing.
