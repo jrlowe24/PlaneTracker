@@ -22,10 +22,16 @@ export interface QualitySettings {
   maxDpr: number
   /**
    * The cap at night: the terrain is barely visible then (coarser tiles,
-   * coarser clouds), and the budget goes to what you do see, sharp points
-   * of light.
+   * coarser clouds) and the lights are sized in pixels, so they read just
+   * as well from afar at a lower resolution (bigger, if anything).
    */
   nightMaxDpr: number
+  /**
+   * The cap at night with the camera close to the ground (low over a city,
+   * on approach), where lamps and windows are big enough for sharpness to
+   * show.
+   */
+  closeNightMaxDpr: number
 }
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
@@ -39,7 +45,8 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     lensFlare: false,
     tileErrorTarget: 20,
     maxDpr: 1,
-    nightMaxDpr: 1
+    nightMaxDpr: 1,
+    closeNightMaxDpr: 1
   },
   medium: {
     clouds: 'medium',
@@ -49,7 +56,8 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     lensFlare: false,
     tileErrorTarget: 12,
     maxDpr: 1.5,
-    nightMaxDpr: 1.75
+    nightMaxDpr: 1.25,
+    closeNightMaxDpr: 1.75
   },
   high: {
     clouds: 'high',
@@ -63,7 +71,8 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     // Not 2: every full-screen buffer (a dozen, half float) is 44% smaller
     // at 1.5 on a 2x display (~250 MB less), for slightly softer edges.
     maxDpr: 1.5,
-    nightMaxDpr: 2
+    nightMaxDpr: 1.5,
+    closeNightMaxDpr: 2
   }
 }
 

@@ -1,5 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo, useState, type FC } from 'react'
+import { ecefToGeodetic, geoidHeight } from '@windowseat/shared'
+import { useEffect, useMemo, useRef, useState, type FC } from 'react'
 
 import { config } from '../config'
 import { getGoogleTiles } from '../globe/googleTiles'
@@ -26,6 +27,9 @@ const TILE_STEP = 1.25
 const TILE_FADE_MS = 600
 /** Tile error target multiplier at night (terrain barely visible). */
 const NIGHT_TILE_FACTOR = 2
+/** Camera height (m above sea level) for the close-up night resolution. */
+const CLOSE_ENTER_M = 1500
+const CLOSE_EXIT_M = 2500
 /** Seconds of averaging before a decision; going up needs longer. */
 const WINDOW_DOWN_S = 1.5
 const WINDOW_UP_S = 3
@@ -136,8 +140,24 @@ export const QualityApplier: FC = () => {
     else if (dark && night < 0.75) setDark(false)
   })
 
-  // Night: higher resolution for the lights (see nightMaxDpr).
-  const maxDpr = dark ? preset.nightMaxDpr : preset.maxDpr
+  // Close to the ground (height above the geoid; hysteresis so climbing
+  // or descending through it doesn't reallocate back and forth).
+  const camera = useThree(({ camera }) => camera)
+  const [close, setClose] = useState(false)
+  const sinceCheck = useRef(0)
+  useFrame((_, delta) => {
+    sinceCheck.current += delta
+    if (sinceCheck.current < 0.5) return
+    sinceCheck.current = 0
+    const p = camera.position
+    const g = ecefToGeodetic(p.x, p.y, p.z)
+    const height = g.height - geoidHeight(g.lat, g.lon)
+    if (!close && height < CLOSE_ENTER_M) setClose(true)
+    else if (close && height > CLOSE_EXIT_M) setClose(false)
+  })
+
+  // Night: sharp only up close (see nightMaxDpr, closeNightMaxDpr).
+  const maxDpr = dark ? (close ? preset.closeNightMaxDpr : preset.nightMaxDpr) : preset.maxDpr
   useEffect(() => {
     setDpr(Math.min(window.devicePixelRatio, maxDpr) * scale)
   }, [setDpr, maxDpr, scale])

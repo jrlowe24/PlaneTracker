@@ -530,6 +530,48 @@ uvec2 wBuilding;
 uint wSide;
 float wTint;
 
+/** A home window's light: warm bulbs mostly, some white LED, a TV's blue. */
+vec3 homeColor(const float r) {
+  return r < 0.55 ? vec3(1.0, 0.62, 0.32)
+    : r < 0.82 ? vec3(1.0, 0.8, 0.58)
+    : r < 0.94 ? vec3(0.86, 0.9, 1.0)
+    : vec3(0.42, 0.58, 1.0) * 0.5;
+}
+
+/**
+ * Windows smaller than a pixel, as points of light (like distant street
+ * lamps): groups of k×k cells, each drawn as one ~pixel-wide point at a
+ * world-fixed spot if any of its windows is lit, as bright as the group's
+ * light (up to a window's own). A lit wall far away reads as a dark tower
+ * sprinkled with lights, not an evenly lit wall; and nothing twinkles,
+ * as the points stay put.
+ */
+vec3 windowPoints(const vec2 cellF, const vec2 w, const float k, const float lit, const float area) {
+  float anyLit = 1.0 - pow(1.0 - lit, k * k);
+  if (anyLit <= 0.001) return vec3(0.0);
+  const float RADIUS = 0.7;
+  // The group's light spread over the pixels it covers, gathered into one
+  // point when lit.
+  float energy = lit * area * k * k / (w.x * w.y);
+  float peak = min(1.0, energy / (3.14159 * RADIUS * RADIUS * anyLit));
+  vec2 g = cellF / k;
+  ivec2 base = ivec2(floor(g - 0.5));
+  vec3 sum = vec3(0.0);
+  for (int j = 0; j < 2; ++j) {
+    for (int i = 0; i < 2; ++i) {
+      ivec2 c = base + ivec2(i, j);
+      uvec2 h = pcg2d(uvec2(c + 65536) ^ (wBuilding * 2654435761u) ^ uvec2(uint(k) * 7919u, wSide * 104729u));
+      if (float(h.x & 0xffffu) / 65535.0 >= anyLit) continue;
+      vec2 jitter = vec2(float(h.x >> 16u), float(h.y & 0xffffu)) / 65535.0;
+      vec2 d = (cellF - (vec2(c) + 0.2 + 0.6 * jitter) * k) / w;
+      float r = float(h.y >> 16u) / 65535.0;
+      vec3 color = wOffice ? (wTint < 0.6 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.9, 0.74)) * 0.75 : homeColor(r) * 0.65;
+      sum += color * exp(-dot(d, d) / (RADIUS * RADIUS));
+    }
+  }
+  return sum * peak;
+}
+
 /** Light of one window cell (column, floor): its color if lit, else 0. */
 vec3 windowAt(const ivec2 cell) {
   uvec2 wid = uvec2(uint(cell.x + 65536) + wSide * 131071u, uint(cell.y + 65536)) ^ (wBuilding * 2654435761u);
@@ -544,20 +586,10 @@ vec3 windowAt(const ivec2 cell) {
     return office * mix(0.6, 0.9, rc);
   }
   if (rw >= wShare) return vec3(0.0);
-  // Warm bulbs mostly, some white LED, now and then a TV's blue.
-  vec3 color = rc < 0.55 ? vec3(1.0, 0.62, 0.32)
-    : rc < 0.82 ? vec3(1.0, 0.8, 0.58)
-    : rc < 0.94 ? vec3(0.86, 0.9, 1.0)
-    : vec3(0.42, 0.58, 1.0) * 0.5;
   // Curtains and blinds dim many of them.
-  return color * mix(0.3, 1.0, fract(rc * 31.7));
+  return homeColor(rc) * mix(0.3, 1.0, fract(rc * 31.7));
 }
 
-/** Lit share of a floor: offices by the floor, homes the building's share. */
-float floorLit(const int row) {
-  if (!wOffice) return wShare;
-  return hash1(uvec2(uint(row + 65536), 0u) ^ wBuilding) < wShare ? 0.8 : 0.03;
-}
 
 /**
  * Lit windows on building walls: OSM footprints with a height, in the
@@ -649,36 +681,39 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
   wBuilding = bid;
   wSide = side;
   wTint = r1;
-  vec3 meanColor = office ? (r1 < 0.6 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.9, 0.74)) * 0.75 : vec3(1.0, 0.72, 0.45) * 0.6;
   float wallLit = office ? share * 0.8 + (1.0 - share) * 0.03 : share;
 
-  // Exact box filter: the share of this pixel (in cell units, w wide)
-  // each window opening covers, over the up to 2x2 cells it touches, so
-  // windows fade in and out smoothly as the view moves instead of
-  // twinkling. Wider than a cell: the floor's, then the wall's average.
-  vec2 halfW = max(w, vec2(1e-4)) * 0.5;
-  vec2 lo = cellF - halfW;
-  vec2 hi = cellF + halfW;
-  ivec2 first = ivec2(floor(lo));
-  vec3 sharp = vec3(0.0);
-  vec3 row = vec3(0.0);
-  for (int j = 0; j < 2; ++j) {
-    int y = first.y + j;
-    float oy = overlap(lo.y, hi.y, float(y) + y01.x, float(y) + y01.y) / (2.0 * halfW.y);
-    if (oy <= 0.0) continue;
-    row += meanColor * floorLit(y) * (x01.y - x01.x) * oy;
-    for (int i = 0; i < 2; ++i) {
-      int x = first.x + i;
-      float ox = overlap(lo.x, hi.x, float(x) + x01.x, float(x) + x01.y) / (2.0 * halfW.x);
-      if (ox > 0.0) sharp += windowAt(ivec2(x, y)) * ox * oy;
+  // Up close, an exact box filter: the share of this pixel (in cell
+  // units, w wide) each window opening covers, over the up to 2x2 cells
+  // it touches, so windows fade in and out smoothly as the view moves.
+  float area = (x01.y - x01.x) * (y01.y - y01.x);
+  float size = max(w.x, w.y);
+  vec3 windows = vec3(0.0);
+  if (size < 0.9) {
+    vec2 halfW = max(w, vec2(1e-4)) * 0.5;
+    vec2 lo = cellF - halfW;
+    vec2 hi = cellF + halfW;
+    ivec2 first = ivec2(floor(lo));
+    for (int j = 0; j < 2; ++j) {
+      int y = first.y + j;
+      float oy = overlap(lo.y, hi.y, float(y) + y01.x, float(y) + y01.y) / (2.0 * halfW.y);
+      if (oy <= 0.0) continue;
+      for (int i = 0; i < 2; ++i) {
+        int x = first.x + i;
+        float ox = overlap(lo.x, hi.x, float(x) + x01.x, float(x) + x01.y) / (2.0 * halfW.x);
+        if (ox > 0.0) windows += windowAt(ivec2(x, y)) * ox * oy;
+      }
     }
   }
-  // Blurred, lit windows read darker than their average light (to the eye
-  // a facade far away is dark with points of light, not a lit wall).
-  const float BLURRED = 0.4;
-  vec3 wall = meanColor * wallLit * (x01.y - x01.x) * (y01.y - y01.x) * BLURRED;
-  vec3 windows = mix(sharp, row * BLURRED, smoothstep(0.7, 1.0, w.x));
-  windows = mix(windows, wall, smoothstep(0.7, 1.0, w.y));
+  // Farther: points of light for groups of windows (k a power of two,
+  // groups at least ~1.5 px; blended across the steps).
+  if (size > 0.6) {
+    float level = log2(max(size * 1.5, 1.0));
+    float k = exp2(floor(level));
+    float t = fract(level);
+    vec3 points = mix(windowPoints(cellF, w, k, wallLit, area), windowPoints(cellF, w, 2.0 * k, wallLit, area), t);
+    windows = mix(windows, points, smoothstep(0.6, 0.9, size));
+  }
   return windows * fade;
 }
 
