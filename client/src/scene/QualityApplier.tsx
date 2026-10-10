@@ -126,9 +126,21 @@ export const QualityApplier: FC = () => {
     resolutionStore.set({ scale: 1, tileFactor: 1 })
   }, [governor, preset.maxDpr])
 
+  // At night the terrain is barely visible (lights carry the view):
+  // coarser tiles, about a quarter as many, in memory and on screen.
+  // Hysteresis so dusk doesn't flip it back and forth.
+  const [dark, setDark] = useState(false)
+  useFrame(() => {
+    const night = nightState.night
+    if (!dark && night > 0.95) setDark(true)
+    else if (dark && night < 0.75) setDark(false)
+  })
+
+  // Night: higher resolution for the lights (see nightMaxDpr).
+  const maxDpr = dark ? preset.nightMaxDpr : preset.maxDpr
   useEffect(() => {
-    setDpr(Math.min(window.devicePixelRatio, preset.maxDpr) * scale)
-  }, [setDpr, preset.maxDpr, scale])
+    setDpr(Math.min(window.devicePixelRatio, maxDpr) * scale)
+  }, [setDpr, maxDpr, scale])
 
   useFrame((_, delta) => {
     if (resolutionStore.get().locked) return
@@ -144,15 +156,6 @@ export const QualityApplier: FC = () => {
     }
   })
 
-  // At night the terrain is barely visible (lights carry the view):
-  // coarser tiles, about a quarter as many, in memory and on screen.
-  // Hysteresis so dusk doesn't flip it back and forth.
-  const [dark, setDark] = useState(false)
-  useFrame(() => {
-    const night = nightState.night
-    if (!dark && night > 0.95) setDark(true)
-    else if (dark && night < 0.75) setDark(false)
-  })
 
   useEffect(() => {
     if (config.tilesDisabled) return

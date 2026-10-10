@@ -16,7 +16,7 @@ import { RunwayLights } from './runwayLights'
 /**
  * Street, area and airport lighting from OpenStreetMap (OpenFreeMap vector
  * tiles, no key), rasterized into a texture array in two windows of
- * WINDOW×WINDOW Web Mercator tiles around the view:
+ * window×window Web Mercator tiles around the view (6 at street level, 4 beyond):
  *
  * - level 0: zoom 14 (~1.6–2.4 km tiles; every street, lamp by lamp),
  * - level 1: zoom 12 (~6.5–10 km tiles; the arterials and airports beyond),
@@ -27,20 +27,26 @@ import { RunwayLights } from './runwayLights'
  * under a meter across a window), so no large coordinates reach the GPU.
  */
 
-export const WINDOW = 4
+/** Largest window (tiles per side): the shader's per-level array stride. */
+export const MAX_WINDOW = 6
 export const ROAD_TILE_SIZE = 512
 const SIZE = ROAD_TILE_SIZE
 const LEVELS = [
-  // z, max camera altitude (m) at which the level is used, how far ahead
-  // of the camera the window centers (m).
-  { z: 14, maxAltitude: 14_000, lead: 2_500 },
-  { z: 12, maxAltitude: 60_000, lead: 9_000 },
+  // z, window (tiles per side), max camera altitude (m) at which the level
+  // is used, how far ahead of the camera the window centers (m).
+  // Street level spans 6x6 tiles (~10 km): lamp by lamp much farther out.
+  // It's only used when lights are on, the budget the dark terrain frees.
+  { z: 14, window: 6, maxAltitude: 14_000, lead: 3_500 },
+  { z: 12, window: 4, maxAltitude: 60_000, lead: 9_000 },
   // Motorways and main roads out to the horizon from cruise altitudes.
-  { z: 10, maxAltitude: 250_000, lead: 35_000 }
+  { z: 10, window: 4, maxAltitude: 250_000, lead: 35_000 }
 ] as const
+/** First texture layer of each level's window. */
+const LAYER_BASE = LEVELS.map((_, i) => LEVELS.slice(0, i).reduce((sum, l) => sum + l.window * l.window, 0))
+const LAYER_COUNT = LEVELS.reduce((sum, l) => sum + l.window * l.window, 0)
 export const ROAD_LEVELS = LEVELS.length
 const WORKERS = 2
-const MAX_IN_FLIGHT = 4
+const MAX_IN_FLIGHT = 6
 const TILEJSON = 'https://tiles.openfreemap.org/planet'
 
 /** WGS84 meridian (M) and prime vertical (N) radii of curvature. */
@@ -79,7 +85,9 @@ export interface RoadLevelUniforms {
   metersPerTexel: number
   /** Window origin tile (world-fixed integer cells for procedural lamps). */
   origin: [x: number, y: number]
-  /** Texture layer per window cell (row-major), −1 while not loaded. */
+  /** Tiles per side of this level's window. */
+  window: number
+  /** Texture layer per window cell (row-major, `window` wide), −1 while not loaded. */
   layers: Float32Array
   /**
    * Per window cell, 0 … 1: how far a newly arrived tile has faded in (the
@@ -111,8 +119,9 @@ class Level {
     curvature: 0,
     metersPerTexel: 1,
     origin: [0, 0],
-    layers: new Float32Array(WINDOW * WINDOW).fill(-1),
-    fade: new Float32Array(WINDOW * WINDOW)
+    window: 4,
+    layers: new Float32Array(MAX_WINDOW * MAX_WINDOW).fill(-1),
+    fade: new Float32Array(MAX_WINDOW * MAX_WINDOW)
   }
   /** Window origin tile. */
   ox = Number.NaN
@@ -120,28 +129,32 @@ class Level {
   private readonly anchorEcef = new Vector3()
   private lat0 = 0
   private lon0 = 0
-  readonly slots: Slot[] = Array.from({ length: WINDOW * WINDOW }, () => ({ key: '', loaded: false, loadedAt: 0 }))
+  readonly slots: Slot[]
 
   constructor(
     readonly index: number,
-    readonly z: number
-  ) {}
+    readonly z: number,
+    readonly window: number
+  ) {
+    this.slots = Array.from({ length: window * window }, () => ({ key: '', loaded: false, loadedAt: 0 }))
+    this.uniforms.window = window
+  }
 
   /** Re-centers the window if `center` (tile coords) left its middle. */
   place(center: { x: number; y: number }): boolean {
-    const ox = Math.floor(center.x - WINDOW / 2 + 0.5)
-    const oy = Math.floor(center.y - WINDOW / 2 + 0.5)
+    const ox = Math.floor(center.x - this.window / 2 + 0.5)
+    const oy = Math.floor(center.y - this.window / 2 + 0.5)
     if (Number.isFinite(this.ox) && Math.abs(ox - this.ox) < 1 && Math.abs(oy - this.oy) < 1) return false
     // Hysteresis: only move when the center is more than 0.75 tile off.
-    const mx = this.ox + WINDOW / 2
-    const my = this.oy + WINDOW / 2
+    const mx = this.ox + this.window / 2
+    const my = this.oy + this.window / 2
     if (Number.isFinite(this.ox) && Math.abs(center.x - mx) < 0.75 && Math.abs(center.y - my) < 0.75) return false
     this.ox = ox
     this.oy = oy
     // Anchor: the window's middle.
     const n = 2 ** this.z
-    this.lon0 = ((ox + WINDOW / 2) / n) * 360 - 180
-    this.lat0 = latOfTileY(oy + WINDOW / 2, this.z)
+    this.lon0 = ((ox + this.window / 2) / n) * 360 - 180
+    this.lat0 = latOfTileY(oy + this.window / 2, this.z)
     const p = geodeticToEcef(this.lat0, this.lon0, 0)
     this.anchorEcef.set(p.x, p.y, p.z)
     const lat = (this.lat0 * Math.PI) / 180
@@ -151,7 +164,7 @@ class Level {
     const { m, n: nRadius } = radii(lat)
     const s = n / (2 * Math.PI)
     const sec = 1 / Math.cos(lat)
-    this.uniforms.mercator = [WINDOW / 2, WINDOW / 2, (s * sec) / nRadius, (s * sec) / m]
+    this.uniforms.mercator = [this.window / 2, this.window / 2, (s * sec) / nRadius, (s * sec) / m]
     this.uniforms.curvature = Math.tan(lat) / m
     this.uniforms.origin = [ox, oy]
     this.uniforms.metersPerTexel = ((2 * Math.PI * WGS84_A) / n) * Math.cos(lat) / SIZE
@@ -164,29 +177,29 @@ class Level {
   }
 
   slotFor(tx: number, ty: number): number {
-    const sx = ((tx % WINDOW) + WINDOW) % WINDOW
-    const sy = ((ty % WINDOW) + WINDOW) % WINDOW
-    return sy * WINDOW + sx
+    const sx = ((tx % this.window) + this.window) % this.window
+    const sy = ((ty % this.window) + this.window) % this.window
+    return sy * this.window + sx
   }
 
   layerOf(slot: number): number {
-    return this.index * WINDOW * WINDOW + slot
+    return LAYER_BASE[this.index]! + slot
   }
 
   updateUniforms(camera: Vector3, strength: number): void {
     this.uniforms.enabled = strength > 0 && Number.isFinite(this.ox)
     this.uniforms.anchor.copy(this.anchorEcef).sub(camera)
     const now = performance.now()
-    for (let cy = 0; cy < WINDOW; ++cy) {
-      for (let cx = 0; cx < WINDOW; ++cx) {
+    for (let cy = 0; cy < this.window; ++cy) {
+      for (let cx = 0; cx < this.window; ++cx) {
         const { x, y } = this.cellTile(cx, cy)
         const slot = this.slotFor(x, y)
         const s = this.slots[slot]!
         const ready = s.loaded && s.key === `${this.z}/${x}/${y}`
-        this.uniforms.layers[cy * WINDOW + cx] = ready ? this.layerOf(slot) : -1
+        this.uniforms.layers[cy * this.window + cx] = ready ? this.layerOf(slot) : -1
         const t = ready ? Math.min(1, (now - s.loadedAt) / (TILE_FADE_S * 1000)) : 0
         // Smoothstep: no visible start or end of the fade.
-        this.uniforms.fade[cy * WINDOW + cx] = t * t * (3 - 2 * t) * strength
+        this.uniforms.fade[cy * this.window + cx] = t * t * (3 - 2 * t) * strength
       }
     }
   }
@@ -200,7 +213,7 @@ export class RoadLightTiles {
   readonly texture: DataArrayTexture
   /** Exact lamp positions per texel cell (nearest filtering, no mips). */
   readonly lamps: DataArrayTexture
-  readonly levels = LEVELS.map((l, i) => new Level(i, l.z))
+  readonly levels = LEVELS.map((l, i) => new Level(i, l.z, l.window))
   /** Whole runways seen in the tiles, lit exactly by the shader. */
   readonly runways = new RunwayLights()
   /** False until OpenFreeMap's tile URL is known; stays false if it fails. */
@@ -215,9 +228,9 @@ export class RoadLightTiles {
   private readonly lampData: Uint8Array
 
   constructor() {
-    this.data = new Uint8Array(SIZE * SIZE * 4 * WINDOW * WINDOW * LEVELS.length)
+    this.data = new Uint8Array(SIZE * SIZE * 4 * LAYER_COUNT)
     this.lampData = new Uint8Array(this.data.length)
-    const lamps = new DataArrayTexture(this.lampData, SIZE, SIZE, WINDOW * WINDOW * LEVELS.length)
+    const lamps = new DataArrayTexture(this.lampData, SIZE, SIZE, LAYER_COUNT)
     lamps.format = RGBAFormat
     lamps.type = UnsignedByteType
     lamps.colorSpace = NoColorSpace
@@ -226,7 +239,7 @@ export class RoadLightTiles {
     lamps.generateMipmaps = false
     lamps.needsUpdate = true
     this.lamps = lamps
-    const texture = new DataArrayTexture(this.data, SIZE, SIZE, WINDOW * WINDOW * LEVELS.length)
+    const texture = new DataArrayTexture(this.data, SIZE, SIZE, LAYER_COUNT)
     texture.format = RGBAFormat
     texture.type = UnsignedByteType
     texture.colorSpace = NoColorSpace
@@ -300,9 +313,10 @@ export class RoadLightTiles {
   private request(level: Level): void {
     if (this.template == null || this.pending.size >= MAX_IN_FLIGHT) return
     const cells: Array<{ cx: number; cy: number; d: number }> = []
-    for (let cy = 0; cy < WINDOW; ++cy) {
-      for (let cx = 0; cx < WINDOW; ++cx) {
-        cells.push({ cx, cy, d: Math.hypot(cx + 0.5 - WINDOW / 2, cy + 0.5 - WINDOW / 2) })
+    const w = level.window
+    for (let cy = 0; cy < w; ++cy) {
+      for (let cx = 0; cx < w; ++cx) {
+        cells.push({ cx, cy, d: Math.hypot(cx + 0.5 - w / 2, cy + 0.5 - w / 2) })
       }
     }
     cells.sort((a, b) => a.d - b.d)

@@ -20,6 +20,12 @@ export interface QualitySettings {
   tileErrorTarget: number
   /** Device-pixel-ratio cap (resolution scale). */
   maxDpr: number
+  /**
+   * The cap at night: the terrain is barely visible then (coarser tiles,
+   * coarser clouds), and the budget goes to what you do see, sharp points
+   * of light.
+   */
+  nightMaxDpr: number
 }
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
@@ -32,7 +38,8 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     lightShafts: false,
     lensFlare: false,
     tileErrorTarget: 20,
-    maxDpr: 1
+    maxDpr: 1,
+    nightMaxDpr: 1
   },
   medium: {
     clouds: 'medium',
@@ -41,7 +48,8 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     lightShafts: false,
     lensFlare: false,
     tileErrorTarget: 12,
-    maxDpr: 1.5
+    maxDpr: 1.5,
+    nightMaxDpr: 1.75
   },
   high: {
     clouds: 'high',
@@ -54,7 +62,8 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     tileErrorTarget: 6,
     // Not 2: every full-screen buffer (a dozen, half float) is 44% smaller
     // at 1.5 on a 2x display (~250 MB less), for slightly softer edges.
-    maxDpr: 1.5
+    maxDpr: 1.5,
+    nightMaxDpr: 2
   }
 }
 

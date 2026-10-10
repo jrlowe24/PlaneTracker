@@ -20,7 +20,7 @@ import {
 } from 'three'
 
 import { WINDOW_TILES } from './nightLightTiles'
-import { ROAD_LEVELS, ROAD_TILE_SIZE, WINDOW, type RoadLevelUniforms } from './roadTiles'
+import { MAX_WINDOW, ROAD_LEVELS, ROAD_TILE_SIZE, type RoadLevelUniforms } from './roadTiles'
 import { MAX_RUNWAYS, type RunwayUniforms } from './runwayLights'
 
 const drawingBuffer = new Vector2()
@@ -71,8 +71,10 @@ uniform vec3 roadEast[${ROAD_LEVELS}];
 uniform vec3 roadNorth[${ROAD_LEVELS}];
 uniform vec4 roadMercator[${ROAD_LEVELS}];
 uniform float roadCurvature[${ROAD_LEVELS}];
-uniform float roadLayers[${ROAD_LEVELS * WINDOW * WINDOW}];
-uniform float roadFade[${ROAD_LEVELS * WINDOW * WINDOW}];
+uniform float roadLayers[${ROAD_LEVELS * MAX_WINDOW * MAX_WINDOW}];
+uniform float roadFade[${ROAD_LEVELS * MAX_WINDOW * MAX_WINDOW}];
+/** Tiles per side of each level's window. */
+uniform float roadWindow[${ROAD_LEVELS}];
 uniform int runwayCount;
 uniform vec4 runwayOrigin[${MAX_RUNWAYS}];
 uniform vec4 runwayAlong[${MAX_RUNWAYS}];
@@ -80,7 +82,7 @@ uniform vec4 runwayAcross[${MAX_RUNWAYS}];
 uniform vec4 runwayApproach[${MAX_RUNWAYS}];
 
 const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
-const float ROAD_WINDOW = ${WINDOW.toFixed(1)};
+const int ROAD_STRIDE = ${MAX_WINDOW * MAX_WINDOW};
 const int TILE = ${ROAD_TILE_SIZE};
 // Same table as LAMP_COLORS in roadRaster.worker.ts.
 const vec3 LAMP_COLORS[9] = vec3[9](
@@ -90,7 +92,8 @@ const vec3 LAMP_COLORS[9] = vec3[9](
 /** Palette entries from here on are airfield lights. */
 const int AIRFIELD = 5;
 /** Least brightness of an airfield light however far (before glow). */
-const float AIRFIELD_FLOOR = 0.45;
+const float AIRFIELD_FLOOR = 0.12;
+
 
 vec3 offsetFromDepth(const vec2 uv, const float depth) {
   vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -139,8 +142,9 @@ vec2 roadLocal(const int level, const vec3 offset) {
 }
 
 float roadLayer(const int level, const ivec2 cell) {
-  if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell, ivec2(int(ROAD_WINDOW))))) return -1.0;
-  return roadLayers[level * int(ROAD_WINDOW * ROAD_WINDOW) + cell.y * int(ROAD_WINDOW) + cell.x];
+  int w = int(roadWindow[level]);
+  if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell, ivec2(w)))) return -1.0;
+  return roadLayers[level * ROAD_STRIDE + cell.y * w + cell.x];
 }
 
 /**
@@ -152,6 +156,19 @@ float roadLayer(const int level, const ivec2 cell) {
  */
 float distantFade(const float share) {
   return min(1.0, pow(share, 0.6) * pow(min(1.0, share / 0.1), 0.7));
+}
+
+/**
+ * Airfield lamp brightness at a footprint share (true size / drawn size):
+ * fades slower than street lamps (runways stay readable from afar) but
+ * does fade, and loses its close-up boost far away. Held at 0.45 with the
+ * full boost, far rows merged into solid, glaring outlines.
+ */
+float airfieldK(const float share) {
+  return max(AIRFIELD_FLOOR, pow(distantFade(share), 0.75));
+}
+float airfieldBoost(const float share) {
+  return mix(1.0, 1.8, smoothstep(0.05, 0.4, share));
 }
 
 /**
@@ -229,11 +246,11 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
       bool airfield = index >= AIRFIELD;
       float r = min(airfield ? max(0.8, physical * 0.6) : core, reach);
       float glare = min(r + 2.0, reach);
-      // Airfield lights matter most: they fade slower and never below a
-      // floor, so edges, centerline and approach lights read from far off.
-      float k = airfield ? max(AIRFIELD_FLOOR, pow(fade, 0.4)) : fade;
+      // Airfield lights (taxiways here; runways are drawn exactly) fade
+      // slower than streets, so they read from farther off (airfieldK).
+      float k = airfield ? airfieldK(physical / 0.8) : fade;
       float spot = exp(-d * d / (r * r));
-      float light = spot * (airfield ? 1.8 : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.15 : 0.06);
+      float light = spot * (airfield ? airfieldBoost(physical / 0.8) : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.08 : 0.06);
       vec3 contribution = LAMP_COLORS[index] * lamp.a * k * light;
       if (airfield) field += contribution;
       else sum += contribution;
@@ -308,6 +325,7 @@ mat2 rwToPixel;
 float rwR;
 float rwGlare;
 float rwK;
+float rwBoost;
 vec3 rwSum;
 float rwCover;
 
@@ -315,7 +333,7 @@ void runwayLamp(const vec2 at, const vec3 color, const float intensity) {
   vec2 d2 = rwToPixel * (at - rwP);
   float d = dot(d2, d2);
   float spot = exp(-d / (rwR * rwR));
-  float light = spot * 1.8 + exp(-d / (rwGlare * rwGlare)) * 0.08;
+  float light = spot * rwBoost + exp(-d / (rwGlare * rwGlare)) * 0.08;
   rwSum += color * intensity * rwK * light;
   rwCover += spot;
 }
@@ -353,7 +371,8 @@ void runwayLampScale(const float footprint) {
   // A little glare close up only: far away it filled the gaps between the
   // rows, and the glow pass adds the halo anyway.
   rwGlare = rwR + clamp(physical, 0.0, 2.0);
-  rwK = max(AIRFIELD_FLOOR, pow(distantFade(physical / 0.8), 0.4));
+  rwK = airfieldK(physical / 0.8);
+  rwBoost = airfieldBoost(physical / 0.8);
 }
 
 /** Approach lights off one runway end (rwP / rwToPixel set for them). */
@@ -485,14 +504,15 @@ vec4 roadLevel(const int level, const vec3 offset, const float footprint, const 
   field = vec3(0.0);
   if (roadEnabled[level] < 0.5) return vec4(0.0);
   vec2 local = roadLocal(level, offset);
-  if (any(lessThan(local, vec2(0.0))) || any(greaterThanEqual(local, vec2(ROAD_WINDOW)))) return vec4(0.0);
+  float window = roadWindow[level];
+  if (any(lessThan(local, vec2(0.0))) || any(greaterThanEqual(local, vec2(window)))) return vec4(0.0);
   float layer = roadLayer(level, ivec2(floor(local)));
   if (layer < 0.0) return vec4(0.0);
   vec3 pools = texture(roadLights, vec3(fract(local), layer)).rgb;
   lamps = nearLamps(level, local, footprint, dX, dY, field);
-  float edge = min(min(local.x, local.y), min(ROAD_WINDOW - local.x, ROAD_WINDOW - local.y));
+  float edge = min(min(local.x, local.y), min(window - local.x, window - local.y));
   ivec2 cell = ivec2(floor(local));
-  float fade = roadFade[level * int(ROAD_WINDOW * ROAD_WINDOW) + cell.y * int(ROAD_WINDOW) + cell.x];
+  float fade = roadFade[level * ROAD_STRIDE + cell.y * int(window) + cell.x];
   return vec4(pools, smoothstep(0.0, 0.25, edge) * fade);
 }
 
@@ -747,8 +767,9 @@ export class NightLightsPass extends Pass {
         roadNorth: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector3())),
         roadMercator: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector4())),
         roadCurvature: new Uniform(new Float32Array(ROAD_LEVELS)),
-        roadLayers: new Uniform(new Float32Array(ROAD_LEVELS * WINDOW * WINDOW).fill(-1)),
-        roadFade: new Uniform(new Float32Array(ROAD_LEVELS * WINDOW * WINDOW)),
+        roadLayers: new Uniform(new Float32Array(ROAD_LEVELS * MAX_WINDOW * MAX_WINDOW).fill(-1)),
+        roadFade: new Uniform(new Float32Array(ROAD_LEVELS * MAX_WINDOW * MAX_WINDOW)),
+        roadWindow: new Uniform(new Float32Array(ROAD_LEVELS).fill(4)),
         runwayCount: new Uniform(0),
         runwayOrigin: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         runwayAlong: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
@@ -831,8 +852,9 @@ export class NightLightsPass extends Pass {
       this.u<Float32Array>('roadCurvature').value[i] = level.curvature
       this.u<Float32Array>('roadTexelMeters').value[i] = level.metersPerTexel
       this.u<Vector2[]>('roadOrigin').value[i]!.set(...level.origin)
-      layers.set(level.layers, i * WINDOW * WINDOW)
-      fades.set(level.fade, i * WINDOW * WINDOW)
+      layers.set(level.layers, i * MAX_WINDOW * MAX_WINDOW)
+      fades.set(level.fade, i * MAX_WINDOW * MAX_WINDOW)
+      this.u<Float32Array>('roadWindow').value[i] = level.window
     })
   }
 
