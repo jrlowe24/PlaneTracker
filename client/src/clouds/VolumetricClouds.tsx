@@ -14,7 +14,7 @@ import { lightAnchor } from '../aircraft/lightAnchor'
 import { smoothingFactor } from '../aircraft/motion'
 import { weatherStore } from '../data/weather'
 import { useStore } from '../state/createStore'
-import { QUALITY_PRESETS, qualityStore } from '../state/quality'
+import { qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { nightState } from '../scene/nightLighting'
 import { cloudCoverStore } from './cloudCoverStore'
@@ -151,8 +151,7 @@ interface CloudsPassInternals {
 
 export const VolumetricClouds: FC = () => {
   const camera = useThree(({ camera }) => camera)
-  const level = useStore(qualityStore, s => s.level)
-  const preset = QUALITY_PRESETS[level]
+  const preset = useStore(qualityStore, s => s.settings)
   const coverageTexture = useMemo(() => new CoverageTexture(), [])
   const regional = useMemo(() => new RegionalCoverageController(), [])
   const historyReset = useMemo(() => new CloudHistoryReset(), [])
@@ -199,7 +198,7 @@ export const VolumetricClouds: FC = () => {
     // them coarser (hysteresis so dusk doesn't reallocate back and forth).
     if (!dark.current && nightState.night > 0.95) dark.current = true
     else if (dark.current && nightState.night < 0.75) dark.current = false
-    const resolution = QUALITY_PRESETS[qualityStore.get().level].cloudResolution * (dark.current ? NIGHT_RESOLUTION : 1)
+    const resolution = qualityStore.get().settings.cloudResolution * (dark.current ? NIGHT_RESOLUTION : 1)
     const scale = cloudDepth.fade > 0 ? resolution : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
@@ -276,7 +275,7 @@ export const VolumetricClouds: FC = () => {
       : null
     // Static shape parameters are re-applied every frame: <Clouds> resets
     // its layers to takram's defaults after mount.
-    const shadows = QUALITY_PRESETS[qualityStore.get().level].cloudShadows
+    const shadows = qualityStore.get().settings.cloudShadows
     for (let i = 0; i < 4; ++i) {
       const layer = layers[i]
       if (layer == null) continue
@@ -336,7 +335,7 @@ export const VolumetricClouds: FC = () => {
         // and painted blocky smudges over distant terrain and aircraft.
         effect.shadow.maxFar = SHADOW_MAX_FAR
         effect.shadow.splitLambda = 0.8
-        if (QUALITY_PRESETS[qualityStore.get().level].clouds === 'high') {
+        if (qualityStore.get().settings.clouds === 'high') {
           effect.shadow.mapSize.set(1024, 1024)
         }
         const passes = effect as unknown as CloudsPassInternals

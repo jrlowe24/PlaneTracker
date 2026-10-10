@@ -22,7 +22,7 @@ import { VolumetricClouds } from '../clouds/VolumetricClouds'
 import { NightLights } from '../nightLights/NightLights'
 import { nightEmission } from '../nightLights/nightLightsStore'
 import { useStore } from '../state/createStore'
-import { QUALITY_PRESETS, qualityStore } from '../state/quality'
+import { qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { EffectComposer } from './EffectComposer'
 import { nightState, updateNightLighting } from './nightLighting'
@@ -232,8 +232,8 @@ const up = new Vector3()
 export const PostEffects: FC = () => {
   const camera = useThree(({ camera }) => camera)
   const { transientStates } = useContext(AtmosphereContext)
-  const cloudsEnabled = useStore(qualityStore, s => QUALITY_PRESETS[s.level].clouds !== false)
-  const lensFlare = useStore(qualityStore, s => QUALITY_PRESETS[s.level].lensFlare)
+  const cloudsEnabled = useStore(qualityStore, s => s.settings.clouds !== false)
+  const lensFlare = useStore(qualityStore, s => s.settings.lensFlare)
   const navGlow = useMemo(() => new NavGlowEffect(camera), [camera])
   useEffect(
     () => () => {

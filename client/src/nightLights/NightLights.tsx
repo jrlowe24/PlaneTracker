@@ -83,7 +83,9 @@ class NightLightsController {
     }
 
     const altitude = camera.position.length() - WGS84_A
-    const detail = altitude < DETAIL_MAX_ALTITUDE && qualityStore.get().level !== 'low'
+    const quality = qualityStore.get().settings
+    const detail = altitude < DETAIL_MAX_ALTITUDE && quality.cityLightDetail
+    effect.setWindows(quality.buildingWindows)
     if (detail) {
       const center = ecefToGeodetic(lightAnchor.x, lightAnchor.y, lightAnchor.z)
       tiles.setCenter(center.lat, center.lon)

@@ -6,7 +6,7 @@ import { getGoogleTiles } from '../globe/googleTiles'
 import { weatherStore } from '../data/weather'
 import { nightLightsStore } from '../nightLights/nightLightsStore'
 import { cameraModeStore } from '../state/cameraMode'
-import { QUALITY_PRESETS, qualityStore } from '../state/quality'
+import { qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { useStore } from '../state/createStore'
 
@@ -88,7 +88,7 @@ const NightLightsCredit: FC = () => {
 const WeatherCredit: FC = () => {
   const attribution = useStore(weatherStore, s => s.attribution)
   const live = useStore(settingsStore, s => s.cloudSource === 'weather')
-  const clouds = useStore(qualityStore, s => QUALITY_PRESETS[s.level].clouds !== false)
+  const clouds = useStore(qualityStore, s => s.settings.clouds !== false)
   if (attribution == null || !live || !clouds) return null
   return (
     <>

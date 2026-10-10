@@ -872,7 +872,7 @@ void main() {
   float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
   // Lit windows on walls (not on roofs or the ground).
   float wall = 1.0 - smoothstep(0.3, 0.55, upness);
-  if (wall > 0.0 && normalLength > 1e-12) {
+  if (windowGain > 0.0 && wall > 0.0 && normalLength > 1e-12) {
     vec3 windows = buildingWindows(offset, normal, dX, dY) * windowGain * wall * night;
     light += windows;
     glow += lightLuminance(windows) * 0.25;
@@ -903,6 +903,9 @@ function litShare(table: readonly number[], hour: number): number {
   const t = h - i
   return table[i]! + (table[(i + 1) % 12]! - table[i]!) * t * t * (3 - 2 * t)
 }
+
+/** Lit windows' brightness (relative to the street lamps' lampGain). */
+const WINDOW_GAIN = 0.02
 
 /** Glow around night lights (blurred light added to them). */
 const NIGHT_GLOW = 0.45
@@ -1034,7 +1037,7 @@ export class NightLightsPass extends Pass {
         roadLamps: new Uniform(null),
         lampGain: new Uniform(0.12),
         buildingMap: new Uniform(null),
-        windowGain: new Uniform(0.02),
+        windowGain: new Uniform(WINDOW_GAIN),
         windowShares: new Uniform(new Vector2(0.2, 0.2)),
         roadTexelMeters: new Uniform(new Float32Array(ROAD_LEVELS)),
         roadOrigin: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector2())),
@@ -1153,6 +1156,11 @@ export class NightLightsPass extends Pass {
 
   setAirfieldOn(value: number): void {
     this.u<number>('airfieldOn').value = value
+  }
+
+  /** Lit windows on buildings on or off (quality setting). */
+  setWindows(enabled: boolean): void {
+    this.u<number>('windowGain').value = enabled ? WINDOW_GAIN : 0
   }
 
   /** Solar time at the view (hours): sets how many windows are lit. */

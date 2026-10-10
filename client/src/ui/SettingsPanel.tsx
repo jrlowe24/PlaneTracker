@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC, type ReactNode } from 'react'
+import { useEffect, useState, type FC } from 'react'
 
 import { cloudCoverStore } from '../clouds/cloudCoverStore'
 import { useStore } from '../state/createStore'
@@ -7,6 +7,8 @@ import { resolutionStore } from '../state/resolution'
 import { settingsStore } from '../state/settings'
 import { formatHours, setViewSolarHours, timePresets, viewSolarHours } from '../state/skyTime'
 import { uiStore } from '../state/ui'
+import { QualityDetails } from './QualityDetails'
+import { Segmented } from './Segmented'
 import { useIsPhone } from './useMedia'
 import { useSheetDrag } from './useSheetDrag'
 
@@ -23,10 +25,11 @@ const QUALITY: Array<{ id: QualityLevel | 'auto'; label: string }> = [
   { id: 'auto', label: 'Auto' },
   { id: 'low', label: 'Low' },
   { id: 'medium', label: 'Medium' },
-  { id: 'high', label: 'High' }
+  { id: 'high', label: 'High' },
+  { id: 'ultra', label: 'Ultra' }
 ]
 
-const LEVEL_LABELS: Record<QualityLevel, string> = { low: 'Low', medium: 'Medium', high: 'High' }
+const LEVEL_LABELS: Record<QualityLevel, string> = { low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra' }
 
 /** Re-render periodically (the clock and the view's longitude move). */
 function useTicker(intervalMs: number): void {
@@ -40,30 +43,6 @@ function useTicker(intervalMs: number): void {
     }
   }, [intervalMs])
 }
-
-const Segmented: FC<{
-  label: string
-  options: Array<{ id: string; label: ReactNode }>
-  value: string | null
-  onChange: (id: string) => void
-}> = ({ label, options, value, onChange }) => (
-  <div className='segmented' role='radiogroup' aria-label={label}>
-    {options.map(option => (
-      <button
-        key={option.id}
-        type='button'
-        role='radio'
-        aria-checked={value === option.id}
-        className={value === option.id ? 'active' : ''}
-        onClick={() => {
-          onChange(option.id)
-        }}
-      >
-        {option.label}
-      </button>
-    ))}
-  </div>
-)
 
 const TimeSection: FC = () => {
   const offset = useStore(settingsStore, s => s.timeOffsetMs)
@@ -148,14 +127,14 @@ const QualitySection: FC = () => {
       <div className='settings-label'>
         <span>Graphics</span>
         <span className='settings-value'>
-          {choice === 'auto' ? `Auto · ${LEVEL_LABELS[level]}` : LEVEL_LABELS[level]}
+          {choice === 'auto' ? `Auto · ${LEVEL_LABELS[level]}` : choice === 'custom' ? 'Custom' : LEVEL_LABELS[level]}
           {adapted && ` · ${Math.round(scale * 100)}% res`}
         </span>
       </div>
       <Segmented
         label='Graphics quality'
         options={QUALITY}
-        value={choice}
+        value={choice === 'custom' ? null : choice}
         onChange={id => {
           setQualityChoice(id as QualityLevel | 'auto')
         }}
@@ -163,6 +142,7 @@ const QualitySection: FC = () => {
       <p className='settings-note'>
         Resolution adapts automatically to keep it smooth. Low suits phones and saves battery.
       </p>
+      <QualityDetails />
     </section>
   )
 }

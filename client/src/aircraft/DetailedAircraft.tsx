@@ -5,7 +5,7 @@ import { Group, Matrix4, Mesh, PerspectiveCamera, Vector3, type Camera, type Obj
 
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
-import { isMobileDevice } from '../state/quality'
+import { isMobileDevice, qualityStore } from '../state/quality'
 import { nightEmission } from '../nightLights/nightLightsStore'
 import { nightState } from '../scene/nightLighting'
 import { selectionStore } from '../state/selection'
@@ -27,7 +27,8 @@ const DETAIL_RADIUS = 1500
  * Each model's textures cost GPU memory phones don't have to spare.
  */
 const PHONE = isMobileDevice()
-const MAX_DETAILED = PHONE ? 4 : 12
+/** Phones: never more than this many, whatever the quality setting. */
+const PHONE_MAX_DETAILED = 4
 /** Minimum on-screen length (px) of the followed aircraft during a fly-in. */
 const FLY_IN_MIN_PIXELS = 26
 
@@ -65,13 +66,15 @@ class DetailedAircraftController {
 
   private wanted(): Set<string> {
     const wanted = new Set<string>()
+    const setting = qualityStore.get().settings.maxDetailedAircraft
+    const maxDetailed = PHONE ? Math.min(PHONE_MAX_DETAILED, setting) : setting
     const { mode, targetHex } = cameraModeStore.get()
     if (mode !== 'globe' && targetHex != null) wanted.add(targetHex)
     const near = flightConnection.registry.list
       .filter(a => a.cameraDistance < DETAIL_RADIUS && a.pose != null)
       .sort((a, b) => a.cameraDistance - b.cameraDistance)
     for (const aircraft of near) {
-      if (wanted.size >= MAX_DETAILED) break
+      if (wanted.size >= maxDetailed) break
       wanted.add(aircraft.hex)
     }
     return wanted

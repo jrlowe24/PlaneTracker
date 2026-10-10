@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type FC } from 'react'
 import { config } from '../config'
 import { getGoogleTiles } from '../globe/googleTiles'
 import { useStore } from '../state/createStore'
-import { QUALITY_PRESETS, qualityStore } from '../state/quality'
+import { qualityStore, stepDownAuto } from '../state/quality'
 import { resolutionStore } from '../state/resolution'
 import { nightState } from './nightLighting'
 
@@ -118,8 +118,7 @@ class ResolutionGovernor {
 /** Applies the quality preset's resolution and tile error target (both adaptively). */
 export const QualityApplier: FC = () => {
   const setDpr = useThree(({ setDpr }) => setDpr)
-  const level = useStore(qualityStore, s => s.level)
-  const preset = QUALITY_PRESETS[level]
+  const preset = useStore(qualityStore, s => s.settings)
   const governor = useMemo(() => new ResolutionGovernor(), [])
   const scale = useStore(resolutionStore, s => s.scale)
   const tileFactor = useStore(resolutionStore, s => s.tileFactor)
@@ -171,9 +170,7 @@ export const QualityApplier: FC = () => {
     // down a preset: a lighter preset at full sharpness looks better than a
     // heavy one rendered blurry.
     const quality = qualityStore.get()
-    if (quality.choice === 'auto' && quality.level !== 'low' && governor.takeDowngrade()) {
-      qualityStore.set({ level: quality.level === 'high' ? 'medium' : 'low' })
-    }
+    if (quality.choice === 'auto' && quality.level !== 'low' && governor.takeDowngrade()) stepDownAuto()
   })
 
 
