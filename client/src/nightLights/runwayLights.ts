@@ -1,5 +1,7 @@
-import { geodeticToEcef } from '@windowseat/shared'
-import { Vector3, Vector4 } from 'three'
+import { ecefToGeodetic, geodeticToEcef, geoidHeight } from '@windowseat/shared'
+import { Raycaster, Vector3, Vector4 } from 'three'
+
+import { peekGoogleTiles } from '../globe/googleTiles'
 
 import type { RunwayRecord } from './roadRaster.worker'
 
@@ -25,10 +27,29 @@ const KEEP_DISTANCE = 400_000
 interface Runway {
   a: Vector3
   b: Vector3
+  /** Ends in degrees (lat, lon) for ground sampling. */
+  ends: [[number, number], [number, number]]
   lighting: number
   /** Approach light length at each end (m). */
   approach: [number, number]
+  /** Ground height (ellipsoid, m) at each end, NaN until sampled. */
+  heights: [number, number]
+  /** When the heights were last sampled (performance.now()). */
+  sampledAt: number
 }
+
+/** Unknown threshold height in the shader (approach lights then follow the ground). */
+const NO_HEIGHT = -1e6
+/** Ground heights are sampled (one raycast per end) for runways this close. */
+const SAMPLE_DISTANCE = 40_000
+/** Resampled as tiles refine. */
+const RESAMPLE_MS = 20_000
+const RAY_START = 2000
+
+const raycaster = new Raycaster()
+;(raycaster as Raycaster & { firstHitOnly?: boolean }).firstHitOnly = true
+const rayOrigin = new Vector3()
+const rayDown = new Vector3()
 
 export interface RunwayUniforms {
   count: number
@@ -38,7 +59,10 @@ export interface RunwayUniforms {
   along: Vector4[]
   /** Unit vector across, to the left of `along`. */
   across: Vector4[]
-  /** x, y: approach light length at A and B (m). */
+  /**
+   * x, y: approach light length at A and B (m); z, w: ground height at A
+   * and B (ellipsoid, m; NO_HEIGHT when not known).
+   */
   approach: Vector4[]
 }
 
@@ -86,7 +110,18 @@ export class RunwayLights {
       const covered = this.runways.findIndex(
         r => distanceToSegment(r.a, a, b) < 15 && distanceToSegment(r.b, a, b) < 15
       )
-      const runway: Runway = { a, b, lighting: LIGHTING_CODE[record.lighting], approach: [0, 0] }
+      const runway: Runway = {
+        a,
+        b,
+        ends: [
+          [record.a[1], record.a[0]],
+          [record.b[1], record.b[0]]
+        ],
+        lighting: LIGHTING_CODE[record.lighting],
+        approach: [0, 0],
+        heights: [Number.NaN, Number.NaN],
+        sampledAt: -Infinity
+      }
       if (covered >= 0) this.runways[covered] = runway
       else this.runways.push(runway)
       this.dirty = true
@@ -106,6 +141,11 @@ export class RunwayLights {
       .map(r => ({ r, d: distanceToSegment(camera, r.a, r.b) }))
       .sort((x, y) => x.d - y.d)
       .slice(0, MAX_RUNWAYS)
+    // Threshold heights: approach lights stand level with the runway end
+    // on poles, not on the ground beyond it. One runway sampled per frame.
+    const now = performance.now()
+    const sample = nearest.find(({ r, d }) => d < SAMPLE_DISTANCE && now - r.sampledAt > RESAMPLE_MS)
+    if (sample != null) this.sampleHeights(sample.r, now)
     const u = this.uniforms
     u.count = nearest.length
     nearest.forEach(({ r }, i) => {
@@ -119,7 +159,35 @@ export class RunwayLights {
       u.along[i]!.set(direction.x, direction.y, direction.z, r.lighting)
       const across = point.crossVectors(up, direction)
       u.across[i]!.set(across.x, across.y, across.z, 0)
-      u.approach[i]!.set(r.approach[0], r.approach[1], 0, 0)
+      u.approach[i]!.set(
+        r.approach[0],
+        r.approach[1],
+        Number.isFinite(r.heights[0]) ? r.heights[0] : NO_HEIGHT,
+        Number.isFinite(r.heights[1]) ? r.heights[1] : NO_HEIGHT
+      )
+    })
+  }
+
+  /** Ground height at both ends of a runway, from the photorealistic tiles. */
+  private sampleHeights(runway: Runway, now: number): void {
+    runway.sampledAt = now
+    const ground = peekGoogleTiles()?.group
+    if (ground == null) return
+    runway.ends.forEach(([lat, lon], i) => {
+      const known = runway.heights[i]!
+      const guess = Number.isFinite(known) ? known : geoidHeight(lat, lon)
+      const start = geodeticToEcef(lat, lon, guess + RAY_START)
+      rayOrigin.set(start.x, start.y, start.z)
+      rayDown.copy(rayOrigin).normalize().negate()
+      raycaster.set(rayOrigin, rayDown)
+      raycaster.far = RAY_START * 3
+      const hit = raycaster.intersectObject(ground, true)[0]
+      if (hit == null) {
+        runway.sampledAt = now - RESAMPLE_MS + 2000 // tiles not there yet: retry soon
+        return
+      }
+      const height = ecefToGeodetic(hit.point.x, hit.point.y, hit.point.z).height
+      if (height > geoidHeight(lat, lon) - 450) runway.heights[i] = height
     })
   }
 

@@ -334,68 +334,129 @@ void lampRows(const vec2 origin, const vec2 rowDir, const float rowStep, const f
   }
 }
 
-vec3 runwayLights(const vec3 offset, const float footprint, const vec3 dX, const vec3 dY) {
-  rwSum = vec3(0.0);
-  rwCover = 0.0;
+/** Lamp size and brightness for lamps seen at this footprint (m per pixel). */
+void runwayLampScale(const float footprint) {
   float physical = 0.35 / max(footprint, 1e-3);
   rwR = max(0.8, physical * 0.6);
   // A little glare close up only: far away it filled the gaps between the
   // rows, and the glow pass adds the halo anyway.
   rwGlare = rwR + clamp(physical, 0.0, 2.0);
   rwK = max(AIRFIELD_FLOOR, pow(distantFade(physical / 0.8), 0.4));
+}
+
+/** Approach lights off one runway end (rwP / rwToPixel set for them). */
+void approachLights(const vec2 end, const vec2 outward, const float reach, const bool isPrecision) {
+  vec3 white = LAMP_COLORS[8];
+  vec3 red = LAMP_COLORS[7];
+  const vec2 ACROSS = vec2(0.0, 1.0);
+  if (isPrecision) {
+    lampRows(end + outward * 30.0, outward, 30.0, floor((reach - 30.0) / 30.0) + 1.0, ACROSS, 1.0, 5.0, white, 0.85);
+    if (reach >= 150.0) lampRow(end + outward * 150.0 - ACROSS * 9.0, ACROSS, 1.5, 13.0, white, 0.85);
+    if (reach >= 300.0) lampRow(end + outward * 300.0 - ACROSS * 15.0, ACROSS, 1.5, 21.0, white, 0.85);
+    float sideRows = floor((min(reach, 270.0) - 30.0) / 30.0) + 1.0;
+    lampRows(end + outward * 30.0 - ACROSS * 12.9, outward, 30.0, sideRows, ACROSS, 1.5, 3.0, red, 0.7);
+    lampRows(end + outward * 30.0 + ACROSS * 12.9, outward, 30.0, sideRows, ACROSS, 1.5, 3.0, red, 0.7);
+  } else {
+    lampRows(end + outward * 60.0, outward, 60.0, floor((min(reach, 420.0) - 60.0) / 60.0) + 1.0, ACROSS, 1.0, 5.0, white, 0.85);
+    if (reach >= 300.0) lampRow(end + outward * 300.0 - ACROSS * 10.5, ACROSS, 1.5, 15.0, white, 0.85);
+    if (reach >= 480.0) lampRow(end + outward * 480.0, outward, 60.0, floor((reach - 480.0) / 60.0) + 1.0, white, 0.85);
+  }
+}
+
+/**
+ * Runway lights for this pixel. dir, dirX, dirY: the view ray and its
+ * screen derivatives (approach lights are placed where the ray meets the
+ * level plane through the runway end: they stand on poles level with the
+ * runway, not on the ground beyond it, and hide behind nearer terrain).
+ */
+vec3 runwayLights(const vec3 offset, const float footprint, const vec3 dX, const vec3 dY, const vec3 dir, const vec3 dirX, const vec3 dirY) {
+  rwSum = vec3(0.0);
+  rwCover = 0.0;
   vec3 RUNWAY_WHITE = LAMP_COLORS[8];
   vec3 GREEN_LIGHT = LAMP_COLORS[5];
   vec3 RED_LIGHT = LAMP_COLORS[7];
   const vec2 ALONG = vec2(1.0, 0.0);
   const vec2 ACROSS = vec2(0.0, 1.0);
+  float groundDistance = length(offset);
   for (int n = 0; n < ${MAX_RUNWAYS}; ++n) {
     if (n >= runwayCount) break;
     vec4 o = runwayOrigin[n];
     vec4 al = runwayAlong[n];
     vec3 ac = runwayAcross[n].xyz;
-    vec2 approach = runwayApproach[n].xy;
+    vec4 approach = runwayApproach[n];
     float len = o.w;
-    vec3 v = offset - o.xyz;
-    rwP = vec2(dot(v, al.xyz), dot(v, ac));
-    if (rwP.x < -approach.x - 60.0 || rwP.x > len + approach.y + 60.0 || abs(rwP.y) > 60.0) continue;
-    mat2 toLocal = mat2(dot(dX, al.xyz), dot(dX, ac), dot(dY, al.xyz), dot(dY, ac));
-    if (abs(determinant(toLocal)) < 1e-10) continue;
-    rwToPixel = inverse(toLocal);
     int lighting = int(al.w + 0.5);
     bool basic = lighting == 0;
     bool isPrecision = lighting == 2;
     float halfWidth = basic ? 12.0 : 23.0;
-    // Edge lights, and the centerline.
-    float spacing = isPrecision ? 30.0 : 60.0;
-    lampRows(vec2(spacing * 0.5, 0.0), ALONG, spacing, floor((len - spacing * 0.5) / spacing) + 1.0, ACROSS, 2.0 * halfWidth, 2.0, RUNWAY_WHITE, basic ? 0.6 : 1.0);
-    if (isPrecision) lampRow(vec2(7.5, 0.0), ALONG, 15.0, floor((len - 7.5) / 15.0) + 1.0, RUNWAY_WHITE, 0.25);
+    vec3 v = offset - o.xyz;
+    vec2 ground = vec2(dot(v, al.xyz), dot(v, ac));
+    mat2 groundLocal = mat2(dot(dX, al.xyz), dot(dX, ac), dot(dY, al.xyz), dot(dY, ac));
+    bool groundOk = abs(determinant(groundLocal)) > 1e-10;
+    mat2 groundToPixel = groundOk ? inverse(groundLocal) : mat2(0.0);
+
+    // On the pavement: edge lights, centerline, thresholds.
+    if (groundOk && ground.x > -60.0 && ground.x < len + 60.0 && abs(ground.y) < 60.0) {
+      rwP = ground;
+      rwToPixel = groundToPixel;
+      runwayLampScale(footprint);
+      float spacing = isPrecision ? 30.0 : 60.0;
+      lampRows(vec2(spacing * 0.5, 0.0), ALONG, spacing, floor((len - spacing * 0.5) / spacing) + 1.0, ACROSS, 2.0 * halfWidth, 2.0, RUNWAY_WHITE, basic ? 0.6 : 1.0);
+      if (isPrecision) lampRow(vec2(7.5, 0.0), ALONG, 15.0, floor((len - 7.5) / 15.0) + 1.0, RUNWAY_WHITE, 0.25);
+      for (int e = 0; e < 2; ++e) {
+        vec2 end = vec2(e == 0 ? 0.0 : len, 0.0);
+        vec2 outward = vec2(e == 0 ? -1.0 : 1.0, 0.0);
+        if (basic) {
+          for (int s = 0; s < 2; ++s) {
+            float side = s == 0 ? -1.0 : 1.0;
+            lampRow(end + outward * 2.0 + ACROSS * (side * (halfWidth - 1.5)), -side * ACROSS, 3.0, 3.0, GREEN_LIGHT, 0.7);
+            lampRow(end - outward * 2.0 + ACROSS * (side * (halfWidth - 1.5)), -side * ACROSS, 3.0, 3.0, RED_LIGHT, 0.45);
+          }
+        } else {
+          lampRow(end + outward * 2.0 - ACROSS * 21.0, ACROSS, 3.0, 15.0, GREEN_LIGHT, 1.0);
+          lampRow(end - outward * 2.0 - ACROSS * 19.5, ACROSS, 3.0, 14.0, RED_LIGHT, 0.6);
+        }
+      }
+    }
+
+    // Approach lights, level with each runway end.
+    if (basic) continue;
     for (int e = 0; e < 2; ++e) {
+      float reach = e == 0 ? approach.x : approach.y;
+      if (reach < 30.0) continue;
       vec2 end = vec2(e == 0 ? 0.0 : len, 0.0);
       vec2 outward = vec2(e == 0 ? -1.0 : 1.0, 0.0);
-      float reach = e == 0 ? approach.x : approach.y;
-      if (basic) {
-        for (int s = 0; s < 2; ++s) {
-          float side = s == 0 ? -1.0 : 1.0;
-          lampRow(end + outward * 2.0 + ACROSS * (side * (halfWidth - 1.5)), -side * ACROSS, 3.0, 3.0, GREEN_LIGHT, 0.7);
-          lampRow(end - outward * 2.0 + ACROSS * (side * (halfWidth - 1.5)), -side * ACROSS, 3.0, 3.0, RED_LIGHT, 0.45);
-        }
-        continue;
-      }
-      lampRow(end + outward * 2.0 - ACROSS * 21.0, ACROSS, 3.0, 15.0, GREEN_LIGHT, 1.0);
-      lampRow(end - outward * 2.0 - ACROSS * 19.5, ACROSS, 3.0, 14.0, RED_LIGHT, 0.6);
-      if (reach < 30.0) continue;
-      if (isPrecision) {
-        lampRows(end + outward * 30.0, outward, 30.0, floor((reach - 30.0) / 30.0) + 1.0, ACROSS, 1.0, 5.0, RUNWAY_WHITE, 0.85);
-        if (reach >= 150.0) lampRow(end + outward * 150.0 - ACROSS * 9.0, ACROSS, 1.5, 13.0, RUNWAY_WHITE, 0.85);
-        if (reach >= 300.0) lampRow(end + outward * 300.0 - ACROSS * 15.0, ACROSS, 1.5, 21.0, RUNWAY_WHITE, 0.85);
-        float sideRows = floor((min(reach, 270.0) - 30.0) / 30.0) + 1.0;
-        lampRows(end + outward * 30.0 - ACROSS * 12.9, outward, 30.0, sideRows, ACROSS, 1.5, 3.0, RED_LIGHT, 0.7);
-        lampRows(end + outward * 30.0 + ACROSS * 12.9, outward, 30.0, sideRows, ACROSS, 1.5, 3.0, RED_LIGHT, 0.7);
+      float height = e == 0 ? approach.z : approach.w;
+      if (height < -1e5) {
+        // Threshold height not known yet: on the ground, as before.
+        if (!groundOk) continue;
+        float beyond = dot(ground - end, outward);
+        if (beyond < -40.0 || beyond > reach + 40.0 || abs(ground.y) > 40.0) continue;
+        rwP = ground;
+        rwToPixel = groundToPixel;
+        runwayLampScale(footprint);
       } else {
-        lampRows(end + outward * 60.0, outward, 60.0, floor((min(reach, 420.0) - 60.0) / 60.0) + 1.0, ACROSS, 1.0, 5.0, RUNWAY_WHITE, 0.85);
-        if (reach >= 300.0) lampRow(end + outward * 300.0 - ACROSS * 10.5, ACROSS, 1.5, 15.0, RUNWAY_WHITE, 0.85);
-        if (reach >= 480.0) lampRow(end + outward * 480.0, outward, 60.0, floor((reach - 480.0) / 60.0) + 1.0, RUNWAY_WHITE, 0.85);
+        vec3 base = o.xyz + al.xyz * (e == 0 ? 0.0 : len);
+        vec3 normal = normalize(cameraPositionECEF + base);
+        vec3 point = base + normal * height;
+        float facing = dot(dir, normal);
+        if (abs(facing) < 1e-4) continue;
+        float t = dot(point, normal) / facing;
+        // Behind the camera, or with terrain (or a building) in front.
+        if (t <= 0.0 || t > groundDistance + 3.0 + 0.003 * t) continue;
+        vec3 q = dir * t;
+        vec3 qv = q - o.xyz;
+        rwP = vec2(dot(qv, al.xyz), dot(qv, ac));
+        float beyond = dot(rwP - end, outward);
+        if (beyond < -40.0 || beyond > reach + 40.0 || abs(rwP.y) > 40.0) continue;
+        vec3 qX = dirX * t - dir * (t * dot(dirX, normal) / facing);
+        vec3 qY = dirY * t - dir * (t * dot(dirY, normal) / facing);
+        mat2 local = mat2(dot(qX, al.xyz), dot(qX, ac), dot(qY, al.xyz), dot(qY, ac));
+        if (abs(determinant(local)) < 1e-10) continue;
+        rwToPixel = inverse(local);
+        runwayLampScale(t * pixelAngle);
       }
+      approachLights(end, outward, reach, isPrecision);
     }
   }
   // Overlapping lamps (far away) blend to their own brightness.
@@ -443,7 +504,8 @@ void main() {
     vec3 n = cross(dXDay, dYDay);
     float nLength = length(n);
     float upDay = nLength > 1e-12 ? abs(dot(n, up)) / nLength : 0.0;
-    vec3 runway = runwayLights(offset, footprintDay, dXDay, dYDay) * lampGain * smoothstep(0.35, 0.85, upDay) * fieldOn;
+    vec3 dirDay = normalize(offset);
+    vec3 runway = runwayLights(offset, footprintDay, dXDay, dYDay, dirDay, dFdx(dirDay), dFdy(dirDay)) * lampGain * smoothstep(0.35, 0.85, upDay) * fieldOn;
     if (any(isnan(runway)) || any(isinf(runway))) runway = vec3(0.0);
     outColor = vec4(runway, lightLuminance(runway) * glowShare(0.35 / max(footprintDay, 1e-3) / 0.8));
     return;
@@ -482,7 +544,8 @@ void main() {
     if (level == ${ROAD_LEVELS - 1}) coarse = w;
     remaining -= w;
   }
-  fieldLamps += runwayLights(offset, footprint, dX, dY);
+  vec3 viewDir = normalize(offset);
+  fieldLamps += runwayLights(offset, footprint, dX, dY, viewDir, dFdx(viewDir), dFdy(viewDir));
 
   // Street light lands on the ground, not on walls: only on surfaces that
   // face up (normal from depth derivatives).
