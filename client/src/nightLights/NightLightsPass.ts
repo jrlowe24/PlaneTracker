@@ -1,4 +1,4 @@
-import { Pass } from 'postprocessing'
+import { MipmapBlurPass, Pass } from 'postprocessing'
 import {
   GLSL3,
   HalfFloatType,
@@ -184,7 +184,7 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
       float r = min(airfield ? max(0.8, physical * 0.6) : core, reach);
       float glare = min(r + 2.0, reach);
       float k = airfield ? sqrt(fade) : fade;
-      float light = exp(-d * d / (r * r)) * (airfield ? 3.0 : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.3 : 0.06);
+      float light = exp(-d * d / (r * r)) * (airfield ? 1.8 : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.15 : 0.06);
       sum += LAMP_COLORS[index] * lamp.a * k * light;
     }
   }
@@ -320,6 +320,8 @@ void main() {
  */
 export class NightLightsPass extends Pass {
   readonly target = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })
+  /** The lights blurred: their glow (NightGlowEffect adds it to the scene). */
+  private readonly blur = new MipmapBlurPass()
   private readonly material: ShaderMaterial
 
   constructor(private viewCamera: Camera) {
@@ -364,6 +366,12 @@ export class NightLightsPass extends Pass {
       }
     })
     this.fullscreenMaterial = this.material
+    this.blur.levels = 7
+    this.blur.radius = 0.75
+  }
+
+  get glowTexture(): Texture {
+    return this.blur.texture
   }
 
   private u<T>(name: string): { value: T } {
@@ -419,6 +427,7 @@ export class NightLightsPass extends Pass {
 
   override setSize(width: number, height: number): void {
     this.target.setSize(width, height)
+    this.blur.setSize(width, height)
     this.u<Vector2>('texelSize').value.set(1 / width, 1 / height)
   }
 
@@ -436,11 +445,13 @@ export class NightLightsPass extends Pass {
     this.u<Texture | null>('inputBuffer').value = inputBuffer?.texture ?? null
     renderer.setRenderTarget(this.target)
     renderer.render(this.scene, this.camera)
+    this.blur.render(renderer, this.target, null)
   }
 
   override dispose(): void {
     super.dispose()
     this.target.dispose()
+    this.blur.dispose()
     this.material.dispose()
   }
 }

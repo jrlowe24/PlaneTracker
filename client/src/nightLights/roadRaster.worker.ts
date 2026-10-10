@@ -40,7 +40,7 @@ export interface RoadRasterResponse {
 type Rgb = readonly [number, number, number]
 
 // Linear light colors (relative), roughly by lamp type.
-const SODIUM: Rgb = [1.0, 0.42, 0.1]
+const SODIUM: Rgb = [1.0, 0.56, 0.22]
 const WARM_LED: Rgb = [1.0, 0.68, 0.36]
 const NEUTRAL_LED: Rgb = [0.95, 0.85, 0.7]
 const WHITE: Rgb = [0.92, 0.94, 1.0]
@@ -69,8 +69,8 @@ interface RoadStyle {
 }
 
 const ROADS: Record<string, RoadStyle> = {
-  motorway: { spacing: 70, bothSides: true, width: 34, pool: 0.32, lamp: 1.0, colors: [0.55, [SODIUM, NEUTRAL_LED]] },
-  trunk: { spacing: 60, bothSides: true, width: 28, pool: 0.32, lamp: 1.0, colors: [0.5, [SODIUM, NEUTRAL_LED]] },
+  motorway: { spacing: 70, bothSides: false, width: 34, pool: 0.32, lamp: 1.0, colors: [0.55, [SODIUM, NEUTRAL_LED]] },
+  trunk: { spacing: 60, bothSides: false, width: 28, pool: 0.32, lamp: 1.0, colors: [0.5, [SODIUM, NEUTRAL_LED]] },
   primary: { spacing: 50, bothSides: true, width: 24, pool: 0.36, lamp: 1.0, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
   secondary: { spacing: 50, bothSides: true, width: 20, pool: 0.32, lamp: 1.0, colors: [0.35, [SODIUM, NEUTRAL_LED]] },
   tertiary: { spacing: 55, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.45, [SODIUM, WARM_LED]] },
@@ -166,9 +166,11 @@ function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, base: 
   if (!pool || !poolsEnabled) return
   const r = Math.max(1.5, radius * 2)
   const gradient = ctx.createRadialGradient(x, y, 0, x, y, r)
-  gradient.addColorStop(0, rgba(color, intensity * 0.45))
-  gradient.addColorStop(0.4, rgba(color, intensity * 0.2))
-  gradient.addColorStop(0.75, rgba(color, intensity * 0.05))
+  // Smooth falloff (no visible rim): bright under the lamp, fading out.
+  gradient.addColorStop(0, rgba(color, intensity * 0.3))
+  gradient.addColorStop(0.2, rgba(color, intensity * 0.2))
+  gradient.addColorStop(0.45, rgba(color, intensity * 0.08))
+  gradient.addColorStop(0.7, rgba(color, intensity * 0.025))
   gradient.addColorStop(1, 'rgb(0,0,0)')
   ctx.fillStyle = gradient
   ctx.fillRect(x - r, y - r, 2 * r, 2 * r)
@@ -253,7 +255,9 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
       let n = 0
       along(line, spacing, spacing * hash(i, 7), (x, y, dx, dy) => {
         const s = style.bothSides ? (n++ % 2 === 0 ? 1 : -1) : 1
-        lamp(ctx, x - dy * side * s, y + dx * side * s, radius, color, style.lamp * level)
+        // Real poles aren't evenly spaced: shift each along the road.
+        const j = (hash(Math.round(x * 8), Math.round(y * 8), 5) - 0.5) * 0.4 * spacing
+        lamp(ctx, x + dx * j - dy * side * s, y + dy * j + dx * side * s, radius, color, style.lamp * level)
       })
     }
   }
@@ -341,7 +345,7 @@ function drawTaxiway(ctx: Ctx, line: Point[], mpp: number): void {
  * ends inside the tile (not where the tile cut the runway), an approach
  * light system there (centerline barrettes every 30 m out to 900 m, a
  * crossbar at 300 m, red side rows over the inner 300 m), and a dim
- * centerline every 30 m.
+ * centerline every 15 m.
  */
 function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
   const half = 23 / mpp
@@ -353,14 +357,14 @@ function drawRunway(ctx: Ctx, line: Point[], mpp: number, size: number): void {
   // Spill from the edge lights across the pavement (the surface's own
   // color shows: markings, centerline paint), strongest near the edges.
   if (poolsEnabled) {
-    strokeLine(ctx, line, Math.max(1, 56 / mpp), rgba(RUNWAY, 0.016))
-    strokeLine(ctx, line, Math.max(1, 30 / mpp), rgba(RUNWAY, 0.01))
+    strokeLine(ctx, line, Math.max(1, 50 / mpp), rgba(RUNWAY, 0.005))
   }
   along(line, 30 / mpp, 15 / mpp, (x, y, dx, dy) => {
     lamp(ctx, x - dy * half, y + dx * half, r, RUNWAY, 1, false)
     lamp(ctx, x + dy * half, y - dx * half, r, RUNWAY, 1, false)
   })
-  along(line, 30 / mpp, 15 / mpp, (x, y) => {
+  // Centerline at twice the edge lights' density.
+  along(line, 15 / mpp, 7.5 / mpp, (x, y) => {
     lamp(ctx, x, y, r * 0.6, RUNWAY, 0.25, false)
   })
   const margin = size * 0.01

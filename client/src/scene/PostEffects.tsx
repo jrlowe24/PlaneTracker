@@ -20,6 +20,7 @@ import { NavGlowEffect } from '../aircraft/NavGlowEffect'
 import { cloudDepth } from '../clouds/cloudDepth'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
 import { NightLights } from '../nightLights/NightLights'
+import { NightGlowEffect } from '../nightLights/NightGlowEffect'
 import { nightEmission } from '../nightLights/nightLightsStore'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
@@ -203,12 +204,22 @@ function patchLightingMask(pass: LightingMaskPass): void {
 /** Enables the night-lights pass only when NightLights says it's needed. */
 
 const up = new Vector3()
+/** Glow around night lights (blurred light added to the scene). */
+const NIGHT_GLOW = 0.45
 
 export const PostEffects: FC = () => {
   const camera = useThree(({ camera }) => camera)
   const { transientStates } = useContext(AtmosphereContext)
   const cloudsEnabled = useStore(qualityStore, s => QUALITY_PRESETS[s.level].clouds !== false)
   const lensFlare = useStore(qualityStore, s => QUALITY_PRESETS[s.level].lensFlare)
+  const nightGlow = useMemo(() => new NightGlowEffect(), [])
+  useEffect(
+    () => () => {
+      nightGlow.dispose()
+    },
+    [nightGlow]
+  )
+  const nightGlowRef = useRef<NightGlowEffect>(null)
   const navGlow = useMemo(() => new NavGlowEffect(camera), [camera])
   useEffect(
     () => () => {
@@ -269,6 +280,7 @@ export const PostEffects: FC = () => {
         Math.min(delta, 0.1)
       )
     }
+    nightGlowRef.current?.setGlow(nightEmission.enabled ? nightEmission.glow : null, NIGHT_GLOW)
     // Eye adaptation: the exposure setting is the daylight value.
     gl.toneMappingExposure = settingsStore.get().exposure * nightState.exposureGain
     const composer = composerRef.current
@@ -322,6 +334,7 @@ export const PostEffects: FC = () => {
       {/* Glow halos around aircraft nav lights only. */}
       <primitive object={navGlow} dispose={null} />
       <>{lensFlare ? <LensFlare /> : null}</>
+      <primitive ref={nightGlowRef} object={nightGlow} dispose={null} />
       <ToneMapping mode={ToneMappingMode.AGX} />
       {/* Before SMAA so it merges into the tone-mapping pass (one fewer
           full-screen pass); its ±½ LSB noise is far below SMAA's edge
