@@ -1,4 +1,7 @@
 import { createStore } from './createStore'
+import { isMobileDevice } from './device'
+
+export { isMobileDevice }
 
 export type QualityLevel = 'low' | 'medium' | 'high'
 
@@ -7,6 +10,8 @@ export interface QualitySettings {
   clouds: false | 'low' | 'medium' | 'high'
   /** Clouds cast shadows on the terrain (Beer shadow maps). */
   cloudShadows: boolean
+  /** Cloud render resolution, as a fraction of the screen's. */
+  cloudResolution: number
   /** Crepuscular rays through clouds. */
   lightShafts: boolean
   /** Lens flare / glare post effect (~2 ms at 2560×1600 on an M3 Pro). */
@@ -19,8 +24,11 @@ export interface QualitySettings {
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
   low: {
-    clouds: false,
+    // takram's cheapest clouds (no detail noise, short marches) at a third
+    // of the screen resolution: a few ms on a phone.
+    clouds: 'low',
     cloudShadows: false,
+    cloudResolution: 0.35,
     lightShafts: false,
     lensFlare: false,
     tileErrorTarget: 20,
@@ -29,6 +37,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
   medium: {
     clouds: 'medium',
     cloudShadows: true,
+    cloudResolution: 0.5,
     lightShafts: false,
     lensFlare: false,
     tileErrorTarget: 12,
@@ -37,6 +46,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
   high: {
     clouds: 'high',
     cloudShadows: true,
+    cloudResolution: 0.5,
     // Off: screen-space cascade limits showed as bright bands over the
     // ground at some angles, and they cost frame time.
     lightShafts: false,
@@ -44,12 +54,6 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     tileErrorTarget: 6,
     maxDpr: 2
   }
-}
-
-export function isMobileDevice(): boolean {
-  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false
-  const small = Math.min(window.screen.width, window.screen.height) < 820
-  return coarse && small
 }
 
 /** Unmasked GPU renderer string, if the browser exposes it. */
@@ -66,7 +70,7 @@ function gpuRenderer(): string {
 }
 
 /**
- * Picks a preset for this device: phones and tablets get 'low' (clouds off);
+ * Picks a preset for this device: phones and tablets get 'low';
  * Apple silicon and discrete GPUs 'high'; integrated/unknown GPUs 'medium'.
  */
 export function detectQuality(): QualityLevel {

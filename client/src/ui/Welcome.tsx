@@ -2,7 +2,7 @@ import { useEffect, useState, type FC } from 'react'
 
 import { flightStatusStore } from '../data/flightConnection'
 import { useStore } from '../state/createStore'
-import { QualityMenu } from './QualityMenu'
+import { SettingsButton } from './SettingsPanel'
 
 const SEEN_KEY = 'window-seat.welcome-seen'
 
@@ -26,7 +26,7 @@ const isTouch = (): boolean => window.matchMedia?.('(pointer: coarse)').matches 
 
 /**
  * What this is and how to use it: shown on the first visit, reopenable from
- * the "?" button. Also holds the quality setting on small screens.
+ * the "?" button.
  */
 export const Welcome: FC<{ open: boolean; onClose: () => void }> = ({ open, onClose }) => {
   useEffect(() => {
@@ -80,9 +80,10 @@ export const Welcome: FC<{ open: boolean; onClose: () => void }> = ({ open, onCl
             </span>
           )}
         </div>
-        <div className='welcome-quality'>
-          <QualityMenu />
-        </div>
+        <p className='welcome-hint'>
+          Change the time of day, weather and graphics quality with the{' '}
+          <span className='welcome-sun' aria-hidden>☀︎</span> button at the top.
+        </p>
         <button type='button' className='welcome-start' onClick={onClose}>
           Start exploring
         </button>
@@ -95,7 +96,7 @@ export const Welcome: FC<{ open: boolean; onClose: () => void }> = ({ open, onCl
   )
 }
 
-/** Title chip with live status, and the "?" button that opens Welcome. */
+/** Title chip with live status (opens Welcome), and the settings button. */
 export const TopBar: FC = () => {
   const [open, setOpen] = useState(() => !seenBefore())
   const count = useStore(flightStatusStore, s => s.aircraftCount)
@@ -124,6 +125,7 @@ export const TopBar: FC = () => {
             ?
           </span>
         </button>
+        <SettingsButton />
       </div>
       <Welcome open={open} onClose={close} />
     </>

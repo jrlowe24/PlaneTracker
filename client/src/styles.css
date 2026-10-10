@@ -43,7 +43,8 @@ body,
   left: 0;
   bottom: 0;
   right: 0;
-  z-index: 100;
+  /* Above every panel and backdrop: the credits are never covered. */
+  z-index: 170;
   padding: 10px 10px max(5px, env(safe-area-inset-bottom)) 10px;
   pointer-events: none;
   font-size: 11px;
@@ -231,22 +232,6 @@ body,
   cursor: pointer;
 }
 
-@media (max-width: 640px) {
-  /* Keep the attribution line clear on narrow screens. */
-  .quality-menu {
-    top: max(10px, env(safe-area-inset-top));
-    bottom: auto;
-  }
-
-  .left-stack {
-    top: auto;
-    bottom: 56px;
-    right: 12px;
-    width: auto;
-    max-height: 60%;
-    flex-direction: column-reverse;
-  }
-}
 
 .aircraft-actions {
   display: flex;
@@ -342,28 +327,6 @@ body,
   mix-blend-mode: screen;
 }
 
-.quality-menu {
-  position: absolute;
-  right: 12px;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  z-index: 101;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  padding: 4px 6px 4px 8px;
-  border-radius: 6px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  backdrop-filter: blur(8px);
-}
-
-.quality-menu select {
-  font: inherit;
-  color: var(--text);
-  background: transparent;
-  border: none;
-}
 
 /* Nearby aircraft list */
 .aircraft-list {
@@ -534,6 +497,9 @@ body,
   top: max(12px, env(safe-area-inset-top));
   right: 12px;
   z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .brand {
@@ -578,9 +544,6 @@ body,
   box-shadow: 0 0 6px #3ddc84;
 }
 
-.corner-quality .quality-menu {
-  position: absolute;
-}
 
 /* Welcome / about sheet. */
 .welcome-backdrop {
@@ -633,15 +596,7 @@ body,
   margin-bottom: 12px;
 }
 
-.welcome-quality {
-  display: none;
-  margin-bottom: 12px;
-}
 
-.welcome-quality .quality-menu {
-  position: static;
-  display: inline-flex;
-}
 
 .welcome-start {
   font: inherit;
@@ -676,82 +631,6 @@ kbd {
   }
 }
 
-/* Phones: one bottom sheet (selected aircraft above the list). */
-@media (max-width: 640px) {
-  .top-bar {
-    left: 12px;
-    right: auto;
-  }
-
-  .corner-quality {
-    display: none;
-  }
-
-  .welcome-quality {
-    display: block;
-  }
-
-  .left-stack {
-    left: 0;
-    right: 0;
-    top: auto;
-    bottom: calc(44px + env(safe-area-inset-bottom));
-    width: auto;
-    max-height: 58%;
-    padding: 0 8px;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .aircraft-panel,
-  .aircraft-list {
-    border-radius: 14px;
-  }
-
-  .aircraft-panel {
-    padding: 12px 14px;
-  }
-
-  .aircraft-facts .secondary {
-    display: none;
-  }
-
-  .aircraft-actions button {
-    flex: 1 1 auto;
-    min-height: 44px;
-    font-size: 15px;
-  }
-
-  .aircraft-list-header {
-    min-height: 44px;
-    font-size: 15px;
-  }
-
-  .aircraft-row {
-    min-height: 48px;
-    align-items: center;
-  }
-
-  .aircraft-search {
-    font-size: 16px; /* no iOS zoom on focus */
-    padding: 9px 10px;
-  }
-
-  .hub-chip {
-    padding: 7px 11px;
-    font-size: 14px;
-  }
-
-  .attribution {
-    font-size: 10px;
-    padding-top: 4px;
-  }
-
-  .welcome {
-    font-size: 15px;
-  }
-}
-
 @media (max-width: 640px) {
   .dev-panel {
     display: none;
@@ -760,48 +639,6 @@ kbd {
 
 .aircraft-summary {
   display: none;
-}
-
-/*
- * Phones riding with an aircraft: keep the view clear. One compact card
- * (callsign, route · altitude · speed, buttons); the list is hidden.
- */
-@media (max-width: 640px) {
-  .aircraft-list.attached {
-    display: none;
-  }
-
-  .aircraft-panel.attached {
-    padding: 10px 12px;
-  }
-
-  .aircraft-panel.attached .aircraft-panel-header {
-    margin-bottom: 6px;
-  }
-
-  .aircraft-panel.attached .aircraft-panel-header .muted:not(.aircraft-summary),
-  .aircraft-panel.attached .aircraft-route,
-  .aircraft-panel.attached .aircraft-facts {
-    display: none;
-  }
-
-  .aircraft-panel.attached .aircraft-summary {
-    display: block;
-  }
-
-  .aircraft-panel.attached .aircraft-title {
-    font-size: 16px;
-  }
-
-  .aircraft-panel.attached .aircraft-actions {
-    margin-top: 6px;
-    flex-wrap: nowrap;
-  }
-
-  .aircraft-panel.attached .aircraft-actions button {
-    min-height: 40px;
-    padding: 6px 8px;
-  }
 }
 
 /* Camera mode bar (while following / window seat). */
@@ -880,15 +717,488 @@ kbd {
     right: 8px;
     transform: none;
     justify-content: space-between;
-    bottom: calc(40px + env(safe-area-inset-bottom));
+    bottom: calc(var(--attribution-h, 40px) + 2px);
+    padding: 5px;
+    border-radius: 18px;
+  }
+
+  .mode-target {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 6px 6px 6px 10px;
+  }
+
+  .mode-segments {
+    padding: 3px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.07);
+    gap: 2px;
   }
 
   .mode-segments button {
-    padding: 9px 11px;
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: 11px;
+    background: transparent;
+    font-size: 15px;
+    font-weight: 550;
+  }
+}
+
+/* Settings button (time / weather / graphics). */
+.settings-button {
+  font: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(10px);
+  color: rgba(255, 214, 140, 0.95);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-button-time {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-button.changed {
+  border-color: rgba(242, 120, 30, 0.7);
+}
+
+.brand {
+  height: 36px;
+  box-sizing: border-box;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+}
+
+.settings-backdrop.dim {
+  background: rgba(0, 0, 0, 0.35);
+  animation: fade-in 0.2s ease-out;
+}
+
+.settings-sheet {
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top)) + 44px);
+  right: 12px;
+  z-index: 160;
+  width: 340px;
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
+  padding: 6px 16px 14px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  background: rgba(16, 18, 24, 0.92);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  animation: pop-in 0.16s ease-out;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0 4px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.settings-done {
+  font: inherit;
+  font-weight: 600;
+  padding: 6px 4px;
+  border: none;
+  background: none;
+  color: #ff9d4d;
+  cursor: pointer;
+}
+
+.settings-group {
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.settings-header + .settings-group {
+  border-top: none;
+}
+
+.settings-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.settings-value {
+  font-weight: 400;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.settings-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Segmented control (iOS style). */
+.segmented {
+  display: flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.segmented button {
+  font: inherit;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.segmented button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.segmented button.active {
+  background: rgba(255, 255, 255, 0.92);
+  color: #111;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Time slider: the track is the sky through the day. */
+.time-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 28px;
+  margin: 0 0 10px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.time-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    #0b1026 0%,
+    #141b3c 20%,
+    #e0794a 27%,
+    #8fc4ef 34%,
+    #6fb2ee 50%,
+    #8fc4ef 66%,
+    #e0794a 74%,
+    #141b3c 80%,
+    #0b1026 100%
+  );
+}
+
+.time-slider::-moz-range-track {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    #0b1026 0%,
+    #141b3c 20%,
+    #e0794a 27%,
+    #8fc4ef 34%,
+    #6fb2ee 50%,
+    #8fc4ef 66%,
+    #e0794a 74%,
+    #141b3c 80%,
+    #0b1026 100%
+  );
+}
+
+.time-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  margin-top: -8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+}
+
+.time-slider::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+}
+
+.welcome-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.welcome-sun {
+  color: rgba(255, 214, 140, 0.95);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+/* Grabber for draggable sheets. */
+.sheet-grip {
+  width: 36px;
+  height: 5px;
+  margin: 0 auto;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.sheet-grab {
+  flex: none;
+  padding: 8px 0 8px;
+  touch-action: none;
+  cursor: grab;
+}
+
+/* Phones: one bottom sheet for search, the list and aircraft details. */
+.phone-sheet {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(var(--attribution-h, 40px) + 2px);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: rgba(16, 18, 24, 0.86);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 -6px 30px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  transition:
+    height 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: sheet-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.phone-sheet .aircraft-list,
+.phone-sheet .aircraft-panel {
+  background: none;
+  border: none;
+  backdrop-filter: none;
+  border-radius: 0;
+}
+
+.phone-sheet .aircraft-list {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.phone-sheet .aircraft-panel {
+  padding: 0 16px 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.phone-sheet .aircraft-search {
+  font-size: 16px; /* no iOS zoom on focus */
+  margin: 0 12px 4px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sheet-section {
+  padding: 10px 16px 4px;
+}
+
+.phone-sheet .aircraft-rows {
+  padding: 0 6px 8px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.phone-sheet .aircraft-row {
+  min-height: 52px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+
+.phone-sheet .row-detail,
+.phone-sheet .row-route {
+  font-size: 12px;
+}
+
+.phone-sheet .hub-chip {
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.phone-sheet .aircraft-actions button {
+  flex: 1 1 0;
+  min-height: 48px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.phone-sheet .aircraft-facts .secondary {
+  display: none;
+}
+
+.phone-sheet .icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+/* Riding with an aircraft: a compact card above the view bar. */
+.phone-follow-card {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(var(--attribution-h, 40px) + 62px);
+  z-index: 45;
+}
+
+.phone-follow-card .aircraft-panel {
+  padding: 10px 14px;
+  border-radius: 16px;
+}
+
+.phone-follow-card .aircraft-panel-header {
+  margin-bottom: 0;
+}
+
+.phone-follow-card .aircraft-panel-header .muted:not(.aircraft-summary),
+.phone-follow-card .aircraft-route,
+.phone-follow-card .aircraft-facts {
+  display: none;
+}
+
+.phone-follow-card .aircraft-summary {
+  display: block;
+}
+
+.phone-follow-card .aircraft-title {
+  font-size: 16px;
+}
+
+@media (max-width: 640px) {
+  .top-bar {
+    left: 12px;
+    right: 12px;
+    justify-content: space-between;
   }
 
-  /* The bar holds the views; the details card sits above it. */
-  .app:has(.mode-bar) .left-stack {
-    bottom: calc(100px + env(safe-area-inset-bottom));
+  .brand,
+  .settings-button {
+    height: 40px;
+  }
+
+  .settings-button {
+    padding: 0 14px 0 12px;
+    font-size: 15px;
+  }
+
+  /* The settings as a bottom sheet. */
+  .settings-sheet {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    /* Above the credits, which must stay visible. */
+    bottom: calc(var(--attribution-h, 40px) + 2px);
+    width: auto;
+    max-height: calc(100% - var(--attribution-h, 40px) - 70px);
+    padding: 0 18px 16px;
+    border-radius: 20px;
+    font-size: 15px;
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+    animation: sheet-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .settings-header {
+    flex-wrap: wrap;
+    padding: 8px 0 6px;
+    touch-action: none;
+  }
+
+  .settings-header .sheet-grip {
+    flex: 0 0 100%;
+    margin-bottom: 10px;
+    width: 36px;
+    flex-basis: auto;
+    margin-left: calc(50% - 18px);
+    margin-right: calc(50% - 18px);
+  }
+
+  .settings-header h2 {
+    font-size: 20px;
+  }
+
+  .settings-done {
+    font-size: 16px;
+  }
+
+  .segmented button {
+    min-height: 38px;
+    font-size: 14px;
+  }
+
+  .welcome {
+    font-size: 15px;
+  }
+
+  .attribution {
+    font-size: 10px;
+    padding-top: 4px;
   }
 }

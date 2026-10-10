@@ -5,6 +5,7 @@ import { Group, Matrix4, Mesh, PerspectiveCamera, Vector3, type Camera, type Obj
 
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
+import { isMobileDevice } from '../state/quality'
 import { selectionStore } from '../state/selection'
 import { shadingUniform } from './aircraftMaterial'
 import { aircraftClass } from './typeClasses'
@@ -12,13 +13,19 @@ import { AIRFRAMES, type AircraftClass } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { FRAME_PRIORITY } from './framePriority'
 import { lightAnchor } from './lightAnchor'
-import { createDetailedModel, disposeDetailedModel, preloadModels } from './models'
+import { createDetailedModel, disposeDetailedModel, evictModel, preloadModels } from './models'
 import { typeDimensions } from './typeDimensions'
 import { aircraftShading, skyBrightness } from './shading'
 
 /** Aircraft closer than this get a detailed model instead of an instance. */
 const DETAIL_RADIUS = 1500
-const MAX_DETAILED = 12
+/**
+ * Phones: fewer detailed aircraft, and only the followed one gets its glTF
+ * model (others nearby use the class placeholder); models aren't preloaded.
+ * Each model's textures cost GPU memory phones don't have to spare.
+ */
+const PHONE = isMobileDevice()
+const MAX_DETAILED = PHONE ? 4 : 12
 /** Minimum on-screen length (px) of the followed aircraft during a fly-in. */
 const FLY_IN_MIN_PIXELS = 26
 
@@ -32,6 +39,9 @@ interface DetailedEntry {
   lift: number
   cls: AircraftClass
   typeCode: string | null
+  gltfAllowed: boolean
+  /** The glTF model's file, once swapped in. */
+  modelUrl: string | null
 }
 
 const basis = new Matrix4()
@@ -61,7 +71,7 @@ class DetailedAircraftController {
     return wanted
   }
 
-  private create(hex: string): void {
+  private create(hex: string, followed: boolean): void {
     const state = flightConnection.registry.byHex.get(hex)?.state
     const typeCode = state?.typeCode ?? null
     const cls = aircraftClass(typeCode, state?.category ?? null)
@@ -71,7 +81,9 @@ class DetailedAircraftController {
       lift: 0,
       cls,
       typeCode,
-      object: createDetailedModel(typeCode, cls, state?.callsign ?? null, (model, modelEntry, anchors) => {
+      gltfAllowed: followed,
+      modelUrl: null,
+      object: createDetailedModel(typeCode, cls, state?.callsign ?? null, !PHONE || followed, (model, modelEntry, anchors) => {
         // Swap in the glTF model if this entry is still alive.
         if (this.entries.get(hex) !== entry) {
           disposeDetailedModel(model)
@@ -81,6 +93,7 @@ class DetailedAircraftController {
         disposeDetailedModel(entry.object)
         entry.object = model
         entry.isGltf = true
+        entry.modelUrl = modelEntry.url
         if (modelEntry.fit != null) {
           const [length, span] = typeDimensions(typeCode, cls)
           entry.fitScale = { span: span / modelEntry.fit[1], length: length / modelEntry.fit[0] }
@@ -114,6 +127,8 @@ class DetailedAircraftController {
     this.group.remove(entry.object)
     disposeDetailedModel(entry.object)
     this.entries.delete(hex)
+    // Phones keep only models in use: only the followed aircraft has one.
+    if (PHONE && entry.modelUrl != null) evictModel(entry.modelUrl)
   }
 
   update(sunDirection: Vector3 | null, camera: Camera, viewportHeight: number): void {
@@ -126,8 +141,15 @@ class DetailedAircraftController {
     for (const [hex, entry] of this.entries) {
       if (!wanted.has(hex)) this.destroy(hex, entry)
     }
+    const { mode, targetHex } = cameraModeStore.get()
+    const followedHex = mode === 'globe' ? null : targetHex
+    for (const [hex, entry] of this.entries) {
+      // Phones: a placeholder that became the followed aircraft is rebuilt
+      // to get its glTF model (and the reverse, to free it).
+      if (PHONE && entry.gltfAllowed !== (hex === followedHex)) this.destroy(hex, entry)
+    }
     for (const hex of wanted) {
-      if (!this.entries.has(hex)) this.create(hex)
+      if (!this.entries.has(hex)) this.create(hex, hex === followedHex)
     }
 
     detailedHexes.clear()
@@ -215,6 +237,7 @@ export const DetailedAircraft: FC = () => {
   )
   // Warm up aircraft models shortly after startup (textures, shaders).
   useEffect(() => {
+    if (PHONE) return
     const id = setTimeout(() => {
       void preloadModels(gl, camera, scene)
     }, 4000)

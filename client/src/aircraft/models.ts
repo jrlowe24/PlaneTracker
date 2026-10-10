@@ -17,6 +17,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { createAircraftMaterial, patchAircraftMaterial } from './aircraftMaterial'
 import { AIRFRAMES, buildAirframe, buildGear, type AircraftClass } from './airframes'
 import type { LightAnchors } from './detailState'
+import { isMobileDevice } from '../state/device'
 import { AIRCRAFT_LAYER } from './layers'
 
 /**
@@ -168,6 +169,43 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
   return { wingtip, tail, top, bottom, lowest: Number.isFinite(lowest) ? lowest : -1 }
 }
 
+/** Phones: base color at most this size, other maps half of it. */
+const PHONE_TEXTURE_MAX = 1024
+
+/**
+ * Shrinks a model's textures before they reach the GPU (phones): a 2048²
+ * base color with mipmaps is ~22 MB of GPU memory, 1024² a quarter of it;
+ * at phone screen sizes the difference isn't visible.
+ */
+function downscaleTextures(root: Object3D): void {
+  const done = new Set<Texture>()
+  root.traverse(child => {
+    if (!(child instanceof Mesh)) return
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+      if (!(material instanceof MeshStandardMaterial)) continue
+      for (const texture of [material.map, material.normalMap, material.roughnessMap, material.metalnessMap, material.emissiveMap, material.aoMap]) {
+        if (texture == null || done.has(texture)) continue
+        done.add(texture)
+        const max = texture === material.map ? PHONE_TEXTURE_MAX : PHONE_TEXTURE_MAX / 2
+        const image = texture.image as { width?: number; height?: number; close?: () => void } | null
+        const width = image?.width ?? 0
+        const height = image?.height ?? 0
+        if (width <= max && height <= max) continue
+        const k = max / Math.max(width, height)
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(width * k))
+        canvas.height = Math.max(1, Math.round(height * k))
+        const context = canvas.getContext('2d')
+        if (context == null) continue
+        context.drawImage(image as CanvasImageSource, 0, 0, canvas.width, canvas.height)
+        image?.close?.()
+        texture.image = canvas
+        texture.needsUpdate = true
+      }
+    }
+  })
+}
+
 /** Loads (once) and normalizes a glTF model; null on failure. */
 function loadTypeModel(entry: ModelEntry): Promise<LoadedModel | null> {
   let promise = gltfCache.get(entry.url)
@@ -183,6 +221,7 @@ function loadTypeModel(entry: ModelEntry): Promise<LoadedModel | null> {
         const [ox = 0, oy = 0, oz = 0] = entry.offset ?? [0, 0, 0]
         scene.position.set(ox, oy, oz)
         root.add(scene)
+        if (isMobileDevice()) downscaleTextures(root)
         return { object: root as Object3D, anchors: computeLightAnchors(root) }
       })
       .catch((error: unknown) => {
@@ -192,6 +231,29 @@ function loadTypeModel(entry: ModelEntry): Promise<LoadedModel | null> {
     gltfCache.set(entry.url, promise)
   }
   return promise
+}
+
+/**
+ * Frees a cached model's GPU data (geometry, textures) and forgets it, so
+ * it is fetched again (from the HTTP cache) when next needed. Phones call
+ * this once no aircraft shows the model.
+ */
+export function evictModel(url: string): void {
+  const promise = gltfCache.get(url)
+  if (promise == null) return
+  gltfCache.delete(url)
+  void promise.then(model => {
+    model?.object.traverse(child => {
+      if (!(child instanceof Mesh)) return
+      ;(child.geometry as BufferGeometry).dispose()
+      for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+        for (const value of Object.values(material as unknown as Record<string, unknown>)) {
+          if (value instanceof Texture) value.dispose()
+        }
+        ;(material as Material).dispose()
+      }
+    })
+  })
 }
 
 /** glTF base color scale: model textures sit near 1.0, real paint ~0.8. */
@@ -277,9 +339,11 @@ export function createDetailedModel(
   typeCode: string | null,
   cls: AircraftClass,
   callsign: string | null,
+  allowGltf: boolean,
   onUpgrade: (model: Object3D, entry: ModelEntry, anchors: LightAnchors) => void
 ): Object3D {
   const placeholder = prepare(placeholderModel(cls), false)
+  if (!allowGltf) return placeholder
   void loadManifest().then(manifest => {
     const entry = findModelEntry(manifest, typeCode, cls, callsign)
     if (entry == null) return

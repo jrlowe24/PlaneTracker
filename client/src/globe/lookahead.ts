@@ -3,6 +3,7 @@ import { PerspectiveCamera, Quaternion, Vector2, Vector3, type Camera, type WebG
 
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
+import { isMobileDevice } from '../state/quality'
 
 /**
  * Streams terrain ahead of a followed aircraft, the way flight simulators
@@ -72,6 +73,11 @@ const SURROUND_MAX_ALTITUDE = 50_000
 /** Surround cameras render tiles for this fraction of the screen resolution. */
 const SURROUND_RESOLUTION_SCALE = 0.3
 const SURROUND_YAWS = [Math.PI / 2, Math.PI, -Math.PI / 2]
+/**
+ * Not on phones: tiles the ring keeps in use can't be evicted, and in a
+ * phone's small cache they crowded out the view itself (and its memory).
+ */
+const SURROUND_ENABLED = !isMobileDevice()
 
 const up = new Vector3()
 const yawQuaternion = new Quaternion()
@@ -91,7 +97,8 @@ export class TileSurround {
 
   update(mainCamera: Camera, gl: WebGLRenderer): void {
     const altitude = mainCamera.position.length() - 6_371_000
-    const wanted = mainCamera instanceof PerspectiveCamera && altitude < SURROUND_MAX_ALTITUDE
+    const wanted =
+      SURROUND_ENABLED && mainCamera instanceof PerspectiveCamera && altitude < SURROUND_MAX_ALTITUDE
     if (wanted !== this.active) {
       this.active = wanted
       for (const camera of this.cameras) {

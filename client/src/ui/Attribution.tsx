@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC } from 'react'
+import { useCallback, useEffect, useRef, useState, type FC } from 'react'
 
 import { config } from '../config'
 import { flightStatusStore } from '../data/flightConnection'
@@ -137,8 +137,25 @@ const FlightDataAttribution: FC = () => {
   )
 }
 
+/**
+ * Publishes the attribution's height as --attribution-h, so bottom UI
+ * (phone sheet, view bar) always sits above it, however many lines the
+ * credits wrap to.
+ */
+function useHeightVariable(): (element: HTMLDivElement | null) => void {
+  const observer = useRef<ResizeObserver | null>(null)
+  return useCallback((element: HTMLDivElement | null) => {
+    observer.current?.disconnect()
+    if (element == null) return
+    observer.current = new ResizeObserver(() => {
+      document.documentElement.style.setProperty('--attribution-h', `${element.offsetHeight}px`)
+    })
+    observer.current.observe(element)
+  }, [])
+}
+
 export const Attribution: FC = () => (
-  <div className='attribution'>
+  <div className='attribution' ref={useHeightVariable()}>
     <FlightDataAttribution />
     {config.tilesDisabled ? (
       <div className='attribution-note'>

@@ -176,10 +176,14 @@ function useRows(query: string): { rows: Row[]; total: number } {
  * and follows it once its data arrives. With nothing in view, busy airports
  * are offered as jump targets.
  */
-export const AircraftList: FC = () => {
+export const AircraftList: FC<{
+  /** In the phone bottom sheet: always expanded (the sheet sizes it), search on top. */
+  sheet?: boolean
+  onSearchFocus?: () => void
+}> = ({ sheet = false, onSearchFocus }) => {
   const [query, setQuery] = useState('')
-  // Collapsed by default on phones so the 3D view is visible.
-  const [open, setOpen] = useState(() => !window.matchMedia?.('(max-width: 640px)').matches)
+  const [expanded, setOpen] = useState(true)
+  const open = sheet || expanded
   const { rows, total } = useRows(query)
   const world = useWorldSearch(query)
   const localHexes = new Set(rows.map(r => r.hex))
@@ -201,31 +205,34 @@ export const AircraftList: FC = () => {
   }
 
   return (
-    <div className={`aircraft-list${open ? ' open' : ''}${followedHex != null ? ' attached' : ''}`}>
-      <button
-        type='button'
-        className='aircraft-list-header'
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(o => !o)
-        }}
-      >
-        <span>
-          {nearUser
-            ? 'Near you'
-            : followedHex != null
-              ? 'Aircraft near the followed plane'
-              : 'Nearby aircraft'}{' '}
-          <span className='muted'>({total})</span>
-        </span>
-        <span className='chevron'>{open ? '▴' : '▾'}</span>
-      </button>
+    <div className={`aircraft-list${open ? ' open' : ''}${sheet ? ' in-sheet' : ''}${followedHex != null ? ' attached' : ''}`}>
+      {!sheet && (
+        <button
+          type='button'
+          className='aircraft-list-header'
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(o => !o)
+          }}
+        >
+          <span>
+            {nearUser
+              ? 'Near you'
+              : followedHex != null
+                ? 'Aircraft near the followed plane'
+                : 'Nearby aircraft'}{' '}
+            <span className='muted'>({total})</span>
+          </span>
+          <span className='chevron'>{open ? '▴' : '▾'}</span>
+        </button>
+      )}
       {open && (
         <>
           <input
             className='aircraft-search'
             type='search'
-            placeholder='Search callsign (ASA1), registration, type, airport…'
+            placeholder={sheet ? 'Search flights, airports, types' : 'Search callsign (ASA1), registration, type, airport…'}
+            onFocus={onSearchFocus}
             value={query}
             onChange={e => {
               setQuery(e.target.value)
@@ -242,6 +249,11 @@ export const AircraftList: FC = () => {
               }
             }}
           />
+          {sheet && (
+            <div className='aircraft-section sheet-section'>
+              {nearUser ? 'Near you' : 'Nearby'} <span className='muted'>· {total}</span>
+            </div>
+          )}
           <ul className='aircraft-rows'>
             {rows.map(row => (
               <li key={row.hex}>

@@ -64,15 +64,24 @@ class CloudHistoryReset {
  */
 const COVER_TIME_CONSTANT = 30
 const HEIGHT_TIME_CONSTANT = 60
+/** After you pick a weather, it settles in a few seconds instead. */
+const CHOSEN_TIME_CONSTANT = 1.5
+const CHOSEN_DURATION = 8
 
 /** Manual mode: takram's default layer heights at the slider's coverage. */
+/**
+ * Chosen weather instead of the live forecast (0 clear … 1 overcast):
+ * cumulus first, a mid-level deck building in past half cover, and some
+ * cirrus that thickens with it.
+ */
 function manualSpec(coverage: number): CloudWeatherSpec {
+  const c = Math.min(1, Math.max(0, coverage))
   return {
-    coverage,
-    low: { altitude: 750, height: 650, coverage },
-    mid: { altitude: 1000, height: 1200, coverage },
-    high: { altitude: 7500, height: 500, coverage: 0.5 },
-    convective: { altitude: 750, height: 0, coverage: 0 }
+    coverage: c,
+    low: { altitude: 900, height: 700 + 600 * c, coverage: c },
+    mid: { altitude: 3200, height: 900, coverage: Math.max(0, (c - 0.45) * 1.6) },
+    high: { altitude: 8000, height: 500, coverage: c === 0 ? 0 : 0.15 + 0.4 * c },
+    convective: { altitude: 900, height: 0, coverage: 0 }
   }
 }
 
@@ -143,6 +152,9 @@ export const VolumetricClouds: FC = () => {
   // layers <Clouds> may reset to defaults).
   const heights = useRef<Array<{ altitude: number; height: number }>>([])
   const sinceDisplay = useRef(0)
+  // Weather choice last frame, and how long the quick blend still runs.
+  const lastChoice = useRef('')
+  const quickBlend = useRef(0)
 
   useFrame((_, delta) => {
     const effect = ref.current
@@ -159,7 +171,7 @@ export const VolumetricClouds: FC = () => {
     // fade), which costs next to nothing.
     effect.skipRendering = false
     historyReset.update(effect, camera.position)
-    const scale = cloudDepth.fade > 0 ? 0.5 : 0.1
+    const scale = cloudDepth.fade > 0 ? QUALITY_PRESETS[qualityStore.get().level].cloudResolution : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
     const settings = settingsStore.get()
@@ -183,8 +195,15 @@ export const VolumetricClouds: FC = () => {
     const dt = Math.min(delta, 0.1)
     const first = !initialized.current
     initialized.current = true
-    const kCover = first ? 1 : smoothingFactor(dt, COVER_TIME_CONSTANT)
-    const kHeight = first ? 1 : smoothingFactor(dt, HEIGHT_TIME_CONSTANT)
+    const choice = `${settings.cloudSource}:${settings.cloudCoverage}`
+    if (choice !== lastChoice.current) {
+      if (lastChoice.current !== '') quickBlend.current = CHOSEN_DURATION
+      lastChoice.current = choice
+    }
+    quickBlend.current = Math.max(0, quickBlend.current - dt)
+    const quick = quickBlend.current > 0
+    const kCover = first ? 1 : smoothingFactor(dt, quick ? CHOSEN_TIME_CONSTANT : COVER_TIME_CONSTANT)
+    const kHeight = first ? 1 : smoothingFactor(dt, quick ? CHOSEN_TIME_CONSTANT : HEIGHT_TIME_CONSTANT)
     effect.coverage = GLOBAL_COVERAGE
     const layers = effect.cloudLayers
     const cover = blended.current
@@ -266,7 +285,7 @@ export const VolumetricClouds: FC = () => {
       // over the ground near the camera). Fixed: half resolution, no
       // temporal upscaling, similar cost.
       temporalUpscale={false}
-      resolutionScale={0.5}
+      resolutionScale={preset.cloudResolution}
       lightShafts={preset.lightShafts}
       localWeatherTexture={coverageTexture.texture}
       // Self-hosted copies of takram's textures (MIT); the STBN noise still
