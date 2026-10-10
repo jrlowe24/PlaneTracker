@@ -16,11 +16,6 @@ import { REGION_RADIUS, RegionalCoverage, type Cover } from './regionalCoverage'
  */
 
 const MARKER = '/* window-seat regional coverage */'
-const LOCAL_MORPH_MARKER = '/* window-seat local cloud morphology */'
-const WEATHER_SAMPLE = `struct WeatherSample {
-  vec4 heightFraction; // Normalized height of each layer
-  vec4 density;
-};`
 
 const CHUNK = /* glsl */ `
 ${MARKER}
@@ -83,40 +78,18 @@ export function createRegionalUniforms(regional: RegionalCoverage): RegionalUnif
 
 /** Patches a clouds/shadow material once; false if takram's shader changed. */
 export function patchCloudsMaterial(material: ShaderMaterial, uniforms: RegionalUniforms): boolean {
-  if (material.fragmentShader.includes(MARKER) && material.fragmentShader.includes(LOCAL_MORPH_MARKER)) return true
+  if (material.fragmentShader.includes(MARKER)) return true
   const signature =
     'WeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel) {'
   const apply = '  #ifdef SHADOW\n  localWeather *= shadowLayerMask;'
-  const mediaSample = '  vec4 density = weather.density;'
-  const shapeRemap = 'density = remapClamped(density, vec4(1.0 - shape) * shapeAmounts, vec4(1.0));'
   const source = material.fragmentShader
-  if (
-    !source.includes(signature) ||
-    !source.includes(apply) ||
-    !source.includes(WEATHER_SAMPLE) ||
-    !source.includes(mediaSample) ||
-    !source.includes(shapeRemap)
-  ) return false
+  if (!source.includes(signature) || !source.includes(apply)) return false
   material.fragmentShader = source
     .replace(
       signature,
       `${CHUNK}\nWeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel, const vec3 weatherPosition) {`
     )
-    .replace(WEATHER_SAMPLE, `struct WeatherSample {\n  vec4 heightFraction; // Normalized height of each layer\n  vec4 density;\n  float cloudType;\n};`)
-    .replace(
-      apply,
-      `  weather.cloudType = localWeather.w;\n  localWeather = applyRegionalCoverage(localWeather, weatherPosition, mipLevel);\n${apply}`
-    )
-    .replace(
-      '  vec4 heightScale = shapeAlteringFunction(weather.heightFraction, shapeAlteringBiases);',
-      `  vec4 localShapeBiases = shapeAlteringBiases;\n  float lowStratus = smoothstep(0.2, 0.8, weather.cloudType);\n  localShapeBiases.x = mix(shapeAlteringBiases.x, mix(0.32, 0.12, lowStratus), 1.0);\n  vec4 heightScale = shapeAlteringFunction(weather.heightFraction, localShapeBiases);`
-    )
-    .replace(
-      mediaSample,
-      `${mediaSample}\n  ${LOCAL_MORPH_MARKER}\n  vec4 localShapeAmounts = shapeAmounts;\n  vec4 localShapeDetailAmounts = shapeDetailAmounts;\n  float localDeck = 1.0;\n  float lowStratus = 1.0;\n  // Diagnostic override: force the stratocumulus branch to verify that the\n  // material patch and shape controls are actually affecting the render.\n  localShapeAmounts.x = mix(shapeAmounts.x, mix(0.95, 0.08, lowStratus), localDeck);\n  localShapeDetailAmounts.x = mix(shapeDetailAmounts.x, mix(0.55, 0.02, lowStratus), localDeck);`
-    )
-    .replace(shapeRemap, 'density = remapClamped(density, vec4(1.0 - shape) * localShapeAmounts, vec4(1.0));')
-    .replace('modifier = mix(vec4(0.0), modifier, shapeDetailAmounts);', 'modifier = mix(vec4(0.0), modifier, localShapeDetailAmounts);')
+    .replace(apply, `  localWeather = applyRegionalCoverage(localWeather, weatherPosition, mipLevel);\n${apply}`)
     .replaceAll('sampleWeather(uv, height, mipLevel)', 'sampleWeather(uv, height, mipLevel, position)')
   Object.assign(material.uniforms, uniforms)
   material.needsUpdate = true
