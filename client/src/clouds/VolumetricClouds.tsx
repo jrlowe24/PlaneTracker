@@ -8,7 +8,7 @@ import {
   type CloudWeatherSpec
 } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, type FC } from 'react'
-import { Vector3, type ShaderMaterial, type Texture } from 'three'
+import { Quaternion, Vector3, type ShaderMaterial, type Texture } from 'three'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { smoothingFactor } from '../aircraft/motion'
@@ -32,23 +32,33 @@ const FADE_END_ALTITUDE = 70_000
 const SHADOW_MAX_FAR = 40_000
 
 /**
- * Drops the clouds' temporal history after a camera cut (window seat,
- * search jump) or a resolution change: blending the stale history made the
- * first seconds after a cut a smear of the previous view's clouds.
+ * Drops the clouds' temporal history after a camera cut or a resolution
+ * change: blending the stale history made the first moments after a cut a
+ * smear of the previous view's clouds. A cut is a jump of over 2 km (search
+ * jump) or a sudden turn of over 15° in one frame (window seat, switching
+ * sides): the window cut only moves the camera ~100 m.
  */
+const CUT_COS = Math.cos((15 * Math.PI) / 180)
+
 class CloudHistoryReset {
   private readonly last = new Vector3()
+  private readonly lastQuaternion = new Quaternion()
+  private hasQuaternion = false
   private lastWidth = 0
   private framesLeft = 0
   private defaultAlpha: number | null = null
 
-  update(effect: CloudsEffect, position: Vector3): void {
+  update(effect: CloudsEffect, position: Vector3, quaternion: Quaternion): void {
     const pass = (effect as unknown as CloudsPassInternals).cloudsPass
     const alpha = pass?.resolveMaterial?.uniforms.temporalAlpha as { value: number } | undefined
     const width = pass?.currentRenderTarget?.width ?? 0
     if (alpha == null) return
     this.defaultAlpha ??= alpha.value
-    const cut = this.last.lengthSq() > 0 && position.distanceTo(this.last) > 2000
+    // |q1·q2| = cos(θ/2) for a rotation θ between the orientations.
+    const turned = this.hasQuaternion && Math.abs(quaternion.dot(this.lastQuaternion)) < Math.sqrt((1 + CUT_COS) / 2)
+    const cut = (this.last.lengthSq() > 0 && position.distanceTo(this.last) > 2000) || turned
+    this.lastQuaternion.copy(quaternion)
+    this.hasQuaternion = true
     if (cut || width !== this.lastWidth) this.framesLeft = 8
     this.last.copy(position)
     this.lastWidth = width
@@ -170,7 +180,7 @@ export const VolumetricClouds: FC = () => {
     // instead (invisible: overlay, shadows and shafts are multiplied by the
     // fade), which costs next to nothing.
     effect.skipRendering = false
-    historyReset.update(effect, camera.position)
+    historyReset.update(effect, camera.position, camera.quaternion)
     const scale = cloudDepth.fade > 0 ? QUALITY_PRESETS[qualityStore.get().level].cloudResolution : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 

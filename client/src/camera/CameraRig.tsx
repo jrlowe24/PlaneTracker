@@ -188,8 +188,12 @@ class CameraRigController {
     camera.up.copy(headingFrame(pose).up)
     // A face near a cabin window sees a wider field than the default view.
     camera.fov = mode === 'window' && !(transition?.exiting ?? false) ? WINDOW_FOV : DEFAULT_FOV
-    // Close objects (the aircraft, its wing from the cabin) need a small near.
-    setClipPlanes(camera, mode === 'window' ? 0.3 : Math.max(0.5, Math.min(10, this.orbit.distance * 0.05)))
+    // Close objects (the aircraft, its wing from the cabin) need a small
+    // near plane, but every halving of it halves the depth precision far
+    // away, where haze, cloud shadows and the aircraft mask read depth. The
+    // nearest wing surface is ~2 m from the seat (the cabin wall just
+    // inside 1 m is meant to be clipped).
+    setClipPlanes(camera, mode === 'window' ? 1 : Math.max(0.5, Math.min(10, this.orbit.distance * 0.05)))
     camera.updateMatrixWorld()
   }
 
