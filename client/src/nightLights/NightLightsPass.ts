@@ -147,6 +147,11 @@ float distantFade(const float share) {
  * through glare) rather than a lattice of full-brightness dots.
  * (Steeper far away: see distantFade.)
  */
+/** Share of a lamp's drawn light that glows: all of it within a few km. */
+float glowShare(const float share) {
+  return pow(min(1.0, share / 0.15), 1.4);
+}
+
 float lampFade(const float radius) {
   float share = 0.5 / radius;
   return min(1.0, pow(share, 0.9) * pow(min(1.0, share / 0.1), 0.7));
@@ -179,6 +184,7 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
   // where a pixel spans a lot of ground (grazing views).
   float reach = max(0.6, meters / max(length(dX), length(dY)));
   vec3 sum = vec3(0.0);
+  float cover = 0.0;
   for (int dy = -1; dy <= 1; ++dy) {
     for (int dx = -1; dx <= 1; ++dx) {
       ivec2 c = base + ivec2(dx, dy);
@@ -197,11 +203,17 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
       float r = min(airfield ? max(0.8, physical * 0.6) : core, reach);
       float glare = min(r + 2.0, reach);
       float k = airfield ? sqrt(fade) : fade;
-      float light = exp(-d * d / (r * r)) * (airfield ? 1.8 : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.15 : 0.06);
+      float spot = exp(-d * d / (r * r));
+      float light = spot * (airfield ? 1.8 : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.15 : 0.06);
       sum += LAMP_COLORS[index] * lamp.a * k * light;
+      cover += spot;
     }
   }
-  return sum;
+  // Lamps overlapping on screen (far away, rows of airfield lights seen
+  // end-on) don't add up: their number per pixel grows faster with
+  // distance than each one dims, which made distant runways and roads
+  // brighter than near ones. Overlaps blend to the lamps' own brightness.
+  return sum / max(1.0, cover);
 }
 
 uvec2 pcg2d(uvec2 v) {
@@ -304,24 +316,49 @@ void main() {
 
   // Street light lands on the ground, not on walls: only on surfaces that
   // face up (normal from depth derivatives).
-  vec3 normal = normalize(cross(dX, dY));
-  float upness = abs(dot(normal, up));
+  // (Neighbouring pixels at the same reconstructed point, far away or at
+  // depth precision limits, give no normal: treat as not facing up rather
+  // than NaN, which the glow blur would spread over the whole screen.)
+  vec3 normal = cross(dX, dY);
+  float normalLength = length(normal);
+  float upness = normalLength > 1e-12 ? abs(dot(normal, up)) / normalLength : 0.0;
   // Lamps are light sources; their pools light the surface, so they show
   // its own color (dark asphalt, markings, sidewalks) rather than glowing.
   vec3 lit = pools * roadGain * albedo.rgb + lamps * lampGain;
+  // What feeds the glow (alpha, below): lamps drawn bigger and brighter
+  // than their true share of a pixel far away would make a distant
+  // airport's or city's glow grow as it shrinks on screen. Beyond a few
+  // km, scale the glow down towards the lamps' true energy.
+  vec3 glowing = pools * roadGain * albedo.rgb + lamps * lampGain * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
 
   // Residential carpet where only the coarse level's main roads are drawn,
   // and a faint glow beyond every window.
   // Sparser where NASA's map is dimmer: suburbs thin out to the dark edges.
   float density = pow(smoothstep(0.12, 0.8, value), 1.5) * 0.3;
   float land = 1.0 - waterScore(albedo.rgb);
-  if (coarse > 0.0) lit += carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * coarse * land;
-  lit += vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
+  if (coarse > 0.0) {
+    vec3 c = carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * coarse * land;
+    lit += c;
+    glowing += c * glowShare(0.5 / max(0.35, 0.6 * footprint));
+  }
+  vec3 average = vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
+  lit += average;
+  glowing += average;
 
   // Brighter where NASA's map is: downtown cores stand out from suburbs
   // instead of one even sheet of light across the metro area.
   float cores = mix(0.7, 1.3, smoothstep(0.35, 0.95, value));
-  outColor = vec4(lit * urban * cores * smoothstep(0.35, 0.85, upness) * night, 1.0);
+  float gain = urban * cores * smoothstep(0.35, 0.85, upness) * night;
+  vec3 light = lit * gain;
+  float glow = lightLuminance(glowing) * gain;
+  // Never NaN or infinite: one such pixel turns the whole glow (and with it
+  // every light on screen) black.
+  if (any(isnan(light)) || any(isinf(light)) || isnan(glow) || isinf(glow)) {
+    light = vec3(0.0);
+    glow = 0.0;
+  }
+  // Alpha: the glow's brightness (the blur carries it along with the color).
+  outColor = vec4(max(light, vec3(0.0)), max(glow, 0.0));
 }
 `
 
@@ -362,7 +399,12 @@ export class NightLightsPass extends Pass {
       in vec2 vUv;
       out vec4 outColor;
       void main() {
-        outColor = vec4(texture(lightsBuffer, vUv).rgb + texture(glowBuffer, vUv).rgb * glowStrength, 1.0);
+        // Glow: the blurred lights' color at the blurred glow brightness (alpha).
+        vec4 blurred = texture(glowBuffer, vUv);
+        float luminance = dot(blurred.rgb, vec3(0.2126, 0.7152, 0.0722));
+        vec3 glow = blurred.rgb * min(1.0, blurred.a / max(luminance, 1e-6));
+        vec3 light = texture(lightsBuffer, vUv).rgb + glow * glowStrength;
+        outColor = vec4(any(isnan(light)) || any(isinf(light)) ? vec3(0.0) : light, 1.0);
       }
     `,
     depthTest: false,
