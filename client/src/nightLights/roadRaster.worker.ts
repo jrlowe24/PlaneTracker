@@ -387,8 +387,8 @@ function distanceToLine(p: Point, line: Point[]): number {
  *
  * - precision (airline runways): edge lights every 30 m, full-width
  *   threshold bars, ALSF-2 approach lights (centerline barrettes every
- *   30 m out to 900 m, a crossbar at 300 m, red side rows over the inner
- *   270 m), centerline lights every 15 m;
+ *   30 m out to 720 m, crossbars at 150 and 300 m, red side rows over the
+ *   inner 270 m), centerline lights every 15 m;
  * - instrument (regional): edge lights every 60 m, full-width threshold
  *   bars, MALSR (barrettes every 60 m out to 420 m, a crossbar at 300 m,
  *   single sequenced flashers out to 720 m), no centerline lights;
@@ -461,14 +461,17 @@ function drawRunway(
       continue
     }
     for (let k = -7; k <= 7; ++k) threshold(k * 3)
-    const outTo = precision ? 900 : 720
+    // Both systems are 2,400 ft (~730 m) long.
+    const outTo = 720
     const step = precision ? 30 : 60
     for (let d = 60; d <= outTo; d += step) {
       const center = at(end, ox, oy, d, 0)
       // Off the end of this runway only: not across another one.
       if (onRunway(center, 35 / mpp)) break
       // MALSR: single sequenced flashers beyond its barrettes.
-      const bar = d === 300 ? 7 : !precision && d > 420 ? 0 : 1
+      // Crossbars at 1,000 ft (and 500 ft for ALSF-2); MALSR has single
+      // sequenced flashers beyond its barrettes.
+      const bar = d === 300 ? 7 : precision && d === 150 ? 4 : !precision && d > 420 ? 0 : 1
       for (let k = -bar; k <= bar; ++k) {
         const p = at(end, ox, oy, d, k * 2.5)
         lamp(ctx, p.x, p.y, r * 0.8, RUNWAY, 0.85, false)
