@@ -41,10 +41,18 @@ export class NightLightTiles {
   manifest: NightLightsManifest | null = null
   base: Texture | null = null
   readonly detail: DataTexture
-  /** Window origin in global tile coordinates (column, row). */
+  /**
+   * Window origin in global tile coordinates (column, row), and 1 where a
+   * window tile holds final data (loaded or known empty), as of the last
+   * upload: what the shader may use. Published only with the texture, or
+   * the shader reads the old window's image at the new place (mostly
+   * dark: every light in view went out until the next upload).
+   */
   readonly origin = { x: -1000, y: -1000 }
-  /** 1 where the window tile holds final data (loaded or known empty). */
   readonly loaded = new Float32Array(WINDOW_TILES * WINDOW_TILES)
+  /** The same, as being filled (ahead of the uploaded texture). */
+  private readonly windowOrigin = { x: -1000, y: -1000 }
+  private readonly windowLoaded = new Float32Array(WINDOW_TILES * WINDOW_TILES)
 
   private readonly data: Uint8Array
   private available = new Set<string>()
@@ -99,13 +107,13 @@ export class NightLightTiles {
     const cx = Math.floor((lon + 180) / deg)
     const cy = Math.floor((90 - lat) / deg)
     const half = WINDOW_TILES / 2
-    if (Math.abs(cx - (this.origin.x + half)) < 2 && Math.abs(cy - (this.origin.y + half)) < 2) {
+    if (Math.abs(cx - (this.windowOrigin.x + half)) < 2 && Math.abs(cy - (this.windowOrigin.y + half)) < 2) {
       return
     }
-    this.origin.x = cx - half
-    this.origin.y = Math.max(0, Math.min(m.detail.rows - WINDOW_TILES, cy - half))
+    this.windowOrigin.x = cx - half
+    this.windowOrigin.y = Math.max(0, Math.min(m.detail.rows - WINDOW_TILES, cy - half))
     this.data.fill(0)
-    this.loaded.fill(0)
+    this.windowLoaded.fill(0)
     this.queue.length = 0
     // Nearest tiles first.
     const order: Array<[number, number, number]> = []
@@ -116,20 +124,21 @@ export class NightLightTiles {
     }
     order.sort((a, b) => a[2] - b[2])
     for (const [i, j] of order) this.place(i, j)
-    this.dirty = true
+    // Upload now: the new origin must not reach the shader before its image.
+    this.upload()
   }
 
   /** Global tile key for window slot (i, j), wrapping longitude. */
   private keyFor(i: number, j: number): string {
     const columns = this.manifest!.detail.columns
-    const x = (((this.origin.x + i) % columns) + columns) % columns
-    return `${x}_${this.origin.y + j}`
+    const x = (((this.windowOrigin.x + i) % columns) + columns) % columns
+    return `${x}_${this.windowOrigin.y + j}`
   }
 
   private place(i: number, j: number): void {
     const key = this.keyFor(i, j)
     if (!this.available.has(key)) {
-      this.loaded[j * WINDOW_TILES + i] = 1
+      this.windowLoaded[j * WINDOW_TILES + i] = 1
       return
     }
     const cached = this.cache.get(key)
@@ -186,15 +195,21 @@ export class NightLightTiles {
     for (let y = 0; y < size; ++y) {
       this.data.set(gray.subarray(y * size, (y + 1) * size), (j * size + y) * stride + i * size)
     }
-    this.loaded[j * WINDOW_TILES + i] = 1
+    this.windowLoaded[j * WINDOW_TILES + i] = 1
     this.dirty = true
   }
 
   /** Uploads the window if tiles arrived (call at most a few times a second). */
   flush(): void {
-    if (!this.dirty) return
+    if (this.dirty) this.upload()
+  }
+
+  private upload(): void {
     this.dirty = false
     this.detail.needsUpdate = true
+    this.origin.x = this.windowOrigin.x
+    this.origin.y = this.windowOrigin.y
+    this.loaded.set(this.windowLoaded)
   }
 
   dispose(): void {
