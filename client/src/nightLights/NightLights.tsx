@@ -2,7 +2,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { AtmosphereContext, type AtmosphereTransientStates } from '@takram/three-atmosphere/r3f'
 import { ecefToGeodetic, WGS84_A } from '@windowseat/shared'
 import { useContext, useEffect, useMemo, type FC } from 'react'
-import { Vector3, type Camera } from 'three'
+import { Vector3, type Camera, type WebGLRenderer } from 'three'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { cloudDepth } from '../clouds/cloudDepth'
@@ -42,7 +42,7 @@ class NightLightsController {
     })
   }
 
-  update(camera: Camera, states: AtmosphereTransientStates, delta: number): void {
+  update(camera: Camera, states: AtmosphereTransientStates, delta: number, renderer: WebGLRenderer): void {
     // Set every frame: a remounted controller must not leave a stale one.
     nightEmission.texture = this.effect.texture
     nightEmission.enabled = this.ready && this.effect.enabled
@@ -103,7 +103,7 @@ class NightLightsController {
     this.sinceFlush += delta
     if (this.sinceFlush >= FLUSH_INTERVAL_S) {
       this.sinceFlush = 0
-      tiles.flush()
+      tiles.flush(renderer)
       const credit = nightState.night > 0.05 ? m.credit : null
       const streets = credit != null && (this.roads?.levels.some(l => l.uniforms.enabled) ?? false)
       const store = nightLightsStore.get()
@@ -167,10 +167,10 @@ export const NightLights: FC = () => {
     },
     [controller]
   )
-  useFrame((_, delta) => {
+  useFrame(({ gl }, delta) => {
     if (transientStates == null || controller.failed) return
     try {
-      controller.update(camera, transientStates, delta)
+      controller.update(camera, transientStates, delta, gl)
     } catch (error) {
       // An error thrown here stops the whole render loop (a frozen globe):
       // switch the night lights off instead and keep going.

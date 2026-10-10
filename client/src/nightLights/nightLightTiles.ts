@@ -6,8 +6,11 @@ import {
   RedFormat,
   TextureLoader,
   UnsignedByteType,
-  type Texture
+  type Texture,
+  type WebGLRenderer
 } from 'three'
+
+import type { LightTileRequest, LightTileResponse } from './nightLightDecode.worker'
 
 /**
  * Streams NASA Black Marble night lights at a resolution that depends on
@@ -66,6 +69,17 @@ export class NightLightTiles {
   private inFlight = 0
   private dirty = false
   private failed = false
+  /**
+   * Window slots filled since the last upload. Only these are uploaded
+   * (a 512² region each); the whole 4096² window, with its mipmaps, was
+   * re-uploaded for every arriving tile, a hitch each time.
+   */
+  private readonly dirtySlots = new Set<number>()
+  /** The whole window must go up (first upload, recentred). */
+  private fullUpload = true
+  private worker: Worker | null = null
+  private nextRequest = 0
+  private readonly requests = new Map<number, (gray: Uint8Array | null) => void>()
 
   constructor() {
     const size = 512 * WINDOW_TILES
@@ -128,6 +142,7 @@ export class NightLightTiles {
     this.data.fill(0)
     this.windowLoaded.fill(0)
     this.queue.length = 0
+    this.fullUpload = true
     // Nearest tiles first.
     const order: Array<[number, number, number]> = []
     for (let j = 0; j < WINDOW_TILES; ++j) {
@@ -138,7 +153,7 @@ export class NightLightTiles {
     order.sort((a, b) => a[2] - b[2])
     for (const [i, j] of order) this.place(i, j)
     // Upload now: the new origin must not reach the shader before its image.
-    this.upload()
+    this.upload(null)
   }
 
   /** Global tile key for window slot (i, j), wrapping longitude. */
@@ -174,19 +189,32 @@ export class NightLightTiles {
     }
   }
 
+  private decode(url: string, size: number): Promise<Uint8Array | null> {
+    if (this.worker == null) {
+      this.worker = new Worker(new URL('./nightLightDecode.worker.ts', import.meta.url), {
+        type: 'module',
+        name: 'night-light-tiles'
+      })
+      this.worker.onmessage = (event: MessageEvent<LightTileResponse>) => {
+        const resolve = this.requests.get(event.data.id)
+        this.requests.delete(event.data.id)
+        if (event.data.error != null) console.warn('[night-lights] tile:', event.data.error)
+        resolve?.(event.data.gray)
+      }
+    }
+    const id = this.nextRequest++
+    return new Promise(resolve => {
+      this.requests.set(id, resolve)
+      const request: LightTileRequest = { id, url, size }
+      this.worker!.postMessage(request)
+    })
+  }
+
   private async fetchTile(key: string): Promise<void> {
     const m = this.manifest!
     try {
-      const response = await fetch(`${ROOT}/${m.detail.level}/${key}.jpg`)
-      const bitmap = await createImageBitmap(await response.blob())
-      const size = m.detail.tileSize
-      const canvas = new OffscreenCanvas(size, size)
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })!
-      ctx.drawImage(bitmap, 0, 0)
-      bitmap.close()
-      const rgba = ctx.getImageData(0, 0, size, size).data
-      const gray = new Uint8Array(size * size)
-      for (let p = 0; p < gray.length; ++p) gray[p] = rgba[p * 4]!
+      const gray = await this.decode(`${ROOT}/${m.detail.level}/${key}.jpg`, m.detail.tileSize)
+      if (gray == null) return
       this.cache.set(key, gray)
       if (this.cache.size > MAX_CACHED_TILES) {
         this.cache.delete(this.cache.keys().next().value!)
@@ -209,17 +237,47 @@ export class NightLightTiles {
       this.data.set(gray.subarray(y * size, (y + 1) * size), (j * size + y) * stride + i * size)
     }
     this.windowLoaded[j * WINDOW_TILES + i] = 1
+    this.dirtySlots.add(j * WINDOW_TILES + i)
     this.dirty = true
   }
 
   /** Uploads the window if tiles arrived (call at most a few times a second). */
-  flush(): void {
-    if (this.dirty) this.upload()
+  flush(renderer: WebGLRenderer): void {
+    if (this.dirty) this.upload(renderer)
   }
 
-  private upload(): void {
+  /**
+   * Publishes the window: arrived tiles' regions only when it's already on
+   * the GPU (renderer given), else the whole of it with the next render.
+   */
+  private upload(renderer: WebGLRenderer | null): void {
     this.dirty = false
-    this.detail.needsUpdate = true
+    const uploaded = renderer != null && (renderer.properties.get(this.detail) as { __webglTexture?: WebGLTexture }).__webglTexture
+    if (this.fullUpload || renderer == null || uploaded == null) {
+      this.detail.needsUpdate = true
+      this.fullUpload = false
+    } else {
+      const gl = renderer.getContext() as WebGL2RenderingContext
+      renderer.state.bindTexture(gl.TEXTURE_2D, uploaded)
+      const size = 512
+      const stride = size * WINDOW_TILES
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH, stride)
+      for (const slot of this.dirtySlots) {
+        const i = slot % WINDOW_TILES
+        const j = Math.floor(slot / WINDOW_TILES)
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, i * size)
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, j * size)
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, i * size, j * size, size, size, gl.RED, gl.UNSIGNED_BYTE, this.data)
+      }
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0)
+      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0)
+      gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0)
+      gl.generateMipmap(gl.TEXTURE_2D)
+    }
+    this.dirtySlots.clear()
     const dx = this.windowOrigin.x - this.origin.x
     const dy = this.windowOrigin.y - this.origin.y
     if (dx !== 0 || dy !== 0) {
@@ -251,6 +309,7 @@ export class NightLightTiles {
   }
 
   dispose(): void {
+    this.worker?.terminate()
     this.detail.dispose()
     this.base?.dispose()
   }

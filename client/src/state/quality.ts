@@ -76,7 +76,13 @@ const RESOLUTION: Record<QualityElements['resolution'], [number, number, number]
   ultra: [2, 2, 2]
 }
 
-const TERRAIN: Record<QualityElements['terrain'], number> = { low: 20, medium: 12, high: 6, ultra: 4 }
+/**
+ * Terrain error targets (pixels). Each step finer costs a lot of main-
+ * thread time walking and streaming tiles, every frame (6 → 9: ~35% less
+ * time in the tile update and ~30% fewer tiles in use, flying low over a
+ * city), for detail mostly visible only when looking for it.
+ */
+const TERRAIN: Record<QualityElements['terrain'], number> = { low: 20, medium: 12, high: 9, ultra: 6 }
 
 /** Cloud resolution (fraction of the screen) by preset. */
 const CLOUD_RESOLUTION: Record<Exclude<QualityElements['clouds'], 'off'>, number> = {
