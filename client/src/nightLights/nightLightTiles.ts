@@ -94,6 +94,14 @@ export class NightLightTiles {
     base.flipY = false
     base.colorSpace = NoColorSpace
     base.anisotropy = 8
+    // One channel (the map is gray): a quarter of the GPU memory of RGBA
+    // (45 instead of 180 MB at 8192×4096), and the decoded image is dropped
+    // once uploaded.
+    base.format = RedFormat
+    base.onUpdate = () => {
+      ;(base.source as { data: unknown }).data = null
+      base.onUpdate = null
+    }
     base.needsUpdate = true
     this.base = base
     return true

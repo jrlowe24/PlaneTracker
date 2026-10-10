@@ -52,7 +52,9 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualitySettings> = {
     lightShafts: false,
     lensFlare: true,
     tileErrorTarget: 6,
-    maxDpr: 2
+    // Not 2: every full-screen buffer (a dozen, half float) is 44% smaller
+    // at 1.5 on a 2x display (~250 MB less), for slightly softer edges.
+    maxDpr: 1.5
   }
 }
 

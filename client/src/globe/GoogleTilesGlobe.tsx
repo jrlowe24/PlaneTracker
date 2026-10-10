@@ -1,8 +1,8 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useLayoutEffect, useMemo, type FC } from 'react'
-import type { Object3D } from 'three'
+import { Vector2, type Object3D } from 'three'
 
-import { getGoogleTiles } from './googleTiles'
+import { getGoogleTiles, tileResolutionScale } from './googleTiles'
 import { TileLookahead, TileSurround } from './lookahead'
 import type { TileNormalsPlugin } from './TileNormalsPlugin'
 
@@ -60,7 +60,9 @@ export const GoogleTilesGlobe: FC<GoogleTilesGlobeProps> = ({
   )
   useFrame(() => {
     camera.updateMatrixWorld()
-    tiles.setResolutionFromRenderer(camera, gl)
+    const size = gl.getDrawingBufferSize(drawingBuffer)
+    const k = tileResolutionScale(gl.getPixelRatio())
+    tiles.setResolution(camera, Math.max(1, Math.round(size.x * k)), Math.max(1, Math.round(size.y * k)))
     lookahead.update(camera, gl)
     surround.update(camera, gl)
     tiles.update()
@@ -69,3 +71,5 @@ export const GoogleTilesGlobe: FC<GoogleTilesGlobeProps> = ({
   // dispose={null}: R3F must not dispose the shared tileset on unmount.
   return <primitive object={tiles.group} dispose={null} />
 }
+
+const drawingBuffer = new Vector2()

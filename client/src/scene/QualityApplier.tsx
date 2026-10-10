@@ -1,11 +1,12 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo, type FC } from 'react'
+import { useEffect, useMemo, useState, type FC } from 'react'
 
 import { config } from '../config'
 import { getGoogleTiles } from '../globe/googleTiles'
 import { useStore } from '../state/createStore'
 import { QUALITY_PRESETS, qualityStore } from '../state/quality'
 import { resolutionStore } from '../state/resolution'
+import { nightState } from './nightLighting'
 
 /** Frame time budget: 60 fps with a little slack. */
 const TARGET_MS = 1000 / 60
@@ -21,6 +22,8 @@ const STEP_UP = 1.08
 const TILE_TRADE_SCALE = 0.7
 const MAX_TILE_FACTOR = 1.5
 const TILE_STEP = 1.25
+/** Tile error target multiplier at night (terrain barely visible). */
+const NIGHT_TILE_FACTOR = 2
 /** Seconds of averaging before a decision; going up needs longer. */
 const WINDOW_DOWN_S = 1.5
 const WINDOW_UP_S = 3
@@ -139,11 +142,21 @@ export const QualityApplier: FC = () => {
     }
   })
 
+  // At night the terrain is barely visible (lights carry the view):
+  // coarser tiles, about a quarter as many, in memory and on screen.
+  // Hysteresis so dusk doesn't flip it back and forth.
+  const [dark, setDark] = useState(false)
+  useFrame(() => {
+    const night = nightState.night
+    if (!dark && night > 0.95) setDark(true)
+    else if (dark && night < 0.75) setDark(false)
+  })
+
   useEffect(() => {
     if (config.tilesDisabled) return
     getGoogleTiles({ apiKey: config.googleMapsApiKey }).errorTarget =
-      preset.tileErrorTarget * tileFactor
-  }, [preset.tileErrorTarget, tileFactor])
+      preset.tileErrorTarget * tileFactor * (dark ? NIGHT_TILE_FACTOR : 1)
+  }, [preset.tileErrorTarget, tileFactor, dark])
 
   return null
 }

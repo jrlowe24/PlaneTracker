@@ -1,5 +1,8 @@
 import { MipmapBlurPass, Pass } from 'postprocessing'
 import {
+  CustomBlending,
+  OneFactor,
+  ZeroFactor,
   GLSL3,
   HalfFloatType,
   Matrix4,
@@ -77,6 +80,8 @@ const vec3 LAMP_COLORS[9] = vec3[9](
   vec3(1.0, 0.96, 0.86));
 /** Palette entries from here on are airfield lights. */
 const int AIRFIELD = 5;
+/** Least brightness of an airfield light however far (before glow). */
+const float AIRFIELD_FLOOR = 0.45;
 
 vec3 offsetFromDepth(const vec2 uv, const float depth) {
   vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -162,7 +167,8 @@ float lampFade(const float radius) {
  * lamp's precise position, so they're sharp points of a physical size
  * (~0.7 m, at least ~1.5 px) at any zoom, with a faint glow around them.
  */
-vec3 nearLamps(const int level, const vec2 local, const float footprint, const vec3 dX, const vec3 dY) {
+vec3 nearLamps(const int level, const vec2 local, const float footprint, const vec3 dX, const vec3 dY, out vec3 field) {
+  field = vec3(0.0);
   float meters = roadTexelMeters[level];
   vec2 texel = local * float(TILE);
   ivec2 base = ivec2(floor(texel));
@@ -202,10 +208,14 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
       bool airfield = index >= AIRFIELD;
       float r = min(airfield ? max(0.8, physical * 0.6) : core, reach);
       float glare = min(r + 2.0, reach);
-      float k = airfield ? sqrt(fade) : fade;
+      // Airfield lights matter most: they fade slower and never below a
+      // floor, so edges, centerline and approach lights read from far off.
+      float k = airfield ? max(AIRFIELD_FLOOR, pow(fade, 0.4)) : fade;
       float spot = exp(-d * d / (r * r));
       float light = spot * (airfield ? 1.8 : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.15 : 0.06);
-      sum += LAMP_COLORS[index] * lamp.a * k * light;
+      vec3 contribution = LAMP_COLORS[index] * lamp.a * k * light;
+      if (airfield) field += contribution;
+      else sum += contribution;
       cover += spot;
     }
   }
@@ -213,6 +223,7 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
   // end-on) don't add up: their number per pixel grows faster with
   // distance than each one dims, which made distant runways and roads
   // brighter than near ones. Overlaps blend to the lamps' own brightness.
+  field /= max(1.0, cover);
   return sum / max(1.0, cover);
 }
 
@@ -260,15 +271,16 @@ vec3 carpet(const int level, const vec2 local, const float footprint, const floa
  * window and loaded, fading out over its outer quarter tile), and its
  * lamps, drawn as points.
  */
-vec4 roadLevel(const int level, const vec3 offset, const float footprint, const vec3 dX, const vec3 dY, out vec3 lamps) {
+vec4 roadLevel(const int level, const vec3 offset, const float footprint, const vec3 dX, const vec3 dY, out vec3 lamps, out vec3 field) {
   lamps = vec3(0.0);
+  field = vec3(0.0);
   if (roadEnabled[level] < 0.5) return vec4(0.0);
   vec2 local = roadLocal(level, offset);
   if (any(lessThan(local, vec2(0.0))) || any(greaterThanEqual(local, vec2(ROAD_WINDOW)))) return vec4(0.0);
   float layer = roadLayer(level, ivec2(floor(local)));
   if (layer < 0.0) return vec4(0.0);
   vec3 pools = texture(roadLights, vec3(fract(local), layer)).rgb;
-  lamps = nearLamps(level, local, footprint, dX, dY);
+  lamps = nearLamps(level, local, footprint, dX, dY, field);
   float edge = min(min(local.x, local.y), min(ROAD_WINDOW - local.x, ROAD_WINDOW - local.y));
   return vec4(pools, smoothstep(0.0, 0.25, edge));
 }
@@ -286,8 +298,9 @@ void main() {
   float value = lightMap(p);
   // Kept where the satellite map says the area is actually lit: rural
   // roads and farm tracks stay dark (MSFS lights them like suburbs).
+  // Airfield lights are kept everywhere (rural airports are lit too), so
+  // there is no early out for dark areas.
   float urban = smoothstep(0.08, 0.4, value);
-  if (urban <= 0.0) return;
   float footprint = length(offset) * pixelAngle;
   vec3 dX = dFdx(offset);
   vec3 dY = dFdy(offset);
@@ -301,15 +314,18 @@ void main() {
   float remaining = 1.0;
   vec3 pools = vec3(0.0);
   vec3 lamps = vec3(0.0);
+  vec3 fieldLamps = vec3(0.0);
   float coarse = 0.0;
   for (int level = 0; level < ${ROAD_LEVELS}; ++level) {
     if (level < first || remaining <= 0.001) continue;
     float want = level == first ? 1.0 - fract(lod) : 1.0;
     vec3 levelLamps;
-    vec4 s = roadLevel(level, offset, footprint, dX, dY, levelLamps);
+    vec3 levelField;
+    vec4 s = roadLevel(level, offset, footprint, dX, dY, levelLamps, levelField);
     float w = min(remaining, want) * s.a;
     pools += s.rgb * w;
     lamps += levelLamps * w;
+    fieldLamps += levelField * w;
     if (level == ${ROAD_LEVELS - 1}) coarse = w;
     remaining -= w;
   }
@@ -348,9 +364,11 @@ void main() {
   // Brighter where NASA's map is: downtown cores stand out from suburbs
   // instead of one even sheet of light across the metro area.
   float cores = mix(0.7, 1.3, smoothstep(0.35, 0.95, value));
-  float gain = urban * cores * smoothstep(0.35, 0.85, upness) * night;
-  vec3 light = lit * gain;
-  float glow = lightLuminance(glowing) * gain;
+  float facing = smoothstep(0.35, 0.85, upness) * night;
+  float gain = urban * cores * facing;
+  vec3 field = fieldLamps * lampGain * facing;
+  vec3 light = lit * gain + field;
+  float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
   // Never NaN or infinite: one such pixel turns the whole glow (and with it
   // every light on screen) black.
   if (any(isnan(light)) || any(isinf(light)) || isnan(glow) || isinf(glow)) {
@@ -376,9 +394,10 @@ const NIGHT_GLOW = 0.45
  * - NASA Black Marble beyond them, and as the "is it lit" mask.
  */
 export class NightLightsPass extends Pass {
-  /** The lights alone (sharp). */
-  private readonly lights = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })
-  /** The lights plus their glow: what AerialPerspective (patched) adds. */
+  /**
+   * The lights, then their glow added on top (one full-screen target, not
+   * two): what AerialPerspective (patched) adds.
+   */
   readonly target = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })
   /**
    * The lights blurred: their glow, like the halo lights form in the eye
@@ -393,7 +412,6 @@ export class NightLightsPass extends Pass {
     glslVersion: GLSL3,
     vertexShader,
     fragmentShader: /* glsl */ `
-      uniform sampler2D lightsBuffer;
       uniform sampler2D glowBuffer;
       uniform float glowStrength;
       in vec2 vUv;
@@ -402,15 +420,19 @@ export class NightLightsPass extends Pass {
         // Glow: the blurred lights' color at the blurred glow brightness (alpha).
         vec4 blurred = texture(glowBuffer, vUv);
         float luminance = dot(blurred.rgb, vec3(0.2126, 0.7152, 0.0722));
-        vec3 glow = blurred.rgb * min(1.0, blurred.a / max(luminance, 1e-6));
-        vec3 light = texture(lightsBuffer, vUv).rgb + glow * glowStrength;
-        outColor = vec4(any(isnan(light)) || any(isinf(light)) ? vec3(0.0) : light, 1.0);
+        vec3 glow = blurred.rgb * min(1.0, blurred.a / max(luminance, 1e-6)) * glowStrength;
+        outColor = vec4(any(isnan(glow)) || any(isinf(glow)) ? vec3(0.0) : glow, 0.0);
       }
     `,
     depthTest: false,
     depthWrite: false,
+    // Added onto the lights already in the target.
+    blending: CustomBlending,
+    blendSrc: OneFactor,
+    blendDst: OneFactor,
+    blendSrcAlpha: ZeroFactor,
+    blendDstAlpha: OneFactor,
     uniforms: {
-      lightsBuffer: new Uniform(null),
       glowBuffer: new Uniform(null),
       glowStrength: new Uniform(NIGHT_GLOW)
     }
@@ -520,7 +542,6 @@ export class NightLightsPass extends Pass {
   }
 
   override setSize(width: number, height: number): void {
-    this.lights.setSize(width, height)
     this.target.setSize(width, height)
     this.blur.setSize(width, height)
     this.u<Vector2>('texelSize').value.set(1 / width, 1 / height)
@@ -538,21 +559,22 @@ export class NightLightsPass extends Pass {
     const position = this.u<Vector3>('cameraPositionECEF').value
     position.setFromMatrixPosition(camera.matrixWorld)
     this.u<Texture | null>('inputBuffer').value = inputBuffer?.texture ?? null
-    renderer.setRenderTarget(this.lights)
+    renderer.setRenderTarget(this.target)
     this.fullscreenMaterial = this.material
     renderer.render(this.scene, this.camera)
-    this.blur.render(renderer, this.lights, null)
-    this.combine.uniforms.lightsBuffer!.value = this.lights.texture
+    this.blur.render(renderer, this.target, null)
     this.combine.uniforms.glowBuffer!.value = this.blur.texture
     renderer.setRenderTarget(this.target)
     this.fullscreenMaterial = this.combine
+    const autoClear = renderer.autoClear
+    renderer.autoClear = false
     renderer.render(this.scene, this.camera)
+    renderer.autoClear = autoClear
     this.fullscreenMaterial = this.material
   }
 
   override dispose(): void {
     super.dispose()
-    this.lights.dispose()
     this.target.dispose()
     this.blur.dispose()
     this.combine.dispose()

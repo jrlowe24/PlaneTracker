@@ -4,6 +4,7 @@ import { PerspectiveCamera, Quaternion, Vector2, Vector3, type Camera, type WebG
 import { flightConnection } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
 import { isMobileDevice } from '../state/quality'
+import { tileResolutionScale } from './googleTiles'
 
 /**
  * Streams terrain ahead of a followed aircraft, the way flight simulators
@@ -53,11 +54,8 @@ export class TileLookahead {
     camera.updateProjectionMatrix()
     camera.updateMatrixWorld()
     const size = gl.getDrawingBufferSize(drawingBuffer)
-    this.tiles.setResolution(
-      camera,
-      Math.max(1, Math.round(size.x * RESOLUTION_SCALE)),
-      Math.max(1, Math.round(size.y * RESOLUTION_SCALE))
-    )
+    const k = RESOLUTION_SCALE * tileResolutionScale(gl.getPixelRatio())
+    this.tiles.setResolution(camera, Math.max(1, Math.round(size.x * k)), Math.max(1, Math.round(size.y * k)))
   }
 
   dispose(): void {
@@ -110,8 +108,9 @@ export class TileSurround {
     const main = mainCamera as PerspectiveCamera
     up.copy(main.position).normalize()
     const size = gl.getDrawingBufferSize(drawingBuffer)
-    const width = Math.max(1, Math.round(size.x * SURROUND_RESOLUTION_SCALE))
-    const height = Math.max(1, Math.round(size.y * SURROUND_RESOLUTION_SCALE))
+    const k = SURROUND_RESOLUTION_SCALE * tileResolutionScale(gl.getPixelRatio())
+    const width = Math.max(1, Math.round(size.x * k))
+    const height = Math.max(1, Math.round(size.y * k))
     this.cameras.forEach((camera, i) => {
       camera.near = main.near
       camera.far = main.far

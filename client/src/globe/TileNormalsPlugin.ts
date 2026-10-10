@@ -159,12 +159,16 @@ export class TileNormalsPlugin {
         const index = geometry.index == null ? undefined : geometry.index.array.slice() as Uint16Array | Uint32Array
         const skirt = uv == null ? undefined : skirtParameters(mesh, geometry)
         const result = await getPool().compute({ position, index, uv, creaseAngle: this.creaseAngle, skirt })
-        // Non-indexed (and skirted) geometry replaces the original: wrapping
-        // the worker's arrays is all the main thread does.
+        // The prepared (skirted, welded) geometry replaces the original:
+        // wrapping the worker's arrays is all the main thread does.
         const prepared = new BufferGeometry()
         prepared.setAttribute('position', new BufferAttribute(result.position!, 3))
-        if (result.uv != null) prepared.setAttribute('uv', new BufferAttribute(result.uv, 2))
-        prepared.setAttribute('normal', new BufferAttribute(result.normal!, 3))
+        if (result.uv != null) {
+          prepared.setAttribute('uv', new BufferAttribute(result.uv, 2, result.uv instanceof Uint16Array))
+        }
+        // Int8 xyz + padding, normalized (the shader's vec3 ignores the pad).
+        prepared.setAttribute('normal', new BufferAttribute(result.normal!, 4, true))
+        prepared.setIndex(new BufferAttribute(result.index!, 1))
         geometry.computeBoundingBox()
         geometry.computeBoundingSphere()
         prepared.boundingBox = geometry.boundingBox
@@ -176,15 +180,28 @@ export class TileNormalsPlugin {
   }
 
   private applyAnisotropy(mesh: Mesh): void {
-    if (this.anisotropy <= 1) return
     const materials = Array.isArray(mesh.material)
       ? mesh.material
       : [mesh.material]
     for (const material of materials) {
       const map = (material as { map?: Texture | null }).map
-      if (map != null) {
-        map.anisotropy = this.anisotropy
-      }
+      if (map == null) continue
+      if (this.anisotropy > 1) map.anisotropy = this.anisotropy
+      releaseAfterUpload(map)
     }
+  }
+}
+
+/**
+ * Drops the decoded image once it's on the GPU: the browser otherwise keeps
+ * every tile texture twice (as large again as the GPU copy). Tile textures
+ * are uploaded once and never changed; the tile cache measured them on load.
+ */
+function releaseAfterUpload(texture: Texture): void {
+  texture.onUpdate = () => {
+    const image = texture.source.data as { close?: () => void } | null
+    image?.close?.()
+    texture.source.data = null
+    texture.onUpdate = null
   }
 }

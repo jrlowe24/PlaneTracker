@@ -108,12 +108,15 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
  *   ground in view, and every tile fetched is billed.
  * - Bigger cache: the default (~430 MB) fills on a single low-altitude city
  *   view; once full, refinement stops (tiles in use can't be evicted).
+ *   Not much bigger: with tile detail capped on high-density screens (see
+ *   TILE_MAX_PIXEL_RATIO) 800 MB holds the view and its surroundings, and
+ *   1.5 GB (plus the browser's own copies) ran Safari out of memory.
  * The download order itself stays the library's: screen-space error first,
  * which already favors nearby ground. Sorting by distance instead was
  * measured to be worse (it fetched deep tiles that can't show until their
  * ancestors and siblings arrive: ~1.1 GB before anything sharpened).
  */
-const TILE_CACHE_BYTES = isMobileDevice() ? 300e6 : 1.5e9
+const TILE_CACHE_BYTES = isMobileDevice() ? 300e6 : 800e6
 
 /**
  * Tiles parsed at once. Mesh preparation (de-indexing, normals, skirts) runs
@@ -127,8 +130,8 @@ function tuneTileLoading(tiles: TilesRenderer): void {
   // The cache evicts unused tiles whenever it holds more than minBytesSize
   // (default 300 MB), not only when full: tiles you looked away from were
   // dropped and re-downloaded when you turned back. Keep them until the
-  // cache is actually near its limit.
-  tiles.lruCache.minBytesSize = TILE_CACHE_BYTES * 0.85
+  // cache is fairly full.
+  tiles.lruCache.minBytesSize = TILE_CACHE_BYTES * 0.7
   const queues = tiles as unknown as { parseQueue: { maxJobs: number }; downloadQueue: { maxJobsPerOrigin: number } }
   queues.parseQueue.maxJobs = PARSE_JOBS
   // HTTP/2 to one origin: more concurrent tile requests keep the pipe full.
@@ -177,6 +180,19 @@ function limitSessionRefresh(
     console.info('[tiles] refreshing Google session (new root request)')
     return refresh(requestOptions)
   }
+}
+
+/**
+ * Tile detail is chosen as if the screen had at most this many device
+ * pixels per CSS pixel. On a 2x display the full drawing buffer asked for
+ * ~2.5x the tiles (memory grows with the square of the resolution: Safari
+ * ran past 10 GB) for detail barely visible at that density.
+ */
+const TILE_MAX_PIXEL_RATIO = 1.25
+
+/** Scale from drawing-buffer pixels to the resolution tiles are chosen for. */
+export function tileResolutionScale(pixelRatio: number): number {
+  return Math.min(1, TILE_MAX_PIXEL_RATIO / Math.max(pixelRatio, 1e-3))
 }
 
 /** Returns the instance if it was already created, without creating one. */
