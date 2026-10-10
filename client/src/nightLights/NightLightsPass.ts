@@ -521,6 +521,74 @@ void main() {
 const NIGHT_GLOW = 0.45
 
 /**
+ * Adds the lights' glow, and writes the cloud underglow into alpha: how
+ * much city light rises under the cloud seen at this pixel, from NASA's
+ * map (its coarse base, ~5 km: light spreads under a cloud deck) at the
+ * ground point beneath it. Looking down, that's the terrain behind the
+ * cloud; looking up, where the view ray meets the low cloud base.
+ * AerialPerspective (patched) lights cloud with it, by cloud opacity.
+ */
+const COMBINE_SHADER = /* glsl */ `
+precision highp float;
+
+uniform sampler2D glowBuffer;
+uniform float glowStrength;
+uniform sampler2D depthBuffer;
+uniform sampler2D baseMap;
+uniform mat4 inverseProjection;
+uniform mat4 cameraWorld;
+uniform vec3 cameraPositionECEF;
+uniform vec3 sunDirection;
+/** Earth radius at the view plus the low cloud base altitude (0: no clouds). */
+uniform float cloudBaseRadius;
+
+in vec2 vUv;
+out vec4 outColor;
+
+vec3 viewOffset(const vec2 uv, const float depth) {
+  vec4 view = inverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  return mat3(cameraWorld) * (view.xyz / view.w);
+}
+
+float underglow() {
+  if (cloudBaseRadius <= 0.0) return 0.0;
+  float depth = texture(depthBuffer, vUv).r;
+  vec3 ground;
+  float c = dot(cameraPositionECEF, cameraPositionECEF) - cloudBaseRadius * cloudBaseRadius;
+  if (c < 0.0) {
+    // Below the base: the cloud seen is where the ray meets the base
+    // (anything farther, terrain or stars, is behind it).
+    vec3 dir = normalize(viewOffset(vUv, 0.5));
+    float b = dot(cameraPositionECEF, dir);
+    float t = -b + sqrt(max(b * b - c, 0.0));
+    ground = cameraPositionECEF + dir * t;
+  } else {
+    // Above it: the cloud lies over the terrain seen through it.
+    if (depth >= 0.9999999) return 0.0;
+    ground = cameraPositionECEF + viewOffset(vUv, depth);
+  }
+  float lon = atan(ground.y, ground.x);
+  float lat = atan(ground.z, length(ground.xy) * (1.0 - 0.00669438));
+  vec2 deg = vec2(degrees(lon) + 180.0, 90.0 - degrees(lat));
+  float value = texture(baseMap, deg / vec2(360.0, 180.0)).r;
+  float night = smoothstep(0.06, -0.08, dot(normalize(ground), sunDirection));
+  return value * value * night;
+}
+
+void main() {
+  // Glow: the blurred lights' color at the blurred glow brightness (alpha).
+  vec4 blurred = texture(glowBuffer, vUv);
+  float luminance = dot(blurred.rgb, vec3(0.2126, 0.7152, 0.0722));
+  vec3 glow = blurred.rgb * min(1.0, blurred.a / max(luminance, 1e-6)) * glowStrength;
+  float under = underglow();
+  outColor = vec4(
+    any(isnan(glow)) || any(isinf(glow)) ? vec3(0.0) : glow,
+    isnan(under) || isinf(under) ? 0.0 : under
+  );
+}
+`
+
+/**
  * Night light emission (linear RGB) into its own render target, read by
  * AerialPerspective (patched), which adds it to terrain radiance before
  * atmospheric transmittance and the cloud overlay, so lights dim through
@@ -545,35 +613,7 @@ export class NightLightsPass extends Pass {
    */
   private readonly blur = new MipmapBlurPass()
   private readonly material: ShaderMaterial
-  private readonly combine = new ShaderMaterial({
-    glslVersion: GLSL3,
-    vertexShader,
-    fragmentShader: /* glsl */ `
-      uniform sampler2D glowBuffer;
-      uniform float glowStrength;
-      in vec2 vUv;
-      out vec4 outColor;
-      void main() {
-        // Glow: the blurred lights' color at the blurred glow brightness (alpha).
-        vec4 blurred = texture(glowBuffer, vUv);
-        float luminance = dot(blurred.rgb, vec3(0.2126, 0.7152, 0.0722));
-        vec3 glow = blurred.rgb * min(1.0, blurred.a / max(luminance, 1e-6)) * glowStrength;
-        outColor = vec4(any(isnan(glow)) || any(isinf(glow)) ? vec3(0.0) : glow, 0.0);
-      }
-    `,
-    depthTest: false,
-    depthWrite: false,
-    // Added onto the lights already in the target.
-    blending: CustomBlending,
-    blendSrc: OneFactor,
-    blendDst: OneFactor,
-    blendSrcAlpha: ZeroFactor,
-    blendDstAlpha: OneFactor,
-    uniforms: {
-      glowBuffer: new Uniform(null),
-      glowStrength: new Uniform(NIGHT_GLOW)
-    }
-  })
+  private readonly combine: ShaderMaterial
 
   constructor(private viewCamera: Camera) {
     super('NightLightsPass')
@@ -620,6 +660,32 @@ export class NightLightsPass extends Pass {
         runwayAlong: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         runwayAcross: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         runwayApproach: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4()))
+      }
+    })
+    const u = this.material.uniforms
+    this.combine = new ShaderMaterial({
+      glslVersion: GLSL3,
+      vertexShader,
+      fragmentShader: COMBINE_SHADER,
+      depthTest: false,
+      depthWrite: false,
+      // Glow added onto the lights already in the target; alpha replaced by
+      // the cloud underglow.
+      blending: CustomBlending,
+      blendSrc: OneFactor,
+      blendDst: OneFactor,
+      blendSrcAlpha: OneFactor,
+      blendDstAlpha: ZeroFactor,
+      uniforms: {
+        glowBuffer: new Uniform(null),
+        glowStrength: new Uniform(NIGHT_GLOW),
+        depthBuffer: u.depthBuffer!,
+        baseMap: u.baseMap!,
+        inverseProjection: u.inverseProjection!,
+        cameraWorld: u.cameraWorld!,
+        cameraPositionECEF: u.cameraPositionECEF!,
+        sunDirection: u.sunDirection!,
+        cloudBaseRadius: new Uniform(0)
       }
     })
     this.fullscreenMaterial = this.material
@@ -684,6 +750,11 @@ export class NightLightsPass extends Pass {
       this.u<Vector4[]>('runwayAcross').value[i]!.copy(runways.across[i]!)
       this.u<Vector4[]>('runwayApproach').value[i]!.copy(runways.approach[i]!)
     }
+  }
+
+  /** Earth radius at the view plus the low cloud base altitude; 0 without clouds. */
+  setCloudBase(radius: number): void {
+    ;(this.combine.uniforms.cloudBaseRadius as { value: number }).value = radius
   }
 
   setSun(direction: Vector3): void {

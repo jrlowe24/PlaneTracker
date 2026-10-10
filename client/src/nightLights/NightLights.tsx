@@ -5,6 +5,7 @@ import { useContext, useEffect, useMemo, type FC } from 'react'
 import type { Camera } from 'three'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
+import { cloudDepth } from '../clouds/cloudDepth'
 import { nightState } from '../scene/nightLighting'
 import { isMobileDevice, qualityStore } from '../state/quality'
 import { NightLightsPass } from './NightLightsPass'
@@ -47,6 +48,13 @@ class NightLightsController {
     const { effect, tiles } = this
     effect.mainCamera = camera
     effect.setSun(states.sunDirection)
+    // Cloud base sphere for the clouds' underglow (from city lights).
+    if (cloudDepth.baseAltitude > 0 && cloudDepth.fade > 0) {
+      const g = ecefToGeodetic(camera.position.x, camera.position.y, camera.position.z)
+      effect.setCloudBase(camera.position.length() - g.height + cloudDepth.baseAltitude)
+    } else {
+      effect.setCloudBase(0)
+    }
     // Skip the whole pass (a full-screen draw) when nothing in view can be
     // at night: the sun is higher above the camera's horizon than the
     // visible ground extends beyond it, with margin for twilight.

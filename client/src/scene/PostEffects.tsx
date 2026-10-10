@@ -111,6 +111,10 @@ bool cloudInFrontOfAircraft(const vec2 uv) {
  * over the sky near lit terrain.
  */
 const EMISSION_THROUGH_CLOUDS = /* glsl */ `
+// Cloud lit from below by city light (night lights' alpha: NASA's map,
+// squared, under the cloud): a warm, sodium-and-LED mix.
+#define CLOUD_UNDERGLOW vec3(0.0016, 0.00095, 0.0005)
+
 #ifdef HAS_OVERLAY
 float nightEmissionThroughClouds(const vec4 overlay) {
   float t = clamp(1.0 - overlay.a, 0.0, 1.0);
@@ -149,7 +153,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     // ~0.9 albedo so they read as moonlit, not overcast day), by opacity.
     .replace(
       'vec4 overlay = texture(overlayBuffer, uv);',
-      'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (any(isnan(overlay)) || any(isinf(overlay))) overlay = vec4(0.0);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;'
+      'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (any(isnan(overlay)) || any(isinf(overlay))) overlay = vec4(0.0);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;\n  overlay.rgb += overlay.a * nightEmissionOn * texture(nightEmissionBuffer, uv).a * CLOUD_UNDERGLOW;'
     )
     // Volumetric clouds fade out with camera altitude (and stop rendering,
     // leaving stale buffers): fade their overlay, shadows and shafts too.

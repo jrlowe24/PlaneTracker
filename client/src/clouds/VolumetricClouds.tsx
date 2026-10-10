@@ -176,7 +176,10 @@ export const VolumetricClouds: FC = () => {
     const effect = ref.current
     cloudDepth.texture =
       (effect as CloudsPassInternals | null)?.cloudsPass?.currentRenderTarget?.depthVelocity ?? null
-    if (effect == null) return
+    if (effect == null) {
+      cloudDepth.baseAltitude = 0
+      return
+    }
     const altitude = ecefToGeodetic(camera.position.x, camera.position.y, camera.position.z).height
     const t = Math.min(1, Math.max(0, (altitude - FADE_START_ALTITUDE) / (FADE_END_ALTITUDE - FADE_START_ALTITUDE)))
     cloudDepth.fade = 1 - t * t * (3 - 2 * t)
@@ -237,6 +240,10 @@ export const VolumetricClouds: FC = () => {
       // (work in progress on branch wip-storm-clouds).
       layer.height = i === 3 && (!CONVECTIVE_ENABLED || cover[3]! < 0.005) ? 0 : h.height
     }
+    // Lowest layer with cloud: where city light meets the cloud base
+    // (night lights' cloud underglow).
+    const base = [0, 1].find(i => cover[i]! > 0.02 && (layers[i]?.height ?? 0) > 0)
+    cloudDepth.baseAltitude = base == null ? 0 : heights.current[base]!.altitude
     // Static shape parameters are re-applied every frame: <Clouds> resets
     // its layers to takram's defaults after mount.
     const shadows = QUALITY_PRESETS[qualityStore.get().level].cloudShadows

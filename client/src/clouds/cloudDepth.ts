@@ -14,4 +14,6 @@ export const cloudDepth: {
    * from higher up the tiled cloud noise reads as a uniform blanket.
    */
   fade: number
-} = { texture: null, fade: 1 }
+  /** Low cloud layer base above the ellipsoid (m); 0 when there is none. */
+  baseAltitude: number
+} = { texture: null, fade: 1, baseAltitude: 0 }
