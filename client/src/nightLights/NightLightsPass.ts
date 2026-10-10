@@ -538,22 +538,48 @@ vec3 homeColor(const float r) {
     : vec3(0.42, 0.58, 1.0) * 0.5;
 }
 
+/** Width (columns) of a lit cluster: an office suite, an apartment. */
+float wCluster;
+
+/**
+ * Whether the cluster holding this window cell is lit (a suite's or a
+ * home's lights on): windows light in runs along a floor, the way real
+ * towers show patches of lit offices among dark ones. xyz: its light's
+ * color, w: 1 if lit.
+ */
+vec4 cluster(const ivec2 cell) {
+  int block = int(floor(float(cell.x) / wCluster));
+  uvec2 h = pcg2d(uvec2(uint(block + 65536) + wSide * 131071u, uint(cell.y + 65536)) ^ (wBuilding * 2246822519u));
+  if (float(h.x & 0xffffu) / 65535.0 >= wShare) return vec4(0.0);
+  float r = float(h.y & 0xffffu) / 65535.0;
+  // Mostly warm white (as offices look at night), some neutral, a few cool.
+  vec3 color = wOffice
+    ? (r < 0.6 ? vec3(1.0, 0.84, 0.6) : r < 0.9 ? vec3(1.0, 0.93, 0.8) : vec3(0.85, 0.92, 1.0))
+    : homeColor(r);
+  return vec4(color, 1.0);
+}
+
+/** Share of a lit cluster's windows that are lit (rooms, desks left dark). */
+float clusterFill() {
+  return wOffice ? 0.85 : 0.7;
+}
+
 /**
  * Windows smaller than a pixel, as points of light (like distant street
  * lamps): groups of k×k cells, each drawn as one ~pixel-wide point at a
- * world-fixed spot if any of its windows is lit, as bright as the group's
- * light (up to a window's own). A lit wall far away reads as a dark tower
- * sprinkled with lights, not an evenly lit wall; and nothing twinkles,
- * as the points stay put.
+ * world-fixed spot, lit if the cluster at its middle is and as bright as
+ * that cluster's light over the group (up to a window's own). Far towers
+ * read as dark shapes with patches of light, and nothing twinkles, as the
+ * points stay put. Groups wider than a cluster are lit by chance.
  */
-vec3 windowPoints(const vec2 cellF, const vec2 w, const float k, const float lit, const float area) {
-  float anyLit = 1.0 - pow(1.0 - lit, k * k);
-  if (anyLit <= 0.001) return vec3(0.0);
+vec3 windowPoints(const vec2 cellF, const vec2 w, const float k, const float area) {
   const float RADIUS = 0.7;
-  // The group's light spread over the pixels it covers, gathered into one
-  // point when lit.
-  float energy = lit * area * k * k / (w.x * w.y);
-  float peak = min(1.0, energy / (3.14159 * RADIUS * RADIUS * anyLit));
+  float clusters = max(1.0, k / wCluster) * k;
+  float anyLit = k > wCluster ? 1.0 - pow(1.0 - wShare, clusters) : 1.0;
+  if (anyLit <= 0.001) return vec3(0.0);
+  // The group's light gathered into one point.
+  float litShare = k > wCluster ? wShare / anyLit : 1.0;
+  float peak = min(1.0, clusterFill() * litShare * area * k * k / (w.x * w.y * 3.14159 * RADIUS * RADIUS));
   vec2 g = cellF / k;
   ivec2 base = ivec2(floor(g - 0.5));
   vec3 sum = vec3(0.0);
@@ -561,12 +587,16 @@ vec3 windowPoints(const vec2 cellF, const vec2 w, const float k, const float lit
     for (int i = 0; i < 2; ++i) {
       ivec2 c = base + ivec2(i, j);
       uvec2 h = pcg2d(uvec2(c + 65536) ^ (wBuilding * 2654435761u) ^ uvec2(uint(k) * 7919u, wSide * 104729u));
-      if (float(h.x & 0xffffu) / 65535.0 >= anyLit) continue;
+      vec4 lit = cluster(ivec2(floor((vec2(c) + 0.5) * k)));
+      if (k > wCluster) {
+        // Many clusters per group: lit by chance, in a typical color.
+        if (float(h.x & 0xffffu) / 65535.0 >= anyLit) continue;
+        lit = vec4(wOffice ? vec3(1.0, 0.86, 0.64) : vec3(1.0, 0.7, 0.42), 1.0);
+      }
+      if (lit.w <= 0.0) continue;
       vec2 jitter = vec2(float(h.x >> 16u), float(h.y & 0xffffu)) / 65535.0;
       vec2 d = (cellF - (vec2(c) + 0.2 + 0.6 * jitter) * k) / w;
-      float r = float(h.y >> 16u) / 65535.0;
-      vec3 color = wOffice ? (wTint < 0.6 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.9, 0.74)) * 0.75 : homeColor(r) * 0.65;
-      sum += color * exp(-dot(d, d) / (RADIUS * RADIUS));
+      sum += lit.rgb * 0.75 * exp(-dot(d, d) / (RADIUS * RADIUS));
     }
   }
   return sum * peak;
@@ -578,18 +608,15 @@ vec3 windowAt(const ivec2 cell) {
   uvec2 hw = pcg2d(wid);
   float rw = float(hw.x & 0xffffu) / 65535.0;
   float rc = float(hw.y & 0xffffu) / 65535.0;
-  if (wOffice) {
-    // Whole floors on or off (all the way round), a few stragglers.
-    bool floorOn = hash1(uvec2(uint(cell.y + 65536), 0u) ^ wBuilding) < wShare;
-    if (rw >= (floorOn ? 0.8 : 0.03)) return vec3(0.0);
-    vec3 office = wTint < 0.6 ? vec3(0.8, 0.88, 1.0) : vec3(1.0, 0.9, 0.74);
-    return office * mix(0.6, 0.9, rc);
+  vec4 lit = cluster(cell);
+  if (lit.w <= 0.0) {
+    // A rare light on in a dark office floor.
+    return wOffice && rw < 0.01 ? vec3(1.0, 0.9, 0.72) * 0.6 : vec3(0.0);
   }
-  if (rw >= wShare) return vec3(0.0);
-  // Curtains and blinds dim many of them.
-  return homeColor(rc) * mix(0.3, 1.0, fract(rc * 31.7));
+  if (rw >= clusterFill()) return vec3(0.0);
+  // Curtains and blinds dim many home windows; offices are evenly lit.
+  return lit.rgb * (wOffice ? mix(0.65, 0.9, rc) : mix(0.3, 1.0, rc));
 }
-
 
 /**
  * Lit windows on building walls: OSM footprints with a height, in the
@@ -681,7 +708,8 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
   wBuilding = bid;
   wSide = side;
   wTint = r1;
-  float wallLit = office ? share * 0.8 + (1.0 - share) * 0.03 : share;
+  // Suites of 4-10 windows; homes of 2-3.
+  wCluster = office ? floor(mix(4.0, 10.99, fract(r2 * 7.31))) : floor(mix(2.0, 3.99, fract(r2 * 7.31)));
 
   // Up close, an exact box filter: the share of this pixel (in cell
   // units, w wide) each window opening covers, over the up to 2x2 cells
@@ -711,7 +739,7 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
     float level = log2(max(size * 1.5, 1.0));
     float k = exp2(floor(level));
     float t = fract(level);
-    vec3 points = mix(windowPoints(cellF, w, k, wallLit, area), windowPoints(cellF, w, 2.0 * k, wallLit, area), t);
+    vec3 points = mix(windowPoints(cellF, w, k, area), windowPoints(cellF, w, 2.0 * k, area), t);
     windows = mix(windows, points, smoothstep(0.6, 0.9, size));
   }
   return windows * fade;
@@ -861,13 +889,13 @@ void main() {
 `
 
 /**
- * Share of lit windows by hour (solar time at the view), every 2 hours
- * from midnight: homes busiest in the evening and nearly dark before dawn;
- * offices lit as people leave, then whole floors here and there (cleaning,
- * late work) through the night.
+ * Share of lit clusters (office suites, apartments) by hour (solar time
+ * at the view), every 2 hours from midnight: homes busiest in the evening
+ * and nearly dark before dawn; offices lit as people leave, then patches
+ * here and there (cleaning, late work) through the night.
  */
-const HOME_LIT = [0.1, 0.045, 0.03, 0.07, 0.15, 0.1, 0.08, 0.08, 0.12, 0.22, 0.25, 0.18]
-const OFFICE_LIT = [0.06, 0.04, 0.04, 0.08, 0.3, 0.5, 0.5, 0.5, 0.5, 0.32, 0.18, 0.1]
+const HOME_LIT = [0.12, 0.05, 0.035, 0.08, 0.18, 0.12, 0.1, 0.1, 0.15, 0.27, 0.3, 0.22]
+const OFFICE_LIT = [0.05, 0.035, 0.035, 0.06, 0.22, 0.4, 0.4, 0.4, 0.4, 0.25, 0.14, 0.08]
 
 function litShare(table: readonly number[], hour: number): number {
   const h = ((((hour % 24) + 24) % 24) / 2)
