@@ -259,10 +259,10 @@ export const VolumetricClouds: FC = () => {
       layer.shapeAmount = i === 2 ? 0.4 : 1
       layer.shapeDetailAmount = i === 2 ? 0 : i === 0 ? 0.25 : 1
       layer.densityProfile.set(0, 0, 0.75, 0.25)
-      // Dense mid-level decks were producing a hard blue self-shadow rim.
-      // Keep their shadows while broken, but let a near-overcast deck scatter
-      // light without feeding its own coarse shadow map back into the edges.
-      layer.shadow = shadows && (i === 0 || (i === 1 && deck < 0.6))
+      // Dense decks were picking up mottled self-shadowing from the coarse
+      // cloud shadow map. Keep shadows on broken clouds, then fade them out
+      // near overcast where the broad layer should scatter light smoothly.
+      layer.shadow = shadows && (i === 0 ? deck < 0.98 : i === 1 && deck < 0.6)
     }
     // Widen the low-frequency Perlin-Worley body scale (one repeat per 20 km)
     // so high-coverage low decks form broad masses instead of many equal puffs.
