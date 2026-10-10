@@ -2,7 +2,6 @@ import { ecefToGeodetic, geodeticToEcef, WGS84_A } from '@windowseat/shared'
 import {
   DataArrayTexture,
   LinearFilter,
-  LinearMipmapLinearFilter,
   NearestFilter,
   NoColorSpace,
   RGBAFormat,
@@ -19,7 +18,8 @@ import type { RoadRasterRequest, RoadRasterResponse } from './roadRaster.worker'
  * WINDOW×WINDOW Web Mercator tiles around the view:
  *
  * - level 0: zoom 14 (~1.6–2.4 km tiles; every street, lamp by lamp),
- * - level 1: zoom 12 (~6.5–10 km tiles; the arterials and airports beyond).
+ * - level 1: zoom 12 (~6.5–10 km tiles; the arterials and airports beyond),
+ * - level 2: zoom 10 (~26–40 km tiles; motorways and main roads farther out).
  *
  * The shader maps each pixel's ground position to tile coordinates with a
  * local Mercator expansion around each window's anchor (accurate to well
@@ -33,7 +33,9 @@ const LEVELS = [
   // z, max camera altitude (m) at which the level is used, how far ahead
   // of the camera the window centers (m).
   { z: 14, maxAltitude: 14_000, lead: 2_500 },
-  { z: 12, maxAltitude: 60_000, lead: 9_000 }
+  { z: 12, maxAltitude: 60_000, lead: 9_000 },
+  // Motorways and main roads out to the horizon from cruise altitudes.
+  { z: 10, maxAltitude: 250_000, lead: 35_000 }
 ] as const
 export const ROAD_LEVELS = LEVELS.length
 const WORKERS = 2
@@ -74,6 +76,8 @@ export interface RoadLevelUniforms {
   curvature: number
   /** Ground meters per texel at the anchor. */
   metersPerTexel: number
+  /** Window origin tile (world-fixed integer cells for procedural lamps). */
+  origin: [x: number, y: number]
   /** Texture layer per window cell (row-major), −1 while not loaded. */
   layers: Float32Array
 }
@@ -92,6 +96,7 @@ class Level {
     mercator: [0, 0, 0, 0],
     curvature: 0,
     metersPerTexel: 1,
+    origin: [0, 0],
     layers: new Float32Array(WINDOW * WINDOW).fill(-1)
   }
   /** Window origin tile. */
@@ -133,6 +138,7 @@ class Level {
     const sec = 1 / Math.cos(lat)
     this.uniforms.mercator = [WINDOW / 2, WINDOW / 2, (s * sec) / nRadius, (s * sec) / m]
     this.uniforms.curvature = Math.tan(lat) / m
+    this.uniforms.origin = [ox, oy]
     this.uniforms.metersPerTexel = ((2 * Math.PI * WGS84_A) / n) * Math.cos(lat) / SIZE
     return true
   }
@@ -203,10 +209,12 @@ export class RoadLightTiles {
     texture.format = RGBAFormat
     texture.type = UnsignedByteType
     texture.colorSpace = NoColorSpace
-    texture.minFilter = LinearMipmapLinearFilter
+    // No mipmaps: the shader samples each level where its texels are about
+    // a pixel. (Regenerating the array's mips on every tile arrival was a
+    // multi-millisecond hitch.)
+    texture.minFilter = LinearFilter
     texture.magFilter = LinearFilter
-    texture.generateMipmaps = true
-    texture.anisotropy = 4
+    texture.generateMipmaps = false
     texture.needsUpdate = true
     this.texture = texture
     void this.init()

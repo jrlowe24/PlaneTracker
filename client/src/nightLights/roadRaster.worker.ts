@@ -127,6 +127,11 @@ function along(line: Point[], spacing: number, phase: number, visit: (x: number,
 let lampCells = new Uint8Array(0)
 let lampEnergy = new Float32Array(0)
 let lampSize = 0
+/**
+ * Coarse zooms (tens of meters per pixel): lamps only. Pools and area
+ * glows a pixel or more wide read as glowing bands from afar.
+ */
+let poolsEnabled = true
 
 /**
  * A lamp: its exact position goes into the lamp cells (the shader draws it
@@ -134,7 +139,14 @@ let lampSize = 0
  * far-distance channel, and the pool of light it casts on the ground into
  * the image (`radius` in px).
  */
-function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, intensity: number, pool = true): void {
+function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, base: number, pool = true): void {
+  // Real lamps differ: aging, wattage, a few out. (Airfield lights don't.)
+  let intensity = base
+  if (pool) {
+    const h = hash(Math.round(x * 16), Math.round(y * 16), 3)
+    if (h < 0.08) return
+    intensity *= 0.45 + 0.75 * h
+  }
   const cx = Math.floor(x)
   const cy = Math.floor(y)
   if (cx >= 0 && cy >= 0 && cx < lampSize && cy < lampSize) {
@@ -149,7 +161,7 @@ function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, intens
     lampEnergy[i] = lampEnergy[i]! + intensity
   }
   // Airfield lights are inset fixtures: no pool on the ground.
-  if (!pool) return
+  if (!pool || !poolsEnabled) return
   const r = Math.max(1.5, radius * 2)
   const gradient = ctx.createRadialGradient(x, y, 0, x, y, r)
   gradient.addColorStop(0, rgba(color, intensity * 0.16))
@@ -177,6 +189,7 @@ function fillRings(ctx: Ctx, rings: Point[][], style: string): void {
 function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8ClampedArray; lamps: Uint8Array } {
   const { size, metersPerPixel: mpp } = request
   lampSize = size
+  poolsEnabled = mpp < 8
   lampCells = new Uint8Array(size * size * 4)
   lampEnergy = new Float32Array(size * size)
   const canvas = new OffscreenCanvas(size, size)
@@ -207,7 +220,7 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
     const area = AREAS[String(feature.properties.class)]
     if (area == null || feature.type !== 3) continue
     const rings = geometry(feature)
-    fillRings(ctx, rings, rgba(area.color, area.glow))
+    if (poolsEnabled) fillRings(ctx, rings, rgba(area.color, area.glow))
     if (area.spacing > 0) scatterLamps(ctx, rings, area.spacing / mpp, area.share, area.color, area.lamp, 4 / mpp, request)
   }
 
@@ -228,8 +241,10 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
       const level = 0.6 + 0.8 * district(mid.x, mid.y, 2)
       const width = Math.max(1, style.width / mpp)
       // Soft-edged pool, faint: the lamps carry the light.
-      strokeLine(ctx, line, width * 1.5, rgba(color, style.pool * 0.12 * level))
-      strokeLine(ctx, line, width * 0.7, rgba(color, style.pool * 0.22 * level))
+      if (poolsEnabled) {
+        strokeLine(ctx, line, width * 1.5, rgba(color, style.pool * 0.12 * level))
+        strokeLine(ctx, line, width * 0.7, rgba(color, style.pool * 0.22 * level))
+      }
       const spacing = style.spacing / mpp
       const side = (style.width * 0.4) / mpp
       const radius = 5 / mpp
@@ -249,7 +264,7 @@ function render(request: RoadRasterRequest, data: ArrayBuffer): { pixels: Uint8C
     if (cls === 'apron' && feature.type === 3) {
       // High-mast floodlights.
       const rings = geometry(feature)
-      fillRings(ctx, rings, rgba(NEUTRAL_LED, 0.05))
+      if (poolsEnabled) fillRings(ctx, rings, rgba(NEUTRAL_LED, 0.05))
       scatterLamps(ctx, rings, 70 / mpp, 0.9, NEUTRAL_LED, 1.0, 12 / mpp, request)
       continue
     }

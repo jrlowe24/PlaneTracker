@@ -20,8 +20,6 @@ import { WINDOW_TILES } from './nightLightTiles'
 import { ROAD_LEVELS, ROAD_TILE_SIZE, WINDOW, type RoadLevelUniforms } from './roadTiles'
 
 const drawingBuffer = new Vector2()
-/** Grid for world-fixed procedural detail (windows, districts), meters. */
-const CELL = 24
 
 const vertexShader = /* glsl */ `
 out vec2 vUv;
@@ -52,17 +50,15 @@ uniform mat4 inverseProjection;
 uniform mat4 cameraWorld;
 uniform vec3 cameraPositionECEF;
 uniform vec3 sunDirection;
-uniform float intensity;
 uniform float roadGain;
 uniform float pixelAngle;
-uniform ivec3 cameraCell;
-uniform vec3 cameraFraction;
 
-// Street / airport light rasters (RoadLightTiles), two windows.
+// Street / airport light rasters (RoadLightTiles), one window per level.
 uniform sampler2DArray roadLights;
 uniform highp sampler2DArray roadLamps;
 uniform float lampGain;
 uniform float roadTexelMeters[${ROAD_LEVELS}];
+uniform vec2 roadOrigin[${ROAD_LEVELS}];
 uniform float roadEnabled[${ROAD_LEVELS}];
 uniform vec3 roadAnchor[${ROAD_LEVELS}];
 uniform vec3 roadEast[${ROAD_LEVELS}];
@@ -71,8 +67,6 @@ uniform vec4 roadMercator[${ROAD_LEVELS}];
 uniform float roadCurvature[${ROAD_LEVELS}];
 uniform float roadLayers[${ROAD_LEVELS * WINDOW * WINDOW}];
 
-const float CELL = ${CELL.toFixed(1)};
-const float WINDOW_SPACING = 3.2;
 const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
 const float ROAD_WINDOW = ${WINDOW.toFixed(1)};
 const int TILE = ${ROAD_TILE_SIZE};
@@ -115,25 +109,7 @@ float waterScore(const vec3 albedo) {
   return smoothstep(-0.005, 0.02, albedo.b - albedo.r) * smoothstep(0.1, 0.03, lightLuminance(albedo));
 }
 
-uvec3 pcg3d(uvec3 v) {
-  v = v * 1664525u + 1013904223u;
-  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-  v ^= v >> 16u;
-  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-  return v;
-}
 
-/** Lit windows on facades (world-fixed grid, a fraction lit). */
-float windows(const vec3 offset, const float footprint) {
-  vec3 rel = (offset + cameraFraction) / WINDOW_SPACING + vec3(cameraCell) * (CELL / WINDOW_SPACING);
-  vec3 base = floor(rel);
-  uvec3 h = pcg3d(uvec3(ivec3(base)) + 7u);
-  vec3 r = vec3(h & 0xffffu) / 65535.0;
-  vec3 f = abs(rel - base - 0.5);
-  float size = 0.22 + 0.5 * footprint / WINDOW_SPACING;
-  float inside = 1.0 - smoothstep(size - 0.06, size, max(f.x, max(f.y, f.z)));
-  return step(r.x, 0.12) * inside * (0.3 + 0.7 * r.y * r.y);
-}
 
 /** Window tile coordinates of a camera-relative point (local Mercator). */
 vec2 roadLocal(const int level, const vec3 offset) {
@@ -151,6 +127,16 @@ float roadLayer(const int level, const ivec2 cell) {
 }
 
 /**
+ * A lamp is ~0.7 m. Farther away it's drawn at least about a pixel wide,
+ * and dimmed as it grows, a little slower than its true share of the pixel
+ * so distant cities still read as fields of lights (as they do to the eye,
+ * through glare) rather than a lattice of full-brightness dots.
+ */
+float lampFade(const float radius) {
+  return min(1.0, pow(0.5 / radius, 0.9));
+}
+
+/**
  * Lamps near this pixel drawn exactly: each texel cell holds at most one
  * lamp's precise position, so they're sharp points of a physical size
  * (~0.7 m, at least ~1.5 px) at any zoom, with a faint glow around them.
@@ -159,7 +145,8 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint) {
   float meters = roadTexelMeters[level];
   vec2 texel = local * float(TILE);
   ivec2 base = ivec2(floor(texel));
-  float radius = max(0.35, 0.8 * footprint);
+  float radius = max(0.35, 0.6 * footprint);
+  float fade = lampFade(radius);
   float glowRadius = radius * 2.5;
   vec3 sum = vec3(0.0);
   for (int dy = -1; dy <= 1; ++dy) {
@@ -173,7 +160,7 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint) {
       if (index == 0) continue;
       vec2 position = vec2(c) + lamp.rg * (255.0 / 256.0) + 0.5 / 256.0;
       float d = length(texel - position) * meters;
-      float core = exp(-d * d / (radius * radius));
+      float core = exp(-d * d / (radius * radius)) * fade;
       float glow = exp(-d * d / (glowRadius * glowRadius)) * 0.06;
       sum += LAMP_COLORS[index] * lamp.a * (core + glow);
     }
@@ -181,10 +168,49 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint) {
   return sum;
 }
 
+uvec2 pcg2d(uvec2 v) {
+  v = v * 1664525u + 1013904223u;
+  v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+  v ^= v >> 16u;
+  v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+  v ^= v >> 16u;
+  return v;
+}
+
 /**
- * Light from one road window: pools (rgb), its lamps, and how much of the
- * pixel it covers (fading out over the outer quarter tile so the next
- * level takes over smoothly).
+ * Residential streets where the street data has none (the coarse level
+ * only carries main roads): one candidate lamp per texel cell of that
+ * level (world-fixed cells), lit with a probability following how bright
+ * NASA's map says the area is.
+ */
+vec3 carpet(const int level, const vec2 local, const float footprint, const float density) {
+  float meters = roadTexelMeters[level];
+  vec2 texel = local * float(TILE);
+  ivec2 base = ivec2(floor(texel));
+  ivec2 origin = ivec2(roadOrigin[level]) * TILE;
+  float radius = max(0.35, 0.6 * footprint);
+  float fade = lampFade(radius);
+  vec3 sum = vec3(0.0);
+  for (int dy = -1; dy <= 1; ++dy) {
+    for (int dx = -1; dx <= 1; ++dx) {
+      ivec2 c = base + ivec2(dx, dy);
+      uvec2 h = pcg2d(uvec2(origin + c));
+      vec2 r = vec2(h & 0xffffu) / 65535.0;
+      if (r.x >= density) continue;
+      vec2 position = vec2(c) + 0.15 + 0.7 * vec2(fract(r.y * 7.13), fract(r.y * 13.7));
+      float d = length(texel - position) * meters;
+      float i = 0.45 + 0.75 * fract(r.y * 31.1);
+      vec3 color = fract(r.y * 3.7) < 0.55 ? LAMP_COLORS[1] : LAMP_COLORS[2];
+      sum += color * i * fade * exp(-d * d / (radius * radius));
+    }
+  }
+  return sum;
+}
+
+/**
+ * One street level at this pixel: pools (rgb) and coverage (a: inside the
+ * window and loaded, fading out over its outer quarter tile), and its
+ * lamps, drawn as points.
  */
 vec4 roadLevel(const int level, const vec3 offset, const float footprint, out vec3 lamps) {
   lamps = vec3(0.0);
@@ -193,18 +219,10 @@ vec4 roadLevel(const int level, const vec3 offset, const float footprint, out ve
   if (any(lessThan(local, vec2(0.0))) || any(greaterThanEqual(local, vec2(ROAD_WINDOW)))) return vec4(0.0);
   float layer = roadLayer(level, ivec2(floor(local)));
   if (layer < 0.0) return vec4(0.0);
-  // Gradients of the continuous coordinates: no mip spikes at tile seams.
-  vec4 light = textureGrad(roadLights, vec3(fract(local), layer), dFdx(local), dFdy(local));
-  // Far: lamp energy averaged by the mips, in the pools' color (white where
-  // there are none, e.g. runway lights).
-  float poolLuma = max(light.r, max(light.g, light.b));
-  vec3 farColor = poolLuma > 0.004 ? light.rgb / poolLuma : vec3(0.92, 0.94, 1.0);
-  vec3 far = farColor * light.a * 1.5;
-  float meters = roadTexelMeters[level];
-  float nearWeight = smoothstep(meters * 1.2, meters * 0.5, footprint);
-  lamps = nearWeight > 0.0 ? mix(far, nearLamps(level, local, footprint), nearWeight) : far;
+  vec3 pools = texture(roadLights, vec3(fract(local), layer)).rgb;
+  lamps = nearLamps(level, local, footprint);
   float edge = min(min(local.x, local.y), min(ROAD_WINDOW - local.x, ROAD_WINDOW - local.y));
-  return vec4(light.rgb, smoothstep(0.0, 0.25, edge));
+  return vec4(pools, smoothstep(0.0, 0.25, edge));
 }
 
 void main() {
@@ -218,41 +236,50 @@ void main() {
   float night = smoothstep(0.06, -0.08, dot(up, sunDirection));
   if (night <= 0.0) return;
   float value = lightMap(p);
+  // Kept where the satellite map says the area is actually lit: rural
+  // roads and farm tracks stay dark (MSFS lights them like suburbs).
+  float urban = smoothstep(0.08, 0.4, value);
+  if (urban <= 0.0) return;
   float footprint = length(offset) * pixelAngle;
 
-  // OpenStreetMap streets, areas and airports, nearest window first. Kept
-  // where the satellite map says the area is actually lit: rural roads and
-  // farm tracks stay dark (MSFS lights them like suburbs).
-  vec3 lampsA;
-  vec3 lampsB;
-  vec4 a = roadLevel(0, offset, footprint, lampsA);
-  vec4 b = roadLevel(1, offset, footprint, lampsB);
-  float covered = a.a + (1.0 - a.a) * b.a;
-  float wb = (1.0 - a.a) * b.a;
-  vec3 roads = a.rgb * a.a + b.rgb * wb;
-  vec3 lamps = lampsA * a.a + lampsB * wb;
-  float urban = smoothstep(0.08, 0.4, value);
+  // Street levels by on-screen size: each 4x coarser than the previous,
+  // used where its texels are about a pixel (no mipmaps needed), blending
+  // into the next; a level that doesn't cover the pixel hands its share to
+  // the next coarser one. At most two levels are sampled.
+  float lod = clamp(log2(max(footprint, 1e-3) / (roadTexelMeters[0] * 1.5)) * 0.5, 0.0, float(${ROAD_LEVELS - 1}));
+  int first = int(floor(lod));
+  float remaining = 1.0;
+  vec3 pools = vec3(0.0);
+  vec3 lamps = vec3(0.0);
+  float coarse = 0.0;
+  for (int level = 0; level < ${ROAD_LEVELS}; ++level) {
+    if (level < first || remaining <= 0.001) continue;
+    float want = level == first ? 1.0 - fract(lod) : 1.0;
+    vec3 levelLamps;
+    vec4 s = roadLevel(level, offset, footprint, levelLamps);
+    float w = min(remaining, want) * s.a;
+    pools += s.rgb * w;
+    lamps += levelLamps * w;
+    if (level == ${ROAD_LEVELS - 1}) coarse = w;
+    remaining -= w;
+  }
+
   // Street light lands on the ground, not on walls: only on surfaces that
   // face up (normal from depth derivatives).
   vec3 normal = normalize(cross(dFdx(offset), dFdy(offset)));
   float upness = abs(dot(normal, up));
-  vec3 emission = (roads * roadGain + lamps * lampGain) * urban * smoothstep(0.55, 0.85, upness);
+  // Lamps are light sources; their pools light the surface, so they show
+  // its own color (dark asphalt, markings, sidewalks) rather than glowing.
+  vec3 lit = pools * roadGain * albedo.rgb + lamps * lampGain;
 
-  // Lit windows on facades up close.
-  float lit = smoothstep(0.28, 0.85, value);
-  float facade = smoothstep(0.3, 0.12, upness);
-  float windowWeight = facade * smoothstep(2.0, 0.6, footprint);
-  if (windowWeight > 0.0) {
-    emission += vec3(1.0, 0.72, 0.42) * intensity * lit * windowWeight * 1.6 * windows(offset, footprint);
-  }
+  // Residential carpet where only the coarse level's main roads are drawn,
+  // and a faint glow beyond every window.
+  float density = smoothstep(0.1, 0.6, value) * 0.6;
+  float land = 1.0 - waterScore(albedo.rgb);
+  if (coarse > 0.0) lit += carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * coarse * land;
+  lit += vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
 
-  // Beyond the street windows, the satellite map's glow alone (off water);
-  // it fades in with distance so uncovered ground nearby isn't a flat wash.
-  float far = (1.0 - covered) * smoothstep(15.0, 300.0, footprint);
-  float glow = intensity * lit * lit * 0.3 * (1.0 - waterScore(albedo.rgb));
-  emission += far * glow * mix(vec3(1.0, 0.45, 0.12), vec3(1.0, 0.78, 0.5), smoothstep(0.0, 0.006, glow));
-
-  outColor = vec4(emission * night, 1.0);
+  outColor = vec4(lit * urban * smoothstep(0.35, 0.85, upness) * night, 1.0);
 }
 `
 
@@ -264,8 +291,7 @@ void main() {
  *
  * - streets, commercial areas and airports from OpenStreetMap
  *   (RoadLightTiles), lamp by lamp near the view;
- * - NASA Black Marble beyond them, and as the "is it lit" mask;
- * - procedural lit windows on facades up close.
+ * - NASA Black Marble beyond them, and as the "is it lit" mask.
  */
 export class NightLightsPass extends Pass {
   readonly target = new WebGLRenderTarget(1, 1, { type: HalfFloatType, depthBuffer: false })
@@ -296,15 +322,13 @@ export class NightLightsPass extends Pass {
         cameraWorld: new Uniform(new Matrix4()),
         cameraPositionECEF: new Uniform(new Vector3()),
         sunDirection: new Uniform(new Vector3()),
-        intensity: new Uniform(0.02),
-        roadGain: new Uniform(0.016),
+        roadGain: new Uniform(0.08),
         pixelAngle: new Uniform(0.001),
-        cameraCell: new Uniform(new Int32Array(3)),
-        cameraFraction: new Uniform(new Vector3()),
         roadLights: new Uniform(null),
         roadLamps: new Uniform(null),
         lampGain: new Uniform(0.12),
         roadTexelMeters: new Uniform(new Float32Array(ROAD_LEVELS)),
+        roadOrigin: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector2())),
         roadEnabled: new Uniform(new Float32Array(ROAD_LEVELS)),
         roadAnchor: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector3())),
         roadEast: new Uniform(Array.from({ length: ROAD_LEVELS }, () => new Vector3())),
@@ -359,6 +383,7 @@ export class NightLightsPass extends Pass {
       this.u<Vector4[]>('roadMercator').value[i]!.set(...level.mercator)
       this.u<Float32Array>('roadCurvature').value[i] = level.curvature
       this.u<Float32Array>('roadTexelMeters').value[i] = level.metersPerTexel
+      this.u<Vector2[]>('roadOrigin').value[i]!.set(...level.origin)
       layers.set(level.layers, i * WINDOW * WINDOW)
     })
   }
@@ -383,11 +408,6 @@ export class NightLightsPass extends Pass {
     this.u<Matrix4>('cameraWorld').value.copy(camera.matrixWorld)
     const position = this.u<Vector3>('cameraPositionECEF').value
     position.setFromMatrixPosition(camera.matrixWorld)
-    const x = Math.floor(position.x / CELL)
-    const y = Math.floor(position.y / CELL)
-    const z = Math.floor(position.z / CELL)
-    this.u<Int32Array>('cameraCell').value.set([x, y, z])
-    this.u<Vector3>('cameraFraction').value.set(position.x - x * CELL, position.y - y * CELL, position.z - z * CELL)
     this.u<Texture | null>('inputBuffer').value = inputBuffer?.texture ?? null
     renderer.setRenderTarget(this.target)
     renderer.render(this.scene, this.camera)
