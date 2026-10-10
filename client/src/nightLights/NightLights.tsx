@@ -2,7 +2,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { AtmosphereContext, type AtmosphereTransientStates } from '@takram/three-atmosphere/r3f'
 import { ecefToGeodetic, WGS84_A } from '@windowseat/shared'
 import { useContext, useEffect, useMemo, type FC } from 'react'
-import type { Camera } from 'three'
+import { Vector3, type Camera } from 'three'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { cloudDepth } from '../clouds/cloudDepth'
@@ -23,6 +23,8 @@ class NightLightsController {
   readonly effect: NightLightsPass
   private ready = false
   private active = false
+  /** Runway lighting by day (dusk, overcast), eased (see airfieldTarget). */
+  private airfieldOn = 0
   private sinceFlush = 0
 
   constructor(camera: Camera) {
@@ -64,7 +66,10 @@ class NightLightsController {
       Math.max(-1, Math.min(1, states.sunDirection.dot(camera.position) / radius))
     )
     const margin = this.active ? 0.2 : 0.15 // radians; hysteresis
-    const active = elevation < reach + margin
+    // Airports light their runways at dusk and in low overcast too.
+    this.airfieldOn += (airfieldTarget(states.sunDirection) - this.airfieldOn) * Math.min(1, delta / 3)
+    effect.setAirfieldOn(this.airfieldOn)
+    const active = elevation < reach + margin || this.airfieldOn > 0.01
     if (active !== this.active) {
       this.active = active
       this.effect.enabled = active
@@ -112,6 +117,24 @@ class NightLightsController {
     this.tiles.dispose()
     this.roads?.dispose()
   }
+}
+
+const toView = new Vector3()
+
+/**
+ * How much airports have their runway lights on by day, at the view:
+ * from about 8° sun elevation down (dusk, dawn), and under a low, near
+ * solid deck (IMC: lights on for low ceilings and visibility).
+ */
+function airfieldTarget(sunDirection: Vector3): number {
+  if (lightAnchor.lengthSq() < 1) return 0
+  toView.copy(lightAnchor).normalize()
+  const sun = sunDirection.dot(toView)
+  const dusk = 1 - Math.min(1, Math.max(0, (sun - 0.035) / (0.139 - 0.035)))
+  const low = cloudDepth.slabs.find(s => s.layer === 0)
+  const cover = low == null ? 0 : (cloudDepth.coverAt?.(lightAnchor)?.[0] ?? low.opacity)
+  const t = Math.min(1, Math.max(0, (cover - 0.65) / 0.25)) * cloudDepth.fade
+  return Math.max(dusk * dusk * (3 - 2 * dusk), t * t * (3 - 2 * t))
 }
 
 /**

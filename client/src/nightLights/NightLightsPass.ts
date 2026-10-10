@@ -55,6 +55,8 @@ uniform mat4 cameraWorld;
 uniform vec3 cameraPositionECEF;
 uniform vec3 sunDirection;
 uniform float roadGain;
+/** Airfield lighting on by day (dusk, low overcast), 0 … 1. */
+uniform float airfieldOn;
 uniform float pixelAngle;
 
 // Street / airport light rasters (RoadLightTiles), one window per level.
@@ -430,7 +432,22 @@ void main() {
   vec3 p = cameraPositionECEF + offset;
   vec3 up = normalize(p);
   float night = smoothstep(0.06, -0.08, dot(up, sunDirection));
-  if (night <= 0.0) return;
+  // Runway lights are also on at dusk and under low overcast.
+  float fieldOn = max(night, airfieldOn);
+  if (fieldOn <= 0.0) return;
+  if (night <= 0.0) {
+    // Daytime: runway lights only (streets are off, and this stays cheap).
+    float footprintDay = length(offset) * pixelAngle;
+    vec3 dXDay = dFdx(offset);
+    vec3 dYDay = dFdy(offset);
+    vec3 n = cross(dXDay, dYDay);
+    float nLength = length(n);
+    float upDay = nLength > 1e-12 ? abs(dot(n, up)) / nLength : 0.0;
+    vec3 runway = runwayLights(offset, footprintDay, dXDay, dYDay) * lampGain * smoothstep(0.35, 0.85, upDay) * fieldOn;
+    if (any(isnan(runway)) || any(isinf(runway))) runway = vec3(0.0);
+    outColor = vec4(runway, lightLuminance(runway) * glowShare(0.35 / max(footprintDay, 1e-3) / 0.8));
+    return;
+  }
   float value = lightMap(p);
   // Kept where the satellite map says the area is actually lit: rural
   // roads and farm tracks stay dark (MSFS lights them like suburbs).
@@ -503,7 +520,7 @@ void main() {
   float cores = mix(0.7, 1.3, smoothstep(0.35, 0.95, value));
   float facing = smoothstep(0.35, 0.85, upness) * night;
   float gain = urban * cores * facing;
-  vec3 field = fieldLamps * lampGain * facing;
+  vec3 field = fieldLamps * lampGain * smoothstep(0.35, 0.85, upness) * fieldOn;
   vec3 light = lit * gain + field;
   float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
   // Never NaN or infinite: one such pixel turns the whole glow (and with it
@@ -641,6 +658,7 @@ export class NightLightsPass extends Pass {
         cameraPositionECEF: new Uniform(new Vector3()),
         sunDirection: new Uniform(new Vector3()),
         roadGain: new Uniform(0.08),
+        airfieldOn: new Uniform(0),
         pixelAngle: new Uniform(0.001),
         roadLights: new Uniform(null),
         roadLamps: new Uniform(null),
@@ -755,6 +773,10 @@ export class NightLightsPass extends Pass {
   /** Earth radius at the view plus the low cloud base altitude; 0 without clouds. */
   setCloudBase(radius: number): void {
     ;(this.combine.uniforms.cloudBaseRadius as { value: number }).value = radius
+  }
+
+  setAirfieldOn(value: number): void {
+    this.u<number>('airfieldOn').value = value
   }
 
   setSun(direction: Vector3): void {
