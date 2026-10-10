@@ -351,10 +351,13 @@ export const VolumetricClouds: FC = () => {
         }
       }}
       qualityPreset={preset.clouds}
-      // Upscaled from 1 in 16 pixels a frame; the resolve is patched to
-      // average the fresh samples too (patchCloudsResolve), or their march
-      // noise showed as static along cloud edges.
-      temporalUpscale
+      // No temporal upscaling. It marches 1 pixel in 16 per frame and
+      // rebuilds the rest from history: cloud edges never settle (jitter in
+      // motion), and the clouds' depth buffer that keeps cloud off aircraft
+      // in front of it only updates per 4x4 block, striping aircraft seen
+      // against cloud. Half resolution, plain temporal accumulation: stable,
+      // ~2.7 ms more. (patchCloudsResolve still fixes the upscaled path.)
+      temporalUpscale={false}
       resolutionScale={preset.cloudResolution}
       lightShafts={preset.lightShafts}
       localWeatherTexture={coverageTexture.texture}
