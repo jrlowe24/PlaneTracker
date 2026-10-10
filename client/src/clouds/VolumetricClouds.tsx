@@ -314,12 +314,7 @@ export const VolumetricClouds: FC = () => {
         }
       }}
       qualityPreset={preset.clouds}
-      // Temporal upscaling reprojects cloud history from earlier frames; an
-      // aircraft moving against the clouds breaks it (halos, stripes), and
-      // switching it on the fly corrupted the cloud buffers (clouds drawn
-      // over the ground near the camera). Fixed: half resolution, no
-      // temporal upscaling, similar cost.
-      temporalUpscale={false}
+      temporalUpscale
       resolutionScale={preset.cloudResolution}
       lightShafts={preset.lightShafts}
       localWeatherTexture={coverageTexture.texture}
