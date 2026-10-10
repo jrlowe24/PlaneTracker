@@ -9,8 +9,8 @@ import {
 } from 'three'
 
 /**
- * Cloud noise for takram's clouds ("local weather": r = low cumulus, g =
- * mid, b = cirrus, a = convective towers), tiled over the globe.
+ * Cloud noise for takram's clouds ("local weather": r = low coverage,
+ * g = mid, b = cirrus, a = disabled convective layer), tiled over the globe.
  *
  * Each channel holds tileable fBm noise rank-transformed to a uniform
  * distribution u ∈ [0, 1). The patched clouds shader (regionalShader.ts)
@@ -71,12 +71,12 @@ const STYLES: [NoiseStyle, NoiseStyle, NoiseStyle, NoiseStyle] = [
   // Low clouds use a broad, irregular envelope. The volumetric shape and
   // detail textures supply the smaller puffs; putting those into the weather
   // mask too made high-cover fields read as evenly spaced cotton balls.
-  { periodX: 4, periodY: 3, octaves: 4, seed: 11, persistence: 0.42 },
+  { periodX: 8, periodY: 6, octaves: 4, seed: 11, persistence: 0.42 },
   // Mid: broader sheets (altostratus/altocumulus).
   { periodX: 5, periodY: 5, octaves: 4, seed: 23 },
   // High: streaky cirrus.
   { periodX: 16, periodY: 3, octaves: 3, seed: 37 },
-  // Convective: isolated towers, fewer and larger than cumulus cells.
+  // Convective towers (currently disabled).
   { periodX: 7, periodY: 7, octaves: 2, seed: 53 }
 ]
 

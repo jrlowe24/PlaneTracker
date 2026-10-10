@@ -16,6 +16,11 @@ import { REGION_RADIUS, RegionalCoverage, type Cover } from './regionalCoverage'
  */
 
 const MARKER = '/* window-seat regional coverage */'
+const LOCAL_MORPH_MARKER = '/* window-seat local cloud morphology */'
+const WEATHER_SAMPLE = `struct WeatherSample {
+  vec4 heightFraction; // Normalized height of each layer
+  vec4 density;
+};`
 
 const CHUNK = /* glsl */ `
 ${MARKER}
@@ -27,7 +32,7 @@ uniform float regionalRadius;
 uniform float regionalEnabled;
 uniform vec4 coverageFallback;
 
-vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLevel) {
+vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLevel, out vec4 localCover) {
   vec4 cover = coverageFallback;
   if (regionalEnabled > 0.5) {
     // Positions here are globe-centered (ECEF plus a small, mostly radial
@@ -50,6 +55,7 @@ vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLev
     step(0.0, offset)
   );
   weather = mix(direct, expected, smoothstep(0.5, 3.0, mipLevel));
+  localCover = cover;
   return weather;
 }
 `
@@ -78,18 +84,40 @@ export function createRegionalUniforms(regional: RegionalCoverage): RegionalUnif
 
 /** Patches a clouds/shadow material once; false if takram's shader changed. */
 export function patchCloudsMaterial(material: ShaderMaterial, uniforms: RegionalUniforms): boolean {
-  if (material.fragmentShader.includes(MARKER)) return true
+  if (material.fragmentShader.includes(MARKER) && material.fragmentShader.includes(LOCAL_MORPH_MARKER)) return true
   const signature =
     'WeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel) {'
   const apply = '  #ifdef SHADOW\n  localWeather *= shadowLayerMask;'
+  const mediaSample = '  vec4 density = weather.density;'
+  const shapeRemap = 'density = remapClamped(density, vec4(1.0 - shape) * shapeAmounts, vec4(1.0));'
   const source = material.fragmentShader
-  if (!source.includes(signature) || !source.includes(apply)) return false
+  if (
+    !source.includes(signature) ||
+    !source.includes(apply) ||
+    !source.includes(WEATHER_SAMPLE) ||
+    !source.includes(mediaSample) ||
+    !source.includes(shapeRemap)
+  ) return false
   material.fragmentShader = source
     .replace(
       signature,
       `${CHUNK}\nWeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel, const vec3 weatherPosition) {`
     )
-    .replace(apply, `  localWeather = applyRegionalCoverage(localWeather, weatherPosition, mipLevel);\n${apply}`)
+    .replace(WEATHER_SAMPLE, `struct WeatherSample {\n  vec4 heightFraction; // Normalized height of each layer\n  vec4 density;\n  float localCoverage;\n};`)
+    .replace(
+      apply,
+      `  vec4 localCover;\n  localWeather = applyRegionalCoverage(localWeather, weatherPosition, mipLevel, localCover);\n  weather.localCoverage = localCover.x;\n${apply}`
+    )
+    .replace(
+      '  vec4 heightScale = shapeAlteringFunction(weather.heightFraction, shapeAlteringBiases);',
+      `  vec4 localShapeBiases = shapeAlteringBiases;\n  float lowStratus = smoothstep(0.42, 0.58, weather.localCoverage);\n  localShapeBiases.x = mix(shapeAlteringBiases.x, mix(0.32, 0.12, lowStratus), 1.0);\n  vec4 heightScale = shapeAlteringFunction(weather.heightFraction, localShapeBiases);`
+    )
+    .replace(
+      mediaSample,
+      `${mediaSample}\n  ${LOCAL_MORPH_MARKER}\n  vec4 localShapeAmounts = shapeAmounts;\n  vec4 localShapeDetailAmounts = shapeDetailAmounts;\n  float localDeck = smoothstep(0.3, 0.6, weather.localCoverage);\n  float lowStratus = smoothstep(0.42, 0.58, weather.localCoverage);\n  // Coverage-driven morphology: retain billows in broken weather; flatten\n  // dense low-cloud regions so cellular detail merges into a deck.\n  localShapeAmounts.x = mix(shapeAmounts.x, mix(0.95, 0.22, lowStratus), localDeck);\n  localShapeDetailAmounts.x = mix(shapeDetailAmounts.x, mix(0.55, 0.08, lowStratus), localDeck);`
+    )
+    .replace(shapeRemap, 'density = remapClamped(density, vec4(1.0 - shape) * localShapeAmounts, vec4(1.0));')
+    .replace('modifier = mix(vec4(0.0), modifier, shapeDetailAmounts);', 'modifier = mix(vec4(0.0), modifier, localShapeDetailAmounts);')
     .replaceAll('sampleWeather(uv, height, mipLevel)', 'sampleWeather(uv, height, mipLevel, position)')
   Object.assign(material.uniforms, uniforms)
   material.needsUpdate = true

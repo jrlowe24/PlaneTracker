@@ -245,28 +245,29 @@ export const VolumetricClouds: FC = () => {
       if (layer == null) continue
       layer.weatherExponent = 1
       layer.coverageFilterWidth = FILTER_WIDTH
-      // As a layer approaches overcast, blend its cloud shape from distinct
-      // puffs toward a flatter, more connected deck. Keep the change gradual
-      // so a weather-cell boundary doesn't make the cloud texture pop.
+      // Keep the cloud profile independent of camera location. The shader
+      // uses each sample's local weather coverage to flatten dense low-cloud
+      // regions into a connected deck while preserving billows in broken areas.
       const deck = i === 0
-        ? smoothstep(0.5, 0.82, cover[i]!)
+        ? smoothstep(0.38, 0.72, cover[i]!)
         : i === 1
           ? smoothstep(0.4, 0.78, cover[i]!)
           : 0
-      layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35 - 0.17 * deck
+      layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35
       layer.densityScale =
         i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : i === 3 ? CONVECTIVE_DENSITY : LOW_MID_DENSITY
-      // Fill the broad shape as the deck rises; fine detail keeps eroding its
-      // low-density boundaries so the result doesn't become a featureless slab.
-      layer.shapeAmount = i === 2 ? 0.4 : 1 - (i === 0 ? 0.88 : 0.8) * deck
-      layer.shapeDetailAmount = i === 2 ? 0 : 1 + (i === 0 ? 0.18 : 0.1) * deck
-      const baseFill = 0.25 + 0.48 * deck
-      layer.densityProfile.set(0, 0, 1 - baseFill, baseFill)
+      layer.shapeAmount = i === 2 ? 0.4 : 1
+      layer.shapeDetailAmount = i === 2 ? 0 : i === 0 ? 0.25 : 1
+      layer.densityProfile.set(0, 0, 0.75, 0.25)
       // Dense mid-level decks were producing a hard blue self-shadow rim.
       // Keep their shadows while broken, but let a near-overcast deck scatter
       // light without feeding its own coarse shadow map back into the edges.
       layer.shadow = shadows && (i === 0 || (i === 1 && deck < 0.6))
     }
+    // Widen the low-frequency Perlin-Worley body scale (one repeat per 20 km)
+    // so high-coverage low decks form broad masses instead of many equal puffs.
+    // The separate detail texture still breaks up their low-density edges.
+    effect.shapeRepeat.setScalar(0.00005)
     // Cover per layer: from the regional grid at each sample's position
     // when there is weather data (patched shader), else the blended
     // view-center / manual cover everywhere.
