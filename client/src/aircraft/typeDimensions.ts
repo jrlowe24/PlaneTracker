@@ -65,11 +65,11 @@ export interface AirframeScale {
 }
 
 /**
- * Display size relative to real dimensions. True scale read as oversized
- * against the photogrammetry (whose buildings and runways look smaller than
- * their nominal size from the air).
+ * Display size relative to real dimensions: true size, so aircraft match
+ * the ones captured in the photogrammetry at the gates (0.75 read as toys
+ * next to them).
  */
-export const AIRCRAFT_SIZE_SCALE = 0.75
+export const AIRCRAFT_SIZE_SCALE = 1
 
 /** Displayed [length, span] in meters: the type's, else the class placeholder's. */
 export function typeDimensions(typeCode: string | null, cls: AircraftClass): [number, number] {
