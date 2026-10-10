@@ -6,6 +6,7 @@ import type {
   Viewport
 } from '@windowseat/shared'
 
+import { cameraModeStore, exitToGlobe } from '../state/cameraMode'
 import { createStore } from '../state/createStore'
 import { AircraftRegistry } from './aircraftRegistry'
 import { config } from '../config'
@@ -145,6 +146,9 @@ class FlightConnection {
       } else if (message.type === 'routes') {
         for (const route of message.routes) this.routes.set(route.callsign, route)
       } else {
+        // A replayed recording restarting (reset) puts every flight back at
+        // its start: stop following rather than fly back to it.
+        if ('reset' in message && message.reset && cameraModeStore.get().mode !== 'globe') exitToGlobe()
         this.registry.apply(message, Date.now())
         if (flightStatusStore.get().aircraftCount !== this.registry.list.length) {
           flightStatusStore.set({ aircraftCount: this.registry.list.length })

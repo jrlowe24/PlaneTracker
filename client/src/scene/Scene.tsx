@@ -30,14 +30,24 @@ import { getSimulatedDate } from '../state/settings'
 import { PostEffects } from './PostEffects'
 import { QualityApplier } from './QualityApplier'
 
-/** Default view: over Lake Washington, looking west across downtown Seattle to the Olympics. */
+/** Default view: Seattle from above, north up (the free camera is a top-down map). */
 const DEFAULT_VIEW = {
   latitude: 47.6062,
   longitude: -122.3321,
-  heading: 150,
-  pitch: -18,
-  distance: 9000
+  heading: 0,
+  pitch: -89.9,
+  distance: 25_000
 }
+
+/**
+ * The free camera looks straight down and stays that way, like a map:
+ * drag pans, the wheel zooms toward the cursor, right-drag turns the
+ * heading. Tilted views were confusing here (zooming out slid sideways
+ * along a grazing view and only slowly turned to look down); following an
+ * aircraft gives the 3D views. (The controls' "altitude" limits are angles
+ * from straight down, despite their docs: 0 = top-down.)
+ */
+const TOP_DOWN = 0
 
 /**
  * `?view=lat,lon,heading,pitch,distance[,height]` (degrees / meters; height
@@ -110,8 +120,8 @@ const GlobeAndControls: FC = () => {
           enabled={globeControlsEnabled}
           enableDamping
           adjustHeight={false}
-          // Permit grazing, near-horizontal views.
-          maxAltitude={Math.PI * 0.55}
+          minAltitude={TOP_DOWN}
+          maxAltitude={TOP_DOWN}
         />
       )}
     </>

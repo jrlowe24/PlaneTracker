@@ -25,10 +25,10 @@ const MIN_DISTANCE = 12
 const MAX_DISTANCE = 60_000
 /** Where the camera ends up when leaving follow mode. */
 /**
- * Free look after following: pull well back and look down on the area, so
- * it's clear the camera is yours again (12 km left it hanging by the plane).
+ * Free look after following: pull back to the top-down map view over the
+ * aircraft (the free camera looks straight down; see Scene.tsx).
  */
-const EXIT_ORBIT: Orbit = { yaw: 0, pitch: 55, distance: 40_000 }
+const EXIT_ORBIT: Orbit = { yaw: 0, pitch: 89.9, distance: 15_000 }
 
 interface Transition {
   elapsed: number
