@@ -138,14 +138,16 @@ export const AircraftSystem: FC = () => {
       down = null
       if (moved > 5 || elapsed > 500) return
       const rect = element.getBoundingClientRect()
-      const hex = pickAircraft(
-        camera,
-        event.clientX - rect.left,
-        event.clientY - rect.top,
-        rect.width,
-        rect.height,
-        event.pointerType === 'touch' ? 32 : 22
-      )
+      // Riding with an aircraft, taps are mostly orbiting the camera: they
+      // neither clear the followed aircraft's panel nor swap it for another
+      // aircraft passing near the finger, unless squarely on it (a 32 px
+      // touch radius around the screen center picked other traffic and the
+      // panel showed a different tail number, as if the follow had jumped).
+      const { mode, targetHex } = cameraModeStore.get()
+      const attached = mode !== 'globe' && targetHex != null
+      const radius = event.pointerType === 'touch' ? (attached ? 14 : 32) : attached ? 10 : 22
+      const hex = pickAircraft(camera, event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height, radius)
+      if (attached && hex == null) return
       selectionStore.set({ selectedHex: hex })
     }
     element.addEventListener('pointerdown', onDown)
