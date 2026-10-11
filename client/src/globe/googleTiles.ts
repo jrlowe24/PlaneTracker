@@ -107,16 +107,22 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
  *   panning shows detail sooner, but they compete with (and delay) the
  *   ground in view, and every tile fetched is billed.
  * - Bigger cache: the default (~430 MB) fills on a single low-altitude city
- *   view; once full, refinement stops (tiles in use can't be evicted).
- *   Not much bigger: with tile detail capped on high-density screens (see
- *   TILE_MAX_PIXEL_RATIO) 800 MB holds the view and its surroundings, and
- *   1.5 GB (plus the browser's own copies) ran Safari out of memory.
+ *   view; once full, refinement stops (tiles in use can't be evicted). The
+ *   size follows the terrain quality (setTileCacheBytes); this is the
+ *   starting value.
  * The download order itself stays the library's: screen-space error first,
  * which already favors nearby ground. Sorting by distance instead was
  * measured to be worse (it fetched deep tiles that can't show until their
  * ancestors and siblings arrive: ~1.1 GB before anything sharpened).
  */
 const TILE_CACHE_BYTES = isMobileDevice() ? 300e6 : 800e6
+
+/** Sets the tile cache size (quality setting; phones keep theirs). */
+export function setTileCacheBytes(tiles: TilesRenderer, bytes: number): void {
+  const size = isMobileDevice() ? Math.min(bytes, TILE_CACHE_BYTES) : bytes
+  tiles.lruCache.maxBytesSize = size
+  tiles.lruCache.minBytesSize = size * 0.7
+}
 
 /**
  * Tiles parsed at once. Mesh preparation (de-indexing, normals, skirts) runs

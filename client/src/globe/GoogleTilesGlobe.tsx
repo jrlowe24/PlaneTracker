@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, type FC } from 'react'
 import { Vector2, type Object3D } from 'three'
 
 import { getGoogleTiles, tileResolutionScale } from './googleTiles'
+import { setLoadOrder, updateLoadOrderView } from './loadOrder'
 import { TileLookahead, TileSurround } from './lookahead'
 import type { TileNormalsPlugin } from './TileNormalsPlugin'
 
@@ -32,6 +33,10 @@ export const GoogleTilesGlobe: FC<GoogleTilesGlobeProps> = ({
       normals.anisotropy = Math.min(8, gl.capabilities.getMaxAnisotropy())
     }
   }, [tiles, gl])
+
+  useLayoutEffect(() => {
+    setLoadOrder(tiles, true)
+  }, [tiles])
 
   useLayoutEffect(() => {
     tiles.setCamera(camera)
@@ -65,6 +70,7 @@ export const GoogleTilesGlobe: FC<GoogleTilesGlobeProps> = ({
     tiles.setResolution(camera, Math.max(1, Math.round(size.x * k)), Math.max(1, Math.round(size.y * k)))
     lookahead.update(camera, gl)
     surround.update(camera, gl)
+    updateLoadOrderView(camera)
     tiles.update()
   })
 

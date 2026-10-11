@@ -62,6 +62,8 @@ export interface QualitySettings {
   buildingWindows: boolean
   /** Most aircraft drawn with full models at once. */
   maxDetailedAircraft: number
+  /** Tile cache (bytes): finer terrain needs more to hold the view. */
+  tileCacheBytes: number
 }
 
 /**
@@ -83,6 +85,14 @@ const RESOLUTION: Record<QualityElements['resolution'], [number, number, number]
  * city), for detail mostly visible only when looking for it.
  */
 const TERRAIN: Record<QualityElements['terrain'], number> = { low: 20, medium: 12, high: 9, ultra: 6 }
+
+/**
+ * Tile cache (upper bound) by terrain detail. A full cache can't load what
+ * the view needs (tiles in use can't be evicted), so the view stays coarse
+ * in places; finer terrain uses more tiles. With distant terrain coarser
+ * (QualityApplier) a low city view uses ~400 MB on High, ~700 on Ultra.
+ */
+const TILE_CACHE: Record<QualityElements['terrain'], number> = { low: 500e6, medium: 800e6, high: 1200e6, ultra: 2000e6 }
 
 /** Cloud resolution (fraction of the screen) by preset. */
 const CLOUD_RESOLUTION: Record<Exclude<QualityElements['clouds'], 'off'>, number> = {
@@ -150,7 +160,8 @@ export function resolveQuality(e: QualityElements): QualitySettings {
     closeNightMaxDpr,
     cityLightDetail: e.cityLights !== 'low',
     buildingWindows: e.cityLights === 'high',
-    maxDetailedAircraft: DETAILED_AIRCRAFT[e.aircraft]
+    maxDetailedAircraft: DETAILED_AIRCRAFT[e.aircraft],
+    tileCacheBytes: TILE_CACHE[e.terrain]
   }
 }
 

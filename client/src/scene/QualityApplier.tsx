@@ -3,7 +3,7 @@ import { ecefToGeodetic, geoidHeight } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, useState, type FC } from 'react'
 
 import { config } from '../config'
-import { getGoogleTiles } from '../globe/googleTiles'
+import { getGoogleTiles, setTileCacheBytes } from '../globe/googleTiles'
 import { useStore } from '../state/createStore'
 import { qualityStore, stepDownAuto } from '../state/quality'
 import { resolutionStore } from '../state/resolution'
@@ -27,6 +27,15 @@ const TILE_STEP = 1.25
 const TILE_FADE_MS = 600
 /** Tile error target multiplier at night (terrain barely visible). */
 const NIGHT_TILE_FACTOR = 2
+/**
+ * Distant terrain: tiles far away (see FAR_HEIGHTS) may have up to
+ * 1 + FAR_COARSER times the target error (the library's errorFalloff, a
+ * fog-like curve like Cesium's dynamic screen-space error).
+ */
+const FAR_COARSER = 1.5
+/** "Far" starts at this many camera heights above the ground, or FAR_MIN_M. */
+const FAR_HEIGHTS = 4
+const FAR_MIN_M = 5000
 /** Camera height (m above sea level) for the close-up night resolution. */
 const CLOSE_ENTER_M = 1500
 const CLOSE_EXIT_M = 2500
@@ -153,6 +162,11 @@ export const QualityApplier: FC = () => {
     const height = g.height - geoidHeight(g.lat, g.lon)
     if (!close && height < CLOSE_ENTER_M) setClose(true)
     else if (close && height > CLOSE_EXIT_M) setClose(false)
+    // "Far" relative to the camera's height: looking down from 10 km, the
+    // ground below isn't far; toward the horizon it is.
+    if (!config.tilesDisabled) {
+      getGoogleTiles({ apiKey: config.googleMapsApiKey }).errorFalloffDensity = 1 / Math.max(FAR_MIN_M, FAR_HEIGHTS * height)
+    }
   })
 
   // Night: sharp only up close (see nightMaxDpr, closeNightMaxDpr).
@@ -178,13 +192,19 @@ export const QualityApplier: FC = () => {
     if (config.tilesDisabled) return
     const tiles = getGoogleTiles({ apiKey: config.googleMapsApiKey })
     tiles.errorTarget = preset.tileErrorTarget * tileFactor * (dark ? NIGHT_TILE_FACTOR : 1)
+    setTileCacheBytes(tiles, preset.tileCacheBytes)
+    // Distant terrain gets coarser tiles than the target: it's small, in
+    // haze, and away from where you look, and it's where most tiles go in
+    // views toward the horizon (what filled the cache on Ultra, leaving
+    // nearer tiles unloaded).
+    tiles.errorFalloff = tiles.errorTarget * FAR_COARSER
     // The tile cross-fade is a screen-door dither: at night it turned the
     // lights drawn on fading terrain into a grid of dots (neighbouring
     // pixels on different tiles). The terrain is barely visible then, so
     // tiles swap at once; the lights fade in on their own.
     const fade = tiles.getPluginByName('FADE_TILES_PLUGIN') as { fadeDuration: number } | null
     if (fade != null) fade.fadeDuration = dark ? 1 : TILE_FADE_MS
-  }, [preset.tileErrorTarget, tileFactor, dark])
+  }, [preset.tileErrorTarget, preset.tileCacheBytes, tileFactor, dark])
 
   return null
 }

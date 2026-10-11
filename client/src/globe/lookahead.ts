@@ -76,6 +76,14 @@ const SURROUND_YAWS = [Math.PI / 2, Math.PI, -Math.PI / 2]
  * phone's small cache they crowded out the view itself (and its memory).
  */
 const SURROUND_ENABLED = !isMobileDevice()
+/**
+ * Cache fill (share of its size) above which the ring lets go of its tiles
+ * so the view itself can load (and back on below the lower mark): the
+ * ring's tiles are in use and can't be evicted, and with a full cache the
+ * view was refused tiles and stayed coarse in places until the camera moved.
+ */
+const SURROUND_OFF_FILL = 0.95
+const SURROUND_ON_FILL = 0.85
 
 const up = new Vector3()
 const yawQuaternion = new Quaternion()
@@ -95,8 +103,12 @@ export class TileSurround {
 
   update(mainCamera: Camera, gl: WebGLRenderer): void {
     const altitude = mainCamera.position.length() - 6_371_000
+    // cachedBytes is maintained by the cache but missing from its typings.
+    const cache = this.tiles.lruCache as typeof this.tiles.lruCache & { cachedBytes: number }
+    const fill = cache.cachedBytes / cache.maxBytesSize
+    const roomy = this.active ? fill < SURROUND_OFF_FILL && !cache.isFull() : fill < SURROUND_ON_FILL
     const wanted =
-      SURROUND_ENABLED && mainCamera instanceof PerspectiveCamera && altitude < SURROUND_MAX_ALTITUDE
+      SURROUND_ENABLED && roomy && mainCamera instanceof PerspectiveCamera && altitude < SURROUND_MAX_ALTITUDE
     if (wanted !== this.active) {
       this.active = wanted
       for (const camera of this.cameras) {
