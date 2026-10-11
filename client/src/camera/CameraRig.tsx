@@ -21,6 +21,8 @@ const DEFAULT_FOV = 50
 const WINDOW_FOV = 72
 const ENTER_DURATION_S = 2.8
 const EXIT_DURATION_S = 2.2
+/** The view turns onto the aircraft in 1 / TURN_SPEEDUP of the flight. */
+const TURN_SPEEDUP = 1.6
 const MIN_DISTANCE = 12
 const MAX_DISTANCE = 60_000
 /** Where the camera ends up when leaving follow mode. */
@@ -47,6 +49,8 @@ const relDesired = new Vector3()
 const dirStart = new Vector3()
 const dirDesired = new Vector3()
 const rotation = new Quaternion()
+const partialRotation = new Quaternion()
+const identity = new Quaternion()
 const trackQuaternion = new Quaternion()
 const unitZ = new Vector3()
 
@@ -169,17 +173,24 @@ class CameraRigController {
       dirStart.copy(startPoint).divideScalar(d0)
       dirDesired.copy(relDesired).divideScalar(d1)
       rotation.setFromUnitVectors(dirStart, dirDesired)
-      rotation.slerpQuaternions(new Quaternion(), rotation, e)
+      // (Into its own quaternion: slerpQuaternions copies its first argument
+      // into `this` before reading the second, so slerping `rotation` into
+      // itself always gave the identity. The camera then flew straight in
+      // along its starting line and snapped round to the chase position at
+      // the end.)
+      partialRotation.slerpQuaternions(identity, rotation, e)
       const distance = Math.exp(Math.log(d0) + (Math.log(d1) - Math.log(d0)) * e)
       camera.position
         .copy(pose.position)
-        .add(unitZ.copy(dirStart).applyQuaternion(rotation).multiplyScalar(distance))
+        .add(unitZ.copy(dirStart).applyQuaternion(partialRotation).multiplyScalar(distance))
       // Turn toward the aircraft early and keep it centred from wherever
       // the camera is (looking along the final view direction from far
       // away left the aircraft off-screen, then snapped it in at the end);
       // the look-at converges on the final orientation as the camera does.
       lookAtQuaternion(camera.position, pose.position, headingFrame(pose).up, trackQuaternion)
-      camera.quaternion.slerpQuaternions(transition.startQuaternion, trackQuaternion, easeInOutCubic(Math.min(1, t * 2.2)))
+      // Over the first ~60% of the flight: turning faster (it was 45%)
+      // whipped the view round at up to 350°/s.
+      camera.quaternion.slerpQuaternions(transition.startQuaternion, trackQuaternion, easeInOutCubic(Math.min(1, t * TURN_SPEEDUP)))
       if (t >= 1) {
         this.transition = null
         cameraModeStore.set({ transitioning: false })

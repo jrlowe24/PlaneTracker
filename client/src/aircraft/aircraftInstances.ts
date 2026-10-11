@@ -55,6 +55,8 @@ const ARROW_HEIGHT_FROM = 15_000
 const ARROW_HEIGHT_TO = 30_000
 /** Arrow size relative to the marker's minimum length (the icon has margins). */
 const ARROW_SIZE = 1.15
+/** Markers ease to true size over this long once riding along, ms. */
+const ATTACH_BLEND_MS = 900
 /** Parked and taxiing aircraft: smaller, dimmer arrows (busy aprons). */
 const GROUND_ARROW_SIZE = 0.7
 const GROUND_ARROW_ALPHA = 0.8
@@ -129,6 +131,9 @@ export class AircraftInstances {
   readonly group = new Group()
   readonly material = createAircraftMaterial()
   readonly arrows = new AircraftArrows()
+  /** 0 globe … 1 riding along (markers at true size), eased. */
+  private attachBlend = 0
+  private lastUpdate = performance.now()
   private readonly batches = new Map<AircraftClass, ClassBatch>()
 
   constructor() {
@@ -228,11 +233,16 @@ export class AircraftInstances {
     // not the moment a fly-in starts (they visibly vanished mid-flight).
     const cameraMode = cameraModeStore.get()
     const attached = cameraMode.mode !== 'globe' && !cameraMode.transitioning
-    const markerPixels = attached
-      ? MARKER_PIXELS_ATTACHED
-      : MARKER_PIXELS_NEAR +
-        (MARKER_PIXELS_ORBIT - MARKER_PIXELS_NEAR) *
-          smoothstep(300_000, 8_000_000, cameraAltitude)
+    // Eased over ATTACH_BLEND_MS rather than switched: every marker on
+    // screen shrinking in one frame read as a jolt as a fly-in ended.
+    const now0 = performance.now()
+    const step = Math.min(1, (now0 - this.lastUpdate) / ATTACH_BLEND_MS)
+    this.lastUpdate = now0
+    this.attachBlend += Math.max(-step, Math.min(step, (attached ? 1 : 0) - this.attachBlend))
+    const blend = smoothstep(0, 1, this.attachBlend)
+    const globePixels =
+      MARKER_PIXELS_NEAR + (MARKER_PIXELS_ORBIT - MARKER_PIXELS_NEAR) * smoothstep(300_000, 8_000_000, cameraAltitude)
+    const markerPixels = globePixels + (MARKER_PIXELS_ATTACHED - globePixels) * blend
 
     const arrows = this.arrows
     arrows.begin(origin)
@@ -336,7 +346,7 @@ export class AircraftInstances {
         pose.position.z,
         pose.height,
         // No icon glow while riding along: nav lights do that job.
-        attached ? 0 : Math.min(1, (iconScale - 1) / 4),
+        (1 - blend) * Math.min(1, (iconScale - 1) / 4),
         anchorSky,
         selected,
         shadingScratch
