@@ -7,7 +7,8 @@
 // 2. Cuts a detail level of 512×512 tiles at ~610 m/px (equirectangular,
 //    2.8125° per tile, 128×64 tiles worldwide; empty ocean tiles skipped)
 //    into client/public/night-lights/7/{x}_{y}.jpg.
-// 3. Writes a global 8192×4096 base image (~5 km/px) and manifest.json.
+// 3. Writes a global 8192×4096 base image (~5 km/px), a 4096×2048 one for
+//    phones, and manifest.json.
 //
 // Outputs are gitignored (tens of MB). Source: NASA Earth Observatory,
 // "Earth at Night" Black Marble 2016 (public domain; credit NASA).
@@ -120,6 +121,12 @@ for (const source of SOURCES) {
 await sharp(base, { raw: { width: BASE_WIDTH, height: BASE_WIDTH / 2, channels: 1 }, limitInputPixels: false })
   .jpeg({ quality: 90, mozjpeg: true })
   .toFile(resolve(OUT_DIR, 'base.jpg'))
+// Half size for phones: an 8192×4096 decode is too big for iOS (and 45 MB
+// of GPU memory with mipmaps); 4096×2048 is a quarter of both.
+await sharp(base, { raw: { width: BASE_WIDTH, height: BASE_WIDTH / 2, channels: 1 }, limitInputPixels: false })
+  .resize(BASE_WIDTH / 2, BASE_WIDTH / 4, { kernel: 'lanczos3' })
+  .jpeg({ quality: 90, mozjpeg: true })
+  .toFile(resolve(OUT_DIR, 'base-small.jpg'))
 
 writeFileSync(
   resolve(OUT_DIR, 'manifest.json'),
@@ -128,6 +135,7 @@ writeFileSync(
     source: 'NASA Earth Observatory, Black Marble 2016 (grayscale, 500 m)',
     credit: 'Night lights: NASA Earth Observatory',
     base: { url: 'base.jpg', width: BASE_WIDTH, height: BASE_WIDTH / 2 },
+    baseSmall: { url: 'base-small.jpg', width: BASE_WIDTH / 2, height: BASE_WIDTH / 4 },
     detail: {
       level: LEVEL,
       tileSize: TILE,

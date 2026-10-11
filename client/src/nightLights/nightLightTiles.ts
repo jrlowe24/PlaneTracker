@@ -25,6 +25,8 @@ export interface NightLightsManifest {
   version: 1
   credit: string
   base: { url: string; width: number; height: number }
+  /** Half-size base for phones (older data has none). */
+  baseSmall?: { url: string; width: number; height: number }
   detail: {
     level: number
     tileSize: number
@@ -95,7 +97,8 @@ export class NightLightTiles {
     this.detail = texture
   }
 
-  async load(): Promise<boolean> {
+  /** `small`: the phone-sized base map, where the data has one. */
+  async load(small = false): Promise<boolean> {
     if (this.manifest != null || this.failed) return this.manifest != null
     try {
       const response = await fetch(`${ROOT}/manifest.json`)
@@ -109,7 +112,9 @@ export class NightLightTiles {
       return false
     }
     this.available = new Set(this.manifest.detail.tiles)
-    const base = await new TextureLoader().loadAsync(`${ROOT}/${this.manifest.base.url}`)
+    const baseInfo = small && this.manifest.baseSmall != null ? this.manifest.baseSmall : this.manifest.base
+    if (small && this.manifest.baseSmall == null) return false
+    const base = await new TextureLoader().loadAsync(`${ROOT}/${baseInfo.url}`)
     base.flipY = false
     base.colorSpace = NoColorSpace
     base.anisotropy = 8

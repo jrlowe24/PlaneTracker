@@ -35,7 +35,7 @@ export interface QualitySettings {
   clouds: false | 'low' | 'medium' | 'high'
   /** Clouds cast shadows on the terrain (Beer shadow maps). */
   cloudShadows: boolean
-  /** Cloud render resolution, as a fraction of the screen's. */
+  /** Cloud render resolution, as a fraction of the screen's CSS pixels. */
   cloudResolution: number
   /** Crepuscular rays through clouds. */
   lightShafts: boolean
@@ -96,13 +96,18 @@ const TERRAIN: Record<QualityElements['terrain'], number> = { low: 20, medium: 1
  */
 const TILE_CACHE: Record<QualityElements['terrain'], number> = { low: 500e6, medium: 800e6, high: 1200e6, ultra: 2000e6 }
 
-/** Cloud resolution (fraction of the screen) by preset. */
+/**
+ * Cloud resolution by preset, as a fraction of the screen's CSS pixels
+ * (not device pixels): clouds are soft, and on a 2-3x display a fraction
+ * of device pixels marched 4-9x the rays for no visible gain (High was
+ * a full CSS-resolution march on a Retina screen, the costliest thing in
+ * the frame). The cloud buffers no longer resize with the pixel ratio.
+ */
 const CLOUD_RESOLUTION: Record<Exclude<QualityElements['clouds'], 'off'>, number> = {
-  // takram's cheapest clouds (no detail noise, short marches) at a third
-  // of the screen resolution: a few ms on a phone.
-  low: 0.35,
-  medium: 0.5,
-  high: 0.5
+  // takram's cheapest clouds (no detail noise, short marches).
+  low: 0.4,
+  medium: 0.55,
+  high: 0.7
 }
 
 const DETAILED_AIRCRAFT: Record<QualityElements['aircraft'], number> = { low: 3, medium: 6, high: 12 }
@@ -115,7 +120,7 @@ export const PRESETS: Record<QualityLevel, QualityElements> = {
     cloudShadows: false,
     cityLights: 'low',
     aircraft: 'low',
-    lensFlare: false
+    lensFlare: true
   },
   medium: {
     resolution: 'medium',
@@ -124,7 +129,7 @@ export const PRESETS: Record<QualityLevel, QualityElements> = {
     cloudShadows: true,
     cityLights: 'medium',
     aircraft: 'medium',
-    lensFlare: false
+    lensFlare: true
   },
   high: {
     resolution: 'high',
@@ -182,11 +187,13 @@ function gpuRenderer(): string {
 }
 
 /**
- * Picks a preset for this device: phones and tablets get 'low';
+ * Picks a preset for this device: phones and tablets get 'medium' (Auto
+ * steps down if frames run long; with clouds sized in CSS pixels, recent
+ * phones run most of Ultra);
  * Apple silicon and discrete GPUs 'high'; integrated/unknown GPUs 'medium'.
  */
 export function detectQuality(): QualityLevel {
-  if (isMobileDevice()) return 'low'
+  if (isMobileDevice()) return 'medium'
   const gpu = gpuRenderer()
   if (/Apple M\d|NVIDIA|GeForce|RTX|Radeon RX|Radeon Pro/i.test(gpu)) return 'high'
   if (/SwiftShader|llvmpipe|Software/i.test(gpu)) return 'low'

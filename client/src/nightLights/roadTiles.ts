@@ -12,6 +12,7 @@ import {
 } from 'three'
 
 import type { RoadRasterRequest, RoadRasterResponse } from './roadRaster.worker'
+import { isMobileDevice } from '../state/quality'
 import { RunwayLights } from './runwayLights'
 
 /**
@@ -32,7 +33,7 @@ import { RunwayLights } from './runwayLights'
 export const MAX_WINDOW = 6
 export const ROAD_TILE_SIZE = 512
 const SIZE = ROAD_TILE_SIZE
-const LEVELS = [
+const DESKTOP_LEVELS = [
   // z, window (tiles per side), max camera altitude (m) at which the level
   // is used, how far ahead of the camera the window centers (m).
   // Street level spans 6x6 tiles (~10 km): lamp by lamp much farther out.
@@ -41,7 +42,18 @@ const LEVELS = [
   { z: 12, window: 4, maxAltitude: 60_000, lead: 9_000 },
   // Motorways and main roads out to the horizon from cruise altitudes.
   { z: 10, window: 4, maxAltitude: 250_000, lead: 35_000 }
-] as const
+]
+/**
+ * Phones: smaller windows (17 layers, ~35 MB of textures, instead of 68
+ * and ~140 MB): street by street over a shorter distance, main roads
+ * farther out, so city lights read as lights rather than a flat wash.
+ */
+const PHONE_LEVELS = [
+  { z: 14, window: 2, maxAltitude: 8_000, lead: 1_500 },
+  { z: 12, window: 2, maxAltitude: 40_000, lead: 5_000 },
+  { z: 10, window: 3, maxAltitude: 250_000, lead: 25_000 }
+]
+const LEVELS = isMobileDevice() ? PHONE_LEVELS : DESKTOP_LEVELS
 /** First texture layer of each level's window. */
 const LAYER_BASE = LEVELS.map((_, i) => LEVELS.slice(0, i).reduce((sum, l) => sum + l.window * l.window, 0))
 const LAYER_COUNT = LEVELS.reduce((sum, l) => sum + l.window * l.window, 0)

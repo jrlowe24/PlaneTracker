@@ -14,7 +14,7 @@ import { lightBeams } from '../aircraft/navLightsStore'
 import { nightEmission, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
 import { RoadLightTiles } from './roadTiles'
-import { RunwayLights } from './runwayLights'
+import type { RunwayLights } from './runwayLights'
 
 /** Detail tiles stream only below this camera altitude (horizon ~2,800 km). */
 const DETAIL_MAX_ALTITUDE = 600_000
@@ -35,16 +35,11 @@ class NightLightsController {
   constructor(camera: Camera) {
     this.effect = new NightLightsPass(camera)
     this.effect.enabled = false
-    // Phones: the 8192×4096 light map alone is ~180 MB of GPU memory, enough
-    // to get textures evicted on iOS (black terrain and sky). Runway lights
-    // still come from the runway list.
-    if (isMobileDevice()) {
-      this.runways = new RunwayLights()
-      return
-    }
+    // Phones: the half-size light map (an 8192×4096 decode is too much for
+    // iOS) and smaller street windows (roadTiles.ts).
     this.roads = new RoadLightTiles()
     this.runways = this.roads.runways
-    void this.tiles.load().then(ok => {
+    void this.tiles.load(isMobileDevice()).then(ok => {
       if (!ok) return
       this.effect.setMaps(this.tiles.base, this.tiles.detail)
       nightEmission.baseMap = this.tiles.base

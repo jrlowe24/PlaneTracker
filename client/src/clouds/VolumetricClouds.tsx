@@ -35,6 +35,8 @@ import { patchCloudsResolve, RegionalCoverageController } from './regionalShader
 const FADE_START_ALTITUDE = 25_000
 const FADE_END_ALTITUDE = 70_000
 const SHADOW_MAX_FAR = 40_000
+const SHAFT_STEPS = 120
+const SHAFT_STEP_M = 150
 /** Cloud resolution on dark nights, relative to the preset's. */
 const NIGHT_RESOLUTION = 0.7
 /** Moonlight (nightState.moon) above which night clouds keep full resolution. */
@@ -157,6 +159,7 @@ interface CloudsPassInternals {
 
 export const VolumetricClouds: FC = () => {
   const camera = useThree(({ camera }) => camera)
+  const gl = useThree(({ gl }) => gl)
   const { transientStates } = useContext(AtmosphereContext)
   const preset = useStore(qualityStore, s => s.settings)
   const coverageTexture = useMemo(() => new CoverageTexture(), [])
@@ -182,7 +185,7 @@ export const VolumetricClouds: FC = () => {
   const quickBlend = useRef(0)
   const dark = useRef(false)
 
-  useFrame((_, delta) => {
+  useFrame(({ gl }, delta) => {
     const effect = ref.current
     cloudDepth.texture =
       (effect as CloudsPassInternals | null)?.cloudsPass?.currentRenderTarget?.depthVelocity ?? null
@@ -207,7 +210,8 @@ export const VolumetricClouds: FC = () => {
     else if (dark.current && nightState.night < 0.75) dark.current = false
     // Moonlit clouds show their shape and edges again: full resolution.
     const coarse = dark.current && nightState.moon < MOONLIT
-    const resolution = qualityStore.get().settings.cloudResolution * (coarse ? NIGHT_RESOLUTION : 1)
+    // A fraction of CSS pixels, whatever the device pixel ratio.
+    const resolution = Math.min(1, (qualityStore.get().settings.cloudResolution * (coarse ? NIGHT_RESOLUTION : 1)) / gl.getPixelRatio())
     const scale = cloudDepth.fade > 0 ? resolution : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
@@ -313,6 +317,11 @@ export const VolumetricClouds: FC = () => {
     // so high-coverage low decks form broad masses instead of many equal puffs.
     // The separate detail texture still breaks up their low-density edges.
     effect.shapeRepeat.setScalar(0.00005)
+    // Light shafts: fewer, longer steps (120 × 150 m+, growing) than
+    // takram's 500 × 50 m. The shafts' march was ~15% of the frame at High
+    // for rays that only show near sunrise and sunset.
+    effect.clouds.maxShadowLengthIterationCount = SHAFT_STEPS
+    effect.clouds.minShadowLengthStepSize = SHAFT_STEP_M
     // Cover per layer: from the regional grid at each sample's position
     // when there is weather data (patched shader), else the blended
     // view-center / manual cover everywhere.
@@ -375,7 +384,7 @@ export const VolumetricClouds: FC = () => {
       // against cloud. Half resolution, plain temporal accumulation: stable,
       // ~2.7 ms more. (patchCloudsResolve still fixes the upscaled path.)
       temporalUpscale={false}
-      resolutionScale={preset.cloudResolution}
+      resolutionScale={Math.min(1, preset.cloudResolution / gl.getPixelRatio())}
       lightShafts={preset.lightShafts}
       localWeatherTexture={coverageTexture.texture}
       // Self-hosted copies of takram's textures (MIT); the STBN noise still

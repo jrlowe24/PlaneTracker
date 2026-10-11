@@ -107,3 +107,8 @@
 .aircraft-row .row-numbers {
   flex: none;
 }
+
+/* The phone sheet has no room for it below the rows. */
+.aircraft-list.in-sheet .category-legend {
+  display: none;
+}
