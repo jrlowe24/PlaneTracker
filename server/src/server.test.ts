@@ -243,6 +243,14 @@ describe('AircraftCache', () => {
     expect(cache.size).toBe(1)
   })
 
+  it('keeps followed aircraft through longer gaps', () => {
+    const cache = new AircraftCache()
+    cache.upsert([base, { ...base, hex: 'def456' }], 0)
+    const followed = new Set(['abc123'])
+    expect(cache.prune(61_000, 60_000, 60_000, followed, 300_000)).toEqual(['def456'])
+    expect(cache.prune(301_000, 60_000, 60_000, followed, 300_000)).toEqual(['abc123'])
+  })
+
   it('queries by distance', () => {
     const cache = new AircraftCache()
     cache.upsert(

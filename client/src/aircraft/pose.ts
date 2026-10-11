@@ -69,6 +69,13 @@ const FADE_SECONDS = 10
  */
 const OVERVIEW_FADE_AFTER_SECONDS = 25 * 60
 const OVERVIEW_MOTION = { ...defaultMotionOptions, maxExtrapolation: 20 * 60 }
+/**
+ * The followed aircraft rides out gaps in its data (rate-limited feeds
+ * backing off for up to a minute): dead-reckoned along its track for up to
+ * two minutes, fading only after that.
+ */
+const FOLLOWED_FADE_AFTER_SECONDS = 150
+const FOLLOWED_MOTION = { ...defaultMotionOptions, maxExtrapolation: 120 }
 /** Time constant over which a data correction is blended in. */
 const ERROR_TIME_CONSTANT = 1.2
 /** Corrections smaller than this (m) beyond the predicted motion are ignored. */
@@ -111,10 +118,16 @@ export function computePose(
   renderTime: number,
   dt: number,
   detailed: boolean,
-  out: Pose
+  out: Pose,
+  followed = false
 ): Pose {
   const overview = aircraft.state.overview === true
-  const k = evaluateMotion(aircraft.motion, renderTime, kinematic, overview ? OVERVIEW_MOTION : undefined)
+  const k = evaluateMotion(
+    aircraft.motion,
+    renderTime,
+    kinematic,
+    overview ? OVERVIEW_MOTION : followed ? FOLLOWED_MOTION : undefined
+  )
   const attitude = aircraft.attitude
   if (k == null) {
     out.opacity = 0
@@ -179,7 +192,8 @@ export function computePose(
   // (the server drops it when unseen); hold it. Airborne aircraft with stale
   // positions fade out instead of freezing in mid-air.
   const holding = k.onGround && speed < 3
-  const overdue = k.extrapolation - (overview ? OVERVIEW_FADE_AFTER_SECONDS : FADE_AFTER_SECONDS)
+  const overdue =
+    k.extrapolation - (overview ? OVERVIEW_FADE_AFTER_SECONDS : followed ? FOLLOWED_FADE_AFTER_SECONDS : FADE_AFTER_SECONDS)
   out.opacity = holding || overdue <= 0 ? 1 : Math.max(0, 1 - overdue / FADE_SECONDS)
   out.speed = speed
   out.onGround = k.onGround

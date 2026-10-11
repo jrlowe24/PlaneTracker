@@ -226,6 +226,8 @@ export class AircraftInstances {
     const maxDelay = settingsStore.get().interpolationDelayMs
     const ease = smoothingFactor(dt, DELAY_TIME_CONSTANT)
     const selectedHex = selectionStore.get().selectedHex
+    const camera = cameraModeStore.get()
+    const followedHex = camera.mode === 'globe' ? null : camera.targetHex
     for (const aircraft of flightConnection.registry.list) {
       aircraft.pose ??= createPose()
       const detailed =
@@ -235,7 +237,7 @@ export class AircraftInstances {
       const target = adaptiveDelayMs(aircraft.motion, maxDelay)
       const attitude = aircraft.attitude
       attitude.delayMs = attitude.delayMs < 0 ? target : attitude.delayMs + (target - attitude.delayMs) * ease
-      computePose(aircraft, now - attitude.delayMs, dt, detailed, aircraft.pose)
+      computePose(aircraft, now - attitude.delayMs, dt, detailed, aircraft.pose, aircraft.hex === followedHex)
     }
   }
 

@@ -41,6 +41,9 @@ export const defaultHubOptions: HubOptions = {
   maxBufferedBytes: 4 * 1024 * 1024
 }
 
+/** A followed aircraft is kept this long without data. */
+const FOLLOWED_MAX_AGE_MS = 5 * 60_000
+
 /** Upper bound for a client viewport: a hemisphere. */
 const MAX_VIEWPORT_RADIUS_NM = 5400
 
@@ -237,7 +240,13 @@ export class Hub {
 
   private push(): void {
     const now = Date.now()
-    this.cache.prune(now, this.options.staleAfterMs, this.overview?.maxAgeMs)
+    // A followed aircraft outlives gaps in its data (rate-limited feeds
+    // backing off for up to a minute): dropping it threw the follower out
+    // of follow mode with "No longer in view". The client holds it in the
+    // meantime (dead-reckoned, then fading).
+    const followed = new Set<string>()
+    for (const client of this.clients) if (client.followHex != null) followed.add(client.followHex)
+    this.cache.prune(now, this.options.staleAfterMs, this.overview?.maxAgeMs, followed, FOLLOWED_MAX_AGE_MS)
     for (const client of this.clients) {
       this.pushTo(client, now)
       this.pushWeather(client, now)
@@ -305,7 +314,11 @@ export class Hub {
     if (client.home != null) {
       areas.push(this.cache.within(client.home.lat, client.home.lon, nauticalMilesToMeters(HOME_RADIUS_NM)))
     }
-    for (const entry of areas.flatMap(area => [...area])) {
+    // The followed aircraft always, wherever the view is.
+    const followedEntry = client.followHex == null ? undefined : this.cache.get(client.followHex)
+    const entries = areas.flatMap(area => [...area])
+    if (followedEntry != null) entries.push(followedEntry)
+    for (const entry of entries) {
       const hex = entry.state.hex
       if (inView.has(hex)) continue
       inView.add(hex)

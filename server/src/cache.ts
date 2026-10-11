@@ -53,12 +53,24 @@ export class AircraftCache {
 
   /**
    * Removes aircraft not reported for `maxAgeMs` (`overviewMaxAgeMs` for
-   * aircraft known only from the worldwide snapshot); returns their hexes.
+   * aircraft known only from the worldwide snapshot, `followedMaxAgeMs` for
+   * followed ones); returns their hexes.
    */
-  prune(now: number, maxAgeMs: number, overviewMaxAgeMs = maxAgeMs): string[] {
+  prune(
+    now: number,
+    maxAgeMs: number,
+    overviewMaxAgeMs = maxAgeMs,
+    /** Aircraft someone follows, kept up to `followedMaxAgeMs`. */
+    followed: ReadonlySet<string> = new Set(),
+    followedMaxAgeMs = maxAgeMs
+  ): string[] {
     const removed: string[] = []
     for (const [hex, entry] of this.entries) {
-      const limit = entry.state.overview === true ? overviewMaxAgeMs : maxAgeMs
+      const limit = followed.has(hex)
+        ? Math.max(followedMaxAgeMs, maxAgeMs)
+        : entry.state.overview === true
+          ? overviewMaxAgeMs
+          : maxAgeMs
       if (now - entry.lastSeenAt > limit) {
         this.entries.delete(hex)
         removed.push(hex)
