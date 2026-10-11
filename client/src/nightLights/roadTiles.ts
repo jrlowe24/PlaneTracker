@@ -12,7 +12,6 @@ import {
 } from 'three'
 
 import type { RoadRasterRequest, RoadRasterResponse } from './roadRaster.worker'
-import { isMobileDevice } from '../state/quality'
 import { RunwayLights } from './runwayLights'
 
 /**
@@ -33,33 +32,47 @@ import { RunwayLights } from './runwayLights'
 export const MAX_WINDOW = 6
 export const ROAD_TILE_SIZE = 512
 const SIZE = ROAD_TILE_SIZE
-const DESKTOP_LEVELS = [
-  // z, window (tiles per side), max camera altitude (m) at which the level
-  // is used, how far ahead of the camera the window centers (m).
-  // Street level spans 6x6 tiles (~10 km): lamp by lamp much farther out.
-  // It's only used when lights are on, the budget the dark terrain frees.
-  { z: 14, window: 6, maxAltitude: 14_000, lead: 3_500 },
-  { z: 12, window: 4, maxAltitude: 60_000, lead: 9_000 },
-  // Motorways and main roads out to the horizon from cruise altitudes.
-  { z: 10, window: 4, maxAltitude: 250_000, lead: 35_000 }
-]
+export type LightDistance = 'near' | 'medium' | 'far'
+
+interface LevelSpec {
+  /** Web Mercator zoom of the street data. */
+  z: number
+  /** Window, tiles per side. */
+  window: number
+  /** Highest camera altitude (m) at which the level is used. */
+  maxAltitude: number
+  /** How far ahead of the camera the window centers (m). */
+  lead: number
+}
+
 /**
- * Phones: smaller windows (17 layers, ~35 MB of textures, instead of 68
- * and ~140 MB): street by street over a shorter distance, main roads
- * farther out, so city lights read as lights rather than a flat wash.
+ * Street-tile windows by light distance (Settings → Graphics): how far out
+ * lamps are drawn one by one. Each layer is two 512² RGBA textures (2 MB).
+ * Always three levels: street (z14), roads (z12), motorways and main roads
+ * to the horizon from cruise altitudes (z10).
  */
-const PHONE_LEVELS = [
-  { z: 14, window: 2, maxAltitude: 8_000, lead: 1_500 },
-  { z: 12, window: 2, maxAltitude: 40_000, lead: 5_000 },
-  { z: 10, window: 3, maxAltitude: 250_000, lead: 25_000 }
-]
-const LEVELS = isMobileDevice() ? PHONE_LEVELS : DESKTOP_LEVELS
-/** First texture layer of each level's window. */
-const LAYER_BASE = LEVELS.map((_, i) => LEVELS.slice(0, i).reduce((sum, l) => sum + l.window * l.window, 0))
-const LAYER_COUNT = LEVELS.reduce((sum, l) => sum + l.window * l.window, 0)
-/** Building layers: the finest level's tiles (the first layers). */
-const BUILDING_LAYERS = LEVELS[0]!.window * LEVELS[0]!.window
-export const ROAD_LEVELS = LEVELS.length
+export const LIGHT_DISTANCE_LEVELS: Record<LightDistance, readonly LevelSpec[]> = {
+  // 17 layers, ~35 MB: street by street over a few km.
+  near: [
+    { z: 14, window: 2, maxAltitude: 8_000, lead: 1_500 },
+    { z: 12, window: 2, maxAltitude: 40_000, lead: 5_000 },
+    { z: 10, window: 3, maxAltitude: 250_000, lead: 25_000 }
+  ],
+  // 41 layers, ~85 MB.
+  medium: [
+    { z: 14, window: 4, maxAltitude: 11_000, lead: 2_500 },
+    { z: 12, window: 3, maxAltitude: 50_000, lead: 7_000 },
+    { z: 10, window: 4, maxAltitude: 250_000, lead: 35_000 }
+  ],
+  // 68 layers, ~140 MB: street level spans 6x6 tiles (~10 km), lamp by
+  // lamp much farther out; the budget the dark terrain frees at night.
+  far: [
+    { z: 14, window: 6, maxAltitude: 14_000, lead: 3_500 },
+    { z: 12, window: 4, maxAltitude: 60_000, lead: 9_000 },
+    { z: 10, window: 4, maxAltitude: 250_000, lead: 35_000 }
+  ]
+}
+export const ROAD_LEVELS = 3
 const WORKERS = 2
 const MAX_IN_FLIGHT = 6
 const TILEJSON = 'https://tiles.openfreemap.org/planet'
@@ -149,7 +162,9 @@ class Level {
   constructor(
     readonly index: number,
     readonly z: number,
-    readonly window: number
+    readonly window: number,
+    /** First texture layer of this level's window. */
+    private readonly layerBase: number
   ) {
     this.slots = Array.from({ length: window * window }, () => ({ key: '', loaded: false, loadedAt: 0 }))
     this.uniforms.window = window
@@ -199,7 +214,7 @@ class Level {
   }
 
   layerOf(slot: number): number {
-    return LAYER_BASE[this.index]! + slot
+    return this.layerBase + slot
   }
 
   updateUniforms(camera: Vector3, strength: number): void {
@@ -242,7 +257,11 @@ export class RoadLightTiles {
    * windows.
    */
   readonly buildings: DataArrayTexture
-  readonly levels = LEVELS.map((l, i) => new Level(i, l.z, l.window))
+  readonly levels: Level[]
+  private readonly specs: readonly LevelSpec[]
+  private readonly layerCount: number
+  /** Building layers: the finest level's tiles (the first layers). */
+  private readonly buildingLayers: number
   /** Whole runways seen in the tiles, lit exactly by the shader. */
   readonly runways = new RunwayLights()
   /** False until OpenFreeMap's tile URL is known; stays false if it fails. */
@@ -257,10 +276,22 @@ export class RoadLightTiles {
   private readonly lampData: Uint8Array
   private readonly buildingData: Uint8Array
 
-  constructor() {
-    this.data = new Uint8Array(SIZE * SIZE * 4 * LAYER_COUNT)
+  constructor(distance: LightDistance = 'far') {
+    const specs = LIGHT_DISTANCE_LEVELS[distance]
+    this.specs = specs
+    let base = 0
+    this.levels = specs.map((l, i) => {
+      const level = new Level(i, l.z, l.window, base)
+      base += l.window * l.window
+      return level
+    })
+    this.layerCount = base
+    this.buildingLayers = specs[0]!.window * specs[0]!.window
+    const layerCount = this.layerCount
+    const buildingLayers = this.buildingLayers
+    this.data = new Uint8Array(SIZE * SIZE * 4 * layerCount)
     this.lampData = new Uint8Array(this.data.length)
-    const lamps = new DataArrayTexture(this.lampData, SIZE, SIZE, LAYER_COUNT)
+    const lamps = new DataArrayTexture(this.lampData, SIZE, SIZE, layerCount)
     lamps.format = RGBAFormat
     lamps.type = UnsignedByteType
     lamps.colorSpace = NoColorSpace
@@ -269,7 +300,7 @@ export class RoadLightTiles {
     lamps.generateMipmaps = false
     lamps.needsUpdate = true
     this.lamps = lamps
-    const texture = new DataArrayTexture(this.data, SIZE, SIZE, LAYER_COUNT)
+    const texture = new DataArrayTexture(this.data, SIZE, SIZE, layerCount)
     texture.format = RGBAFormat
     texture.type = UnsignedByteType
     texture.colorSpace = NoColorSpace
@@ -281,8 +312,8 @@ export class RoadLightTiles {
     texture.generateMipmaps = false
     texture.needsUpdate = true
     this.texture = texture
-    this.buildingData = new Uint8Array(SIZE * SIZE * 2 * BUILDING_LAYERS)
-    const buildings = new DataArrayTexture(this.buildingData, SIZE, SIZE, BUILDING_LAYERS)
+    this.buildingData = new Uint8Array(SIZE * SIZE * 2 * buildingLayers)
+    const buildings = new DataArrayTexture(this.buildingData, SIZE, SIZE, buildingLayers)
     buildings.format = RGFormat
     buildings.type = UnsignedByteType
     buildings.colorSpace = NoColorSpace
@@ -332,7 +363,7 @@ export class RoadLightTiles {
     const down = -forward.dot(up)
     // Ground distance (along the surface) to where the view ray lands.
     const reach = down > 0.01 ? (Math.max(0, altitude) * horizontalLength) / down : Infinity
-    LEVELS.forEach((spec, i) => {
+    this.specs.forEach((spec, i) => {
       const level = this.levels[i]!
       const enabled = this.available && altitude < spec.maxAltitude
       // Fades out over the top of its altitude range (no pop at the limit).
@@ -409,7 +440,7 @@ export class RoadLightTiles {
     this.lampData.set(response.lamps, layer * SIZE * SIZE * 4)
     this.lamps.addLayerUpdate(layer)
     this.lamps.needsUpdate = true
-    if (layer < BUILDING_LAYERS) {
+    if (layer < this.buildingLayers) {
       const offset = layer * SIZE * SIZE * 2
       if (response.buildings != null) this.buildingData.set(response.buildings, offset)
       else this.buildingData.fill(0, offset, offset + SIZE * SIZE * 2)

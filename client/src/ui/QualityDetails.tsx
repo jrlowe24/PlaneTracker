@@ -39,6 +39,16 @@ const ROWS: Row[] = [
   },
   { key: 'cloudShadows', label: 'Cloud shadows', hint: 'Clouds shading the ground', options: ON_OFF },
   { key: 'cityLights', label: 'City lights', hint: 'Detailed night lights; High adds lit windows', options: THREE },
+  {
+    key: 'lightDistance',
+    label: 'Light distance',
+    hint: 'How far out street lights are drawn one by one; memory',
+    options: [
+      { id: 'near', label: 'Near' },
+      { id: 'medium', label: 'Med' },
+      { id: 'far', label: 'Far' }
+    ]
+  },
   { key: 'aircraft', label: 'Aircraft detail', hint: 'How many nearby aircraft get full models', options: THREE },
   { key: 'lensFlare', label: 'Lens flare', hint: 'Glare from the sun and bright lights', options: ON_OFF }
 ]

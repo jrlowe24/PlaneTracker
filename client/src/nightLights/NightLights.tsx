@@ -13,7 +13,7 @@ import { NightLightsPass } from './NightLightsPass'
 import { lightBeams } from '../aircraft/navLightsStore'
 import { nightEmission, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
-import { RoadLightTiles } from './roadTiles'
+import { RoadLightTiles, type LightDistance } from './roadTiles'
 import type { RunwayLights } from './runwayLights'
 
 /** Detail tiles stream only below this camera altitude (horizon ~2,800 km). */
@@ -28,16 +28,18 @@ class NightLightsController {
   readonly effect: NightLightsPass
   private ready = false
   private active = false
+  private distance: LightDistance
   /** Runway lighting by day (dusk, overcast), eased (see airfieldTarget). */
   private airfieldOn = 0
   private sinceFlush = 0
 
-  constructor(camera: Camera) {
+  constructor(camera: Camera, distance: LightDistance) {
     this.effect = new NightLightsPass(camera)
     this.effect.enabled = false
     // Phones: the half-size light map (an 8192×4096 decode is too much for
     // iOS) and smaller street windows (roadTiles.ts).
-    this.roads = new RoadLightTiles()
+    this.distance = distance
+    this.roads = new RoadLightTiles(distance)
     this.runways = this.roads.runways
     void this.tiles.load(isMobileDevice()).then(ok => {
       if (!ok) return
@@ -89,6 +91,14 @@ class NightLightsController {
 
     const altitude = camera.position.length() - WGS84_A
     const quality = qualityStore.get().settings
+    // Light distance sizes the street textures: new street tiles (the pass
+    // stays; the composer builds its passes once).
+    if (quality.lightDistance !== this.distance) {
+      this.distance = quality.lightDistance
+      this.roads?.dispose()
+      this.roads = new RoadLightTiles(this.distance)
+      this.runways = this.roads.runways
+    }
     const detail = altitude < DETAIL_MAX_ALTITUDE && quality.cityLightDetail
     effect.setWindows(quality.buildingWindows)
     if (detail) {
@@ -184,7 +194,10 @@ function airfieldTarget(sunDirection: Vector3): number {
 export const NightLights: FC = () => {
   const camera = useThree(({ camera }) => camera)
   const { transientStates } = useContext(AtmosphereContext)
-  const controller = useMemo(() => new NightLightsController(camera), [camera])
+  const controller = useMemo(
+    () => new NightLightsController(camera, qualityStore.get().settings.lightDistance),
+    [camera]
+  )
   useEffect(
     () => () => {
       controller.dispose()

@@ -1,3 +1,4 @@
+import type { LightDistance } from '../nightLights/roadTiles'
 import { createStore } from './createStore'
 import { isMobileDevice } from './device'
 
@@ -23,6 +24,8 @@ export interface QualityElements {
    * its ~600 m detail too; high, lit windows on buildings as well.
    */
   cityLights: 'low' | 'medium' | 'high'
+  /** How far out street lights are drawn lamp by lamp (memory; roadTiles.ts). */
+  lightDistance: LightDistance
   /** How many aircraft near the camera get full models. */
   aircraft: 'low' | 'medium' | 'high'
   /** Lens flare / glare post effect (~2 ms at 2560×1600 on an M3 Pro). */
@@ -64,6 +67,8 @@ export interface QualitySettings {
   maxDetailedAircraft: number
   /** Landing and taxi lights, with their beams on the ground at night. */
   landingLights: boolean
+  /** Street-tile windows (phones capped at medium: iOS memory). */
+  lightDistance: LightDistance
   /** Tile cache (bytes): finer terrain needs more to hold the view. */
   tileCacheBytes: number
 }
@@ -119,6 +124,7 @@ export const PRESETS: Record<QualityLevel, QualityElements> = {
     clouds: 'low',
     cloudShadows: false,
     cityLights: 'low',
+    lightDistance: 'near',
     aircraft: 'low',
     lensFlare: true
   },
@@ -128,6 +134,7 @@ export const PRESETS: Record<QualityLevel, QualityElements> = {
     clouds: 'medium',
     cloudShadows: true,
     cityLights: 'medium',
+    lightDistance: 'medium',
     aircraft: 'medium',
     lensFlare: true
   },
@@ -137,6 +144,7 @@ export const PRESETS: Record<QualityLevel, QualityElements> = {
     clouds: 'high',
     cloudShadows: true,
     cityLights: 'high',
+    lightDistance: 'far',
     aircraft: 'high',
     lensFlare: true
   },
@@ -146,6 +154,7 @@ export const PRESETS: Record<QualityLevel, QualityElements> = {
     clouds: 'high',
     cloudShadows: true,
     cityLights: 'high',
+    lightDistance: 'far',
     aircraft: 'high',
     lensFlare: true
   }
@@ -169,6 +178,7 @@ export function resolveQuality(e: QualityElements): QualitySettings {
     buildingWindows: e.cityLights === 'high',
     maxDetailedAircraft: DETAILED_AIRCRAFT[e.aircraft],
     landingLights: e.aircraft !== 'low',
+    lightDistance: isMobileDevice() && e.lightDistance === 'far' ? 'medium' : e.lightDistance,
     tileCacheBytes: TILE_CACHE[e.terrain]
   }
 }
