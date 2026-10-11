@@ -2,6 +2,7 @@ import { decodeAircraft, type AircraftMessage, type AircraftState } from '@windo
 
 import { stateEllipsoidHeight, toSample, type MotionSample } from '../aircraft/motion'
 import type { AircraftClass } from '../aircraft/airframes'
+import { aircraftCategory, type AircraftCategory } from '../aircraft/categories'
 import type { Pose } from '../aircraft/pose'
 import { aircraftClass } from '../aircraft/typeClasses'
 import { airframeScale, type AirframeScale } from '../aircraft/typeDimensions'
@@ -38,6 +39,10 @@ export interface TrackedAircraft {
   state: AircraftState
   /** Airframe class from type code / emitter category. */
   cls: AircraftClass
+  /** Kind of flight (map marker color). */
+  category: AircraftCategory
+  /** performance.now() when first seen (markers fade in). */
+  firstSeen: number
   /** Scale from the class placeholder to the real type's dimensions. */
   scale: AirframeScale
   /** Kinematic samples (SI, ellipsoid heights), oldest first. */
@@ -94,6 +99,8 @@ export class AircraftRegistry {
         hex: state.hex,
         state,
         cls: aircraftClass(state.typeCode, state.category),
+        category: aircraftCategory(state, aircraftClass(state.typeCode, state.category)),
+        firstSeen: performance.now(),
         scale: airframeScale(state.typeCode, aircraftClass(state.typeCode, state.category)),
         motion: [],
         baroOffsetFt: null,
@@ -138,6 +145,13 @@ export class AircraftRegistry {
     if (state.typeCode !== tracked.state.typeCode || state.category !== tracked.state.category) {
       tracked.cls = aircraftClass(state.typeCode, state.category)
       tracked.scale = airframeScale(state.typeCode, tracked.cls)
+    }
+    if (
+      state.typeCode !== tracked.state.typeCode ||
+      state.category !== tracked.state.category ||
+      state.callsign !== tracked.state.callsign
+    ) {
+      tracked.category = aircraftCategory(state, tracked.cls)
     }
     tracked.state = state
     tracked.receivedAt = now

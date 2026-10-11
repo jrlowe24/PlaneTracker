@@ -28,6 +28,11 @@ export const AircraftLayer: FC = () => {
     instances.updatePoses(Math.min(delta, 0.25))
   }, FRAME_PRIORITY.aircraftPoses)
 
+  // After the effect composer (priority 1) drew the frame: map arrows on top.
+  useFrame(({ gl }) => {
+    instances.arrows.render(gl, camera)
+  }, 2)
+
   useFrame(({ clock, gl }) => {
     instances.updateInstances(camera, size.height, transientStates?.sunDirection ?? null)
     navLights.update(camera, size.height, clock.elapsedTime, gl.toneMappingExposure)

@@ -14,6 +14,7 @@ import { flightConnection, serverNow } from '../data/flightConnection'
 import { cameraModeStore } from '../state/cameraMode'
 import { selectionStore } from '../state/selection'
 import { settingsStore } from '../state/settings'
+import { AircraftArrows, ICON_HELICOPTER, ICON_JET, ICON_LIGHT, type ArrowIcon } from './aircraftArrows'
 import { createAircraftMaterial } from './aircraftMaterial'
 import { aircraftRenderState } from './aircraftRenderState'
 import { AIRFRAMES, buildAirframe, type AircraftClass } from './airframes'
@@ -42,6 +43,27 @@ const MARKER_PIXELS_ATTACHED = 2.5
 const SELECTED_MARKER_PIXELS = 26
 /** Within this distance aircraft get bank/pitch (beyond, they are icons). */
 const DETAIL_DISTANCE = 80_000
+
+/**
+ * Map arrows replace the 3D markers once a marker is drawn this many times
+ * its true size (a few pixels of model reads as a blob); between the two,
+ * the arrow fades in over the model.
+ */
+const ARROW_FROM = 2.5
+const ARROW_TO = 5
+/** Arrow size relative to the marker's minimum length (the icon has margins). */
+const ARROW_SIZE = 1.15
+/** Parked and taxiing aircraft: smaller, dimmer arrows (busy aprons). */
+const GROUND_ARROW_SIZE = 0.7
+const GROUND_ARROW_ALPHA = 0.8
+/** New aircraft fade/grow in over this long instead of popping, ms. */
+const APPEAR_MS = 600
+
+function arrowIcon(cls: AircraftClass): ArrowIcon {
+  if (cls === 'helicopter') return ICON_HELICOPTER
+  if (cls === 'light' || cls === 'turboprop') return ICON_LIGHT
+  return ICON_JET
+}
 
 const COLOR_DEFAULT = new Color(0.86, 0.87, 0.89)
 const COLOR_SELECTED = new Color(0.95, 0.42, 0.05)
@@ -110,6 +132,7 @@ const shadingScratch = { x: 0, y: 0, z: 0 }
 export class AircraftInstances {
   readonly group = new Group()
   readonly material = createAircraftMaterial()
+  readonly arrows = new AircraftArrows()
   private readonly batches = new Map<AircraftClass, ClassBatch>()
 
   constructor() {
@@ -135,6 +158,7 @@ export class AircraftInstances {
       batch.mesh.dispose()
     }
     this.material.dispose()
+    this.arrows.dispose()
   }
 
   updatePoses(dt: number): void {
@@ -214,6 +238,9 @@ export class AircraftInstances {
         (MARKER_PIXELS_ORBIT - MARKER_PIXELS_NEAR) *
           smoothstep(300_000, 8_000_000, cameraAltitude)
 
+    const arrows = this.arrows
+    arrows.begin(origin)
+    const now = performance.now()
     let count = 0
     for (let i = 0; i < list.length; ++i) {
       const aircraft = list[i]!
@@ -241,8 +268,27 @@ export class AircraftInstances {
         (minPixels * distance * pixelToWorld) /
           (AIRFRAMES[aircraft.cls].length * aircraft.scale.length)
       )
-      // Stale aircraft shrink away instead of popping.
-      const scale = iconScale * pose.opacity
+      const appear = smoothstep(0, APPEAR_MS, now - aircraft.firstSeen)
+      // Far away (markers many times true size), a map arrow instead of the
+      // 3D marker; riding along, other traffic stays at true size.
+      const arrow = attached ? 0 : smoothstep(ARROW_FROM, ARROW_TO, iconScale)
+      if (arrow > 0) {
+        const ground = aircraft.state.onGround
+        arrows.add(
+          x,
+          y,
+          z,
+          pose.forward,
+          aircraft.category,
+          arrowIcon(aircraft.cls),
+          minPixels * ARROW_SIZE * (0.6 + 0.4 * appear) * (ground && !selected ? GROUND_ARROW_SIZE : 1),
+          arrow * appear * pose.opacity * (ground && !selected ? GROUND_ARROW_ALPHA : 1),
+          selected
+        )
+        if (arrow >= 1) continue
+      }
+      // Stale aircraft shrink away instead of popping; new ones grow in.
+      const scale = iconScale * pose.opacity * appear
       // Placeholder → real type dimensions (span on X, length on Y/Z).
       const spanScale = scale * aircraft.scale.span
       const lengthScale = scale * aircraft.scale.length
@@ -304,6 +350,7 @@ export class AircraftInstances {
       batch.shading[index * 3 + 2] = shadingScratch.z
     }
     aircraftRenderState.count = count
+    arrows.end()
     for (const batch of this.batches.values()) {
       batch.mesh.count = batch.count
       if (batch.count === 0) continue
