@@ -18,20 +18,14 @@ import {
 import { CATEGORY_COLORS, type AircraftCategory } from './categories'
 
 /**
- * Map markers for distant aircraft: flat top-down silhouettes, always
- * facing the screen, pointing along the aircraft's heading as seen on
- * screen, a fixed size in pixels and colored by kind of flight. Drawn after
- * post-processing into the final image (like map icons, they're not part
- * of the lit scene), in one draw call. Up close, aircraft are 3D models;
- * AircraftInstances crossfades between the two.
+ * Map arrows for aircraft in the high overview: always facing the screen,
+ * pointing along the aircraft's heading as seen on screen, a fixed size in
+ * pixels and colored by kind of flight. Drawn after post-processing into
+ * the final image (like map icons, they're not part of the lit scene), in
+ * one draw call. Below the overview, aircraft are 3D models with their
+ * lights; AircraftInstances crossfades between the two by camera height.
  */
 
-export type ArrowIcon = 0 | 1 | 2
-/** Atlas slots: airliner/jet, straight-wing light aircraft, helicopter. */
-export const ICON_JET: ArrowIcon = 0
-export const ICON_LIGHT: ArrowIcon = 1
-export const ICON_HELICOPTER: ArrowIcon = 2
-const ICONS = 3
 const CELL = 128
 
 // Drawn straight into the display (sRGB) image: keep the sRGB values.
@@ -42,68 +36,30 @@ const SELECTED = new Color('#f26b0d').convertLinearToSRGB()
 
 function drawAtlas(): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
-  canvas.width = CELL * ICONS
+  canvas.width = CELL
   canvas.height = CELL
   const ctx = canvas.getContext('2d')!
-  const shapes: Array<(c: CanvasRenderingContext2D) => void> = [
-    // Jet: fuselage, swept wings, tailplane.
-    c => {
-      c.beginPath()
-      c.roundRect(57, 6, 14, 116, 7)
-      c.moveTo(64, 44)
-      c.lineTo(8, 76)
-      c.lineTo(8, 86)
-      c.lineTo(64, 68)
-      c.lineTo(120, 86)
-      c.lineTo(120, 76)
-      c.closePath()
-      c.moveTo(64, 98)
-      c.lineTo(38, 114)
-      c.lineTo(38, 121)
-      c.lineTo(64, 112)
-      c.lineTo(90, 121)
-      c.lineTo(90, 114)
-      c.closePath()
-    },
-    // Light aircraft: straight wing, short nose.
-    c => {
-      c.beginPath()
-      c.roundRect(57, 12, 14, 108, 7)
-      c.roundRect(6, 42, 116, 16, 5)
-      c.roundRect(38, 100, 52, 13, 4)
-    },
-    // Helicopter: rotor disc, cabin, tail boom.
-    c => {
-      c.beginPath()
-      c.ellipse(64, 54, 15, 24, 0, 0, Math.PI * 2)
-      c.rect(61, 70, 6, 50)
-      c.rect(52, 112, 24, 6)
-    }
-  ]
-  shapes.forEach((shape, i) => {
-    ctx.save()
-    ctx.translate(i * CELL, 0)
-    // Outline (green) under the fill (red): the shader colors the fill and
-    // darkens the rim, readable on bright and dark ground alike.
-    shape(ctx)
-    ctx.lineJoin = 'round'
-    ctx.lineWidth = 12
-    ctx.strokeStyle = 'rgb(0,255,0)'
-    ctx.stroke()
-    ctx.fillStyle = 'rgb(0,255,0)'
-    ctx.fill('nonzero')
-    shape(ctx)
-    ctx.fillStyle = 'rgb(255,0,0)'
-    ctx.fill('nonzero')
-    if (i === ICON_HELICOPTER) {
-      ctx.beginPath()
-      ctx.arc(64, 54, 50, 0, Math.PI * 2)
-      ctx.lineWidth = 5
-      ctx.strokeStyle = 'rgb(140,255,0)'
-      ctx.stroke()
-    }
-    ctx.restore()
-  })
+  // Navigation arrow, pointing up (nose at the top of the cell).
+  const arrow = (): void => {
+    ctx.beginPath()
+    ctx.moveTo(64, 10)
+    ctx.lineTo(108, 114)
+    ctx.lineTo(64, 90)
+    ctx.lineTo(20, 114)
+    ctx.closePath()
+  }
+  // Outline (green) under the fill (red): the shader colors the fill and
+  // darkens the rim, readable on bright and dark ground alike.
+  arrow()
+  ctx.lineJoin = 'round'
+  ctx.lineWidth = 14
+  ctx.strokeStyle = 'rgb(0,255,0)'
+  ctx.stroke()
+  ctx.fillStyle = 'rgb(0,255,0)'
+  ctx.fill()
+  arrow()
+  ctx.fillStyle = 'rgb(255,0,0)'
+  ctx.fill()
   return canvas
 }
 
@@ -111,13 +67,12 @@ const vertexShader = /* glsl */ `
 attribute vec3 iCenter;
 attribute vec3 iForward;
 attribute vec4 iColor;
-/** x: size (CSS pixels), y: atlas slot, z: selected. */
+/** x: size (CSS pixels), y: unused, z: selected. */
 attribute vec3 iMeta;
 uniform vec2 viewport;
 uniform float pixelRatio;
 varying vec2 vUv;
 varying vec4 vColor;
-varying float vIcon;
 varying float vSelected;
 
 void main() {
@@ -137,7 +92,6 @@ void main() {
   gl_Position.xy += pixels * 2.0 / viewport * center.w;
   vUv = position.xy + 0.5;
   vColor = iColor;
-  vIcon = iMeta.y;
   vSelected = iMeta.z;
 }
 `
@@ -146,11 +100,10 @@ const fragmentShader = /* glsl */ `
 uniform sampler2D atlas;
 varying vec2 vUv;
 varying vec4 vColor;
-varying float vIcon;
 varying float vSelected;
 
 void main() {
-  vec4 t = texture2D(atlas, vec2((vIcon + vUv.x) / ${ICONS.toFixed(1)}, vUv.y));
+  vec4 t = texture2D(atlas, vUv);
   float fill = t.r;
   float shape = max(t.g, fill);
   float alpha = shape * vColor.a;
@@ -233,7 +186,6 @@ export class AircraftArrows {
     z: number,
     forward: { x: number; y: number; z: number },
     category: AircraftCategory,
-    icon: ArrowIcon,
     sizePixels: number,
     alpha: number,
     selected: boolean
@@ -252,7 +204,7 @@ export class AircraftArrows {
     this.color[i * 4 + 2] = color.b
     this.color[i * 4 + 3] = alpha
     this.meta[i * 3] = sizePixels
-    this.meta[i * 3 + 1] = icon
+    this.meta[i * 3 + 1] = 0
     this.meta[i * 3 + 2] = selected ? 1 : 0
   }
 
