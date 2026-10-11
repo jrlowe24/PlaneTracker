@@ -394,3 +394,45 @@ export async function preloadModels(renderer: WebGLRenderer, camera: Camera, sce
     await new Promise(resolve => setTimeout(resolve, 250))
   }
 }
+
+/** A glTF model baked for instanced drawing (one geometry, one material). */
+export interface InstancedModel {
+  /** In the normalized body frame (+Z forward, +Y up, meters). */
+  geometry: BufferGeometry
+  material: MeshStandardMaterial
+  /** Lowest point (wheels), meters below the model origin (negative). */
+  lowest: number
+}
+
+const instancedCache = new Map<string, Promise<InstancedModel | null>>()
+
+/**
+ * The model of a manifest entry for the instanced (non-detailed) aircraft:
+ * its mesh baked into the body frame and its material patched for
+ * per-instance shading. Distant airliners then show their livery model
+ * rather than the class placeholder.
+ */
+export function loadInstancedModel(entry: ModelEntry): Promise<InstancedModel | null> {
+  let promise = instancedCache.get(entry.url)
+  if (promise == null) {
+    promise = loadTypeModel(entry).then(model => {
+      if (model == null) return null
+      model.object.updateMatrixWorld(true)
+      let found: Mesh | null = null
+      model.object.traverse(child => {
+        if (found == null && child instanceof Mesh) found = child
+      })
+      const mesh = found as Mesh | null
+      if (mesh == null || !(mesh.material instanceof MeshStandardMaterial)) return null
+      const geometry = (mesh.geometry as BufferGeometry).clone().applyMatrix4(mesh.matrixWorld)
+      const material = mesh.material.clone()
+      // As for detailed models (prepare): painted, not metallic; ~0.8 albedo.
+      material.metalness = Math.min(material.metalness, 0.15)
+      material.color.multiplyScalar(PAINT_ALBEDO_SCALE)
+      patchAircraftMaterial(material, true)
+      return { geometry, material, lowest: model.anchors.lowest }
+    })
+    instancedCache.set(entry.url, promise)
+  }
+  return promise
+}

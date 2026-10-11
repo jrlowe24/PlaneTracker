@@ -19,6 +19,8 @@ import { AircraftArrows } from './aircraftArrows'
 import { createAircraftMaterial } from './aircraftMaterial'
 import { aircraftRenderState } from './aircraftRenderState'
 import { AIRFRAMES, buildAirframe, type AircraftClass } from './airframes'
+import { findModelEntry, loadInstancedModel, loadManifest, type ModelEntry, type ModelManifest } from './models'
+import { typeDimensions } from './typeDimensions'
 import { detailedHexes } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
 import { lightAnchor } from './lightAnchor'
@@ -65,6 +67,7 @@ const APPEAR_MS = 600
 
 const COLOR_DEFAULT = new Color(0.86, 0.87, 0.89)
 const COLOR_SELECTED = new Color(0.95, 0.42, 0.05)
+const COLOR_MODEL = new Color(1, 1, 1)
 
 const CLASSES = Object.keys(AIRFRAMES) as AircraftClass[]
 
@@ -104,6 +107,8 @@ export function aircraftRenderTime(): number {
 }
 
 interface ClassBatch {
+  /** A livery/type model: its real [length, span] and wheels' depth. */
+  model?: { fit: [number, number] | null; lowest: number }
   mesh: InstancedMesh
   geometry: BufferGeometry
   /** Instances written this frame. */
@@ -135,6 +140,11 @@ export class AircraftInstances {
   private attachBlend = 0
   private lastUpdate = performance.now()
   private readonly batches = new Map<AircraftClass, ClassBatch>()
+  /** glTF models by URL, once loaded (null while loading or failed). */
+  private readonly modelBatches = new Map<string, ClassBatch | null>()
+  private manifest: ModelManifest | null = null
+  /** Model URL per aircraft, by the type/class/callsign it was chosen for. */
+  private readonly modelChoice = new Map<string, { key: string; entry: ModelEntry | null }>()
 
   constructor() {
     this.group.name = 'aircraft'
@@ -151,10 +161,59 @@ export class AircraftInstances {
         shading: mesh.geometry.getAttribute('instanceShading').array as Float32Array
       })
     }
+    void loadManifest().then(manifest => {
+      this.manifest = manifest
+    })
+  }
+
+  /**
+   * The model batch for an aircraft (its airline's livery, else its type's,
+   * else its class's model), or null to use the class placeholder: no
+   * model for it, or not loaded yet. Placeholders are only for classes
+   * without a model.
+   */
+  private modelBatch(aircraft: { hex: string; cls: AircraftClass; state: { typeCode: string | null; callsign: string | null } }): ClassBatch | null {
+    const manifest = this.manifest
+    if (manifest == null) return null
+    const key = `${aircraft.cls}|${aircraft.state.typeCode}|${aircraft.state.callsign}`
+    let choice = this.modelChoice.get(aircraft.hex)
+    if (choice?.key !== key) {
+      choice = { key, entry: findModelEntry(manifest, aircraft.state.typeCode, aircraft.cls, aircraft.state.callsign) }
+      this.modelChoice.set(aircraft.hex, choice)
+    }
+    const entry = choice.entry
+    if (entry == null) return null
+    const batch = this.modelBatches.get(entry.url)
+    if (batch === undefined) {
+      this.modelBatches.set(entry.url, null)
+      void loadInstancedModel(entry).then(model => {
+        if (model == null) return
+        const geometry = model.geometry.clone()
+        const mesh = createMesh(geometry, model.material, `aircraft-model-${entry.url}`)
+        this.group.add(mesh)
+        this.modelBatches.set(entry.url, {
+          model: { fit: entry.fit ?? null, lowest: model.lowest },
+          mesh,
+          geometry,
+          count: 0,
+          matrices: mesh.instanceMatrix.array as Float32Array,
+          colors: mesh.instanceColor!.array as Float32Array,
+          shading: mesh.geometry.getAttribute('instanceShading').array as Float32Array
+        })
+      })
+      return null
+    }
+    return batch
+  }
+
+  private allBatches(): ClassBatch[] {
+    const all = [...this.batches.values()]
+    for (const batch of this.modelBatches.values()) if (batch != null) all.push(batch)
+    return all
   }
 
   dispose(): void {
-    for (const batch of this.batches.values()) {
+    for (const batch of this.allBatches()) {
       batch.geometry.dispose()
       batch.mesh.dispose()
     }
@@ -180,8 +239,7 @@ export class AircraftInstances {
     }
   }
 
-  private slot(cls: AircraftClass): { batch: ClassBatch; index: number } {
-    const batch = this.batches.get(cls)!
+  private slot(batch: ClassBatch): { batch: ClassBatch; index: number } {
     const index = batch.count++
     if (index >= batch.mesh.instanceMatrix.count) {
       // Grow, keeping what was written this frame.
@@ -207,7 +265,7 @@ export class AircraftInstances {
     sunDirection: Vector3 | null
   ): void {
     const list = flightConnection.registry.list
-    for (const batch of this.batches.values()) batch.count = 0
+    for (const batch of this.allBatches()) batch.count = 0
 
     const origin = camera.position
     this.group.position.copy(origin)
@@ -296,22 +354,36 @@ export class AircraftInstances {
       // Stale aircraft shrink away instead of popping; new ones grow in.
       const scale = iconScale * pose.opacity * appear
       // Placeholder → real type dimensions (span on X, length on Y/Z).
-      const spanScale = scale * aircraft.scale.span
-      const lengthScale = scale * aircraft.scale.length
+      // Livery/type model where there is one (real gear, sized to the
+      // type); else the class placeholder (no gear: on the ground it
+      // rests on its belly, else it hovers a gear-length above the apron).
+      const model = this.modelBatch(aircraft)
+      let spanScale: number
+      let lengthScale: number
+      let drop: number
+      const params = AIRFRAMES[aircraft.cls]
+      if (model?.model != null) {
+        const [typeLength, typeSpan] = typeDimensions(aircraft.state.typeCode, aircraft.cls)
+        const fit = model.model.fit ?? [typeLength, typeSpan]
+        lengthScale = (scale * typeLength) / fit[0]
+        spanScale = (scale * typeSpan) / fit[1]
+        // As detailed models: the wheels at the placeholder's gear height
+        // below the pose (on the ground: on the surface).
+        drop = params.groundClearance * aircraft.scale.length + model.model.lowest * lengthScale
+      } else {
+        spanScale = scale * aircraft.scale.span
+        lengthScale = scale * aircraft.scale.length
+        drop =
+          aircraft.attitude.ground *
+          Math.max(0, params.groundClearance * aircraft.scale.length - params.fuselageRadius * lengthScale)
+      }
 
-      const { batch, index } = this.slot(aircraft.cls)
+      const { batch, index } = this.slot(model ?? this.batches.get(aircraft.cls)!)
       const m = batch.matrices
       const { left, up, forward } = pose
-      // These simplified models have no landing gear: on the ground, lower
-      // the fuselage axis from gear height to resting on its belly (else the
-      // aircraft hovers a gear-length above the apron).
-      const params = AIRFRAMES[aircraft.cls]
-      const sink =
-        aircraft.attitude.ground *
-        Math.max(0, params.groundClearance * aircraft.scale.length - params.fuselageRadius * lengthScale)
-      const px = x - up.x * sink
-      const py = y - up.y * sink
-      const pz = z - up.z * sink
+      const px = x - up.x * drop
+      const py = y - up.y * drop
+      const pz = z - up.z * drop
       const o = index * 16
       m[o + 0] = left.x * spanScale
       m[o + 1] = left.y * spanScale
@@ -330,7 +402,9 @@ export class AircraftInstances {
       m[o + 14] = pz
       m[o + 15] = 1
 
-      const color = selected ? COLOR_SELECTED : COLOR_DEFAULT
+      // Models show their livery as painted; placeholders take the marker
+      // tint (orange when selected).
+      const color = model != null ? COLOR_MODEL : selected ? COLOR_SELECTED : COLOR_DEFAULT
       batch.colors[index * 3] = color.r
       batch.colors[index * 3 + 1] = color.g
       batch.colors[index * 3 + 2] = color.b
@@ -357,7 +431,7 @@ export class AircraftInstances {
     }
     aircraftRenderState.count = count
     arrows.end()
-    for (const batch of this.batches.values()) {
+    for (const batch of this.allBatches()) {
       batch.mesh.count = batch.count
       if (batch.count === 0) continue
       batch.mesh.instanceMatrix.needsUpdate = true

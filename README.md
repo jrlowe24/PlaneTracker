@@ -391,10 +391,18 @@ coarser tile error targets per preset, all deep imports pre-bundled.
   `liveries` maps an airline's ICAO code (callsign prefix, e.g. `DAL`) to
   a model and wins over type and class models for airliners.
 
-  Currently configured (user-provided Meshy AI Boeing 737-800s, ~17 MB GLBs,
-  kept out of git): Delta livery for DAL and Endeavor (EDV), Alaska livery
-  for ASA and Horizon (QXE) and as the default for all other narrowbody,
-  widebody and regional jets, fitted to each type's dimensions.
+  Currently configured (user-provided Meshy AI Boeing 737-800s, ~1.2 MB
+  GLBs, kept out of git): Delta livery for DAL and Endeavor (EDV), Alaska
+  livery for ASA and Horizon (QXE) and as the default for all other
+  narrowbody, widebody and regional jets, fitted to each type's dimensions.
+  Distant aircraft use the same models (instanced), so an airliner is the
+  same model however far away it is; placeholders remain only for classes
+  without a model.
+
+  **Gap**: every airliner is a 737 in Alaska or Delta livery. Missing:
+  other airlines' liveries (shown in Alaska's), widebody and regional jet
+  models (a 737 stretched to the type's size), turboprops, business jets,
+  general aviation and helicopters (procedural placeholders).
 
 **Model licensing**: only add models you may redistribute (they're served
 to every visitor). Check the license (CC-BY needs visible credit; CC-BY-NC
