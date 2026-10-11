@@ -31,6 +31,12 @@ uniform vec3 regionalNorth;
 uniform float regionalRadius;
 uniform float regionalEnabled;
 uniform vec4 coverageFallback;
+// ~37° about a skewed axis (detail noise de-tiling).
+const mat3 DETAIL_ROTATION = mat3(
+  0.8168, -0.4581, 0.3506,
+  0.5187, 0.8492, -0.0990,
+  -0.2524, 0.2628, 0.9313
+);
 // Shape noise position with C1 (smoothstep) interpolation between texels:
 // stretched to 20 km a texel spans ~160 m, and trilinear filtering's kinks
 // showed as flat facets and straight edges on clouds.
@@ -99,6 +105,7 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
   const apply = '  #ifdef SHADOW\n  localWeather *= shadowLayerMask;'
   const mediaSample = '  vec4 density = weather.density;'
   const detailBranch = '  if (mipLevel * 0.5 + (jitter - 0.5) * 0.5 < 0.5) {'
+  const detailFetch = '    float detail = texture(shapeDetailTexture, detailPosition).r;'
   const shapeFetch = '  float shape = texture(shapeTexture, shapePosition).r;'
   const shapeRemap = 'density = remapClamped(density, vec4(1.0 - shape) * shapeAmounts, vec4(1.0));'
   const source = material.fragmentShader
@@ -109,6 +116,7 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
     !source.includes(mediaSample) ||
     !source.includes(shapeRemap) ||
     !source.includes(shapeFetch) ||
+    !source.includes(detailFetch) ||
     !source.includes(detailBranch)
   ) return false
   material.fragmentShader = source
@@ -127,12 +135,19 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
     )
     .replace(
       mediaSample,
-      `${mediaSample}\n  ${LOCAL_MORPH_MARKER}\n  vec4 localShapeAmounts = shapeAmounts;\n  vec4 localShapeDetailAmounts = shapeDetailAmounts;\n  float localDeck = smoothstep(0.3, 0.6, weather.localCoverage);\n  float lowStratus = smoothstep(0.42, 0.58, weather.localCoverage);\n  // Coverage-driven morphology: retain billows in broken weather; flatten\n  // dense low-cloud regions so cellular detail merges into a deck.\n  localShapeAmounts.x = mix(shapeAmounts.x, mix(0.95, 0.22, lowStratus), localDeck);\n  localShapeDetailAmounts.x = mix(shapeDetailAmounts.x, mix(0.55, 0.08, lowStratus), localDeck);`
+      `${mediaSample}\n  ${LOCAL_MORPH_MARKER}\n  vec4 localShapeAmounts = shapeAmounts;\n  vec4 localShapeDetailAmounts = shapeDetailAmounts;\n  float localDeck = smoothstep(0.3, 0.6, weather.localCoverage);\n  float lowStratus = smoothstep(0.42, 0.58, weather.localCoverage);\n  // Coverage-driven morphology: retain billows in broken weather; flatten\n  // dense low-cloud regions so cellular detail merges into a deck.\n  localShapeAmounts.x = mix(shapeAmounts.x, mix(0.95, 0.22, lowStratus), localDeck);\n  localShapeDetailAmounts.x = mix(shapeDetailAmounts.x, mix(0.55, 0.08, lowStratus), localDeck);\n  // Deck edges: where the cover thins out, the shape and billows break the\n  // edge into ragged lumps, and the thinning is steeper. A deck used to\n  // fade over a wide band of thin cloud, which the march's jitter\n  // rendered as sand-like grain.\n  float deckEdge = lowStratus * (1.0 - smoothstep(0.35, 0.95, density.x));\n  localShapeAmounts.x = mix(localShapeAmounts.x, 1.0, deckEdge);\n  localShapeDetailAmounts.x = mix(localShapeDetailAmounts.x, 0.6, deckEdge);\n  density.x = mix(density.x, smoothstep(0.0, 1.0, density.x), 0.5 * lowStratus);`
     )
     .replace(shapeFetch, '  float shape = texture(shapeTexture, smoothTexelPosition(shapePosition, vec3(textureSize(shapeTexture, 0)))).r;')
     .replace(shapeRemap, 'density = remapClamped(density, vec4(1.0 - shape) * localShapeAmounts, vec4(1.0));')
     // No detail reads where the shape left no cloud.
     .replace(detailBranch, '  if (mipLevel * 0.5 + (jitter - 0.5) * 0.5 < 0.5 && any(greaterThan(density, vec4(0.0)))) {')
+    // The detail noise repeats every ~170 m (32³ texels), which showed as
+    // rows of identical dimples in thin cloud. Two copies at unrelated
+    // scales and orientations never line up the same way twice; their
+    // average is rescaled to keep the billows' contrast.
+    .replace(detailFetch, `    float detailA = texture(shapeDetailTexture, detailPosition).r;
+    float detailB = texture(shapeDetailTexture, DETAIL_ROTATION * detailPosition * 0.618 + vec3(0.29, 0.53, 0.17)).r;
+    float detail = saturate((detailA + detailB) * 0.5 * 1.45 - 0.72 * 0.45);`)
     .replace('modifier = mix(vec4(0.0), modifier, shapeDetailAmounts);', 'modifier = mix(vec4(0.0), modifier, localShapeDetailAmounts);')
     .replaceAll('sampleWeather(uv, height, mipLevel)', 'sampleWeather(uv, height, mipLevel, position)')
   Object.assign(material.uniforms, uniforms)

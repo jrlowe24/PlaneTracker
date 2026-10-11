@@ -233,6 +233,13 @@ export const VolumetricClouds: FC = () => {
     const sample = weatherStore.get().sample
     const live = settings.cloudSource === 'weather' && sample != null
     const spec = live ? cloudLayersFromWeather(sample) : manualSpec(settings.cloudCoverage)
+    // Dev: fixed cover per layer ([low, mid, high]) for testing one layer alone.
+    const override = import.meta.env.DEV ? (window as { __cloudCover?: [number, number, number] }).__cloudCover : undefined
+    if (override != null && !live) {
+      spec.low = { ...spec.low, coverage: override[0] }
+      spec.mid = { ...spec.mid, coverage: override[1] }
+      spec.high = { ...spec.high, coverage: override[2] }
+    }
     // Cover at the view center comes from the blended grid when there is
     // one (the same field the shader uses everywhere), not the single
     // nearest reading, which jumps between cells.
