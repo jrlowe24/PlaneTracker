@@ -37,7 +37,7 @@ const STAR_WEIGHT = 0.5
 /** Below this night level the sun lights the clouds; above it, the moon. */
 const SWITCH = 0.7
 /** City glow at full NASA radiance (radiance units, as the ground's). */
-const CITY_GLOW = new Vector3(0.0032, 0.0019, 0.001)
+const CITY_GLOW = new Vector3(0.0011, 0.00068, 0.00038)
 /** City glow falls off with height above ground (meters, e-folding). */
 const CITY_GLOW_HEIGHT = 3000
 /**
