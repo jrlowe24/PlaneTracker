@@ -344,7 +344,10 @@ export const PostEffects: FC = () => {
       />
       {/* Glow halos around aircraft nav lights only. */}
       <primitive object={navGlow} dispose={null} />
-      <>{lensFlare ? <LensFlare /> : null}</>
+      {/* Daytime only: at night there's no sun to flare, and its bloom of
+          the dim night lights changed nothing visible for a full-screen
+          downsample chain every frame. */}
+      <>{lensFlare && sunUp ? <LensFlare /> : null}</>
       <ToneMapping mode={ToneMappingMode.AGX} />
       {/* Before SMAA so it merges into the tone-mapping pass (one fewer
           full-screen pass); its ±½ LSB noise is far below SMAA's edge

@@ -5,7 +5,7 @@ import { flightConnection } from '../data/flightConnection'
 import { weatherStore } from '../data/weather'
 import { nightState } from '../scene/nightLighting'
 import { cameraModeStore, followAircraft } from '../state/cameraMode'
-import { qualityStore } from '../state/quality'
+import { qualityStore, setQualityChoice, setQualityElement } from '../state/quality'
 import { resolutionStore } from '../state/resolution'
 import { selectionStore } from '../state/selection'
 import { settingsStore } from '../state/settings'
@@ -26,6 +26,8 @@ export function exposeStores(): void {
     followAircraft,
     setViewSolarHours,
     nightState,
-    nightCloudUniforms
+    nightCloudUniforms,
+    setQualityChoice,
+    setQualityElement
   }
 }
