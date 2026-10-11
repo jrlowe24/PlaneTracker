@@ -10,12 +10,20 @@ import {
 import { ecefToGeodetic } from '@windowseat/shared'
 
 import { cloudTransmittance } from '../clouds/cloudDepth'
+import { qualityStore } from '../state/quality'
 import { flightConnection } from '../data/flightConnection'
 import { nightState } from '../scene/nightLighting'
 import { AIRFRAMES } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
-import { glowLights, glowState, MAX_SURFACE_LIGHTS, surfaceLights } from './navLightsStore'
+import {
+  glowLights,
+  glowState,
+  lightBeams,
+  MAX_LIGHT_BEAMS,
+  MAX_SURFACE_LIGHTS,
+  surfaceLights
+} from './navLightsStore'
 
 /**
  * Aircraft navigation lights: red left wingtip, green right wingtip, white
@@ -26,7 +34,9 @@ import { glowLights, glowState, MAX_SURFACE_LIGHTS, surfaceLights } from './navL
  * like the aircraft (aerial perspective still dims distant lights).
  */
 
-const LIGHTS_PER_AIRCRAFT = 7
+const DEG_RAD = Math.PI / 180
+
+const LIGHTS_PER_AIRCRAFT = 10
 /** Physical light radius, meters (the lens, not the glow). */
 const LIGHT_RADIUS = 0.09
 /** Minimum on-screen radius, pixels. */
@@ -55,6 +65,47 @@ const STROBE: [number, number, number] = [7, 7, 7.4]
 const SURFACE_CD = { nav: 40, tail: 20, beacon: 35, strobe: 200 }
 /** Renderer irradiance per lux at full night (FULL_MOON / 0.25 lux, toned down). */
 const NIGHT_LUX = 0.03
+/**
+ * Landing lights (wing roots) and the taxi light (nose gear): very bright
+ * and narrow, so they blaze when they point at you and are faint points
+ * from the side (FACING_POWER shapes the beam as seen from outside).
+ * Landing lights are on below LANDING_LIGHTS_AGL and on the takeoff and
+ * landing roll; the taxi light whenever the aircraft moves on the ground.
+ */
+const LANDING: [number, number, number] = [6.5, 6.2, 5.6]
+const TAXI: [number, number, number] = [4.2, 4.0, 3.6]
+const FACING_POWER = 10
+const SIDE_GLOW = 0.06
+const LANDING_LIGHTS_AGL = 3000
+const TAKEOFF_ROLL_SPEED = 25
+const TAXI_SPEED = 2.5
+/**
+ * Beams on the ground (night lights pass): renderer irradiance at 1 m on
+ * the axis, aim below the horizon (degrees) and cone half-angle cosine.
+ * Only aircraft near the ground and the camera throw a visible beam.
+ */
+const BEAM = {
+  landing: { intensity: 420, aim: 4, cos: Math.cos(12 * DEG_RAD) },
+  taxi: { intensity: 160, aim: 9, cos: Math.cos(26 * DEG_RAD) }
+}
+const BEAM_MAX_AGL = 250
+const BEAM_MAX_DISTANCE = 6000
+
+interface BeamCandidate {
+  x: number
+  y: number
+  z: number
+  dx: number
+  dy: number
+  dz: number
+  intensity: number
+  cos: number
+  distance: number
+}
+const beamPool: BeamCandidate[] = []
+let beamCount = 0
+const byBeamDistance = (a: BeamCandidate, b: BeamCandidate): number => a.distance - b.distance
+
 /** Reach of a light on the model (m): steady lights only their own surroundings. */
 const SURFACE_RANGE = { nav: 4.5, tail: 5, beacon: 9, strobe: 18 }
 /** Only aircraft this close have their surfaces lit (detailed models anyway). */
@@ -185,6 +236,8 @@ export class NavLights {
     }
     glowState.count = 0
     surfaceCount = 0
+    beamCount = 0
+    const landingLights = qualityStore.get().settings.landingLights
     const surfaceScale = NIGHT_LUX * nightState.night
     /** A light on a detailed model, lighting the model around it. */
     const lightSurface = (
@@ -281,12 +334,69 @@ export class NavLights {
       }
       put(lx, ly, lz, distance, STROBE, strobe, 1.8)
       put(rx, ry, rz, distance, STROBE, strobe, 1.8)
+
+      if (landingLights) {
+        const agl = aircraft.groundHeight == null ? Infinity : pose.height - aircraft.groundHeight
+        const landing = pose.onGround ? pose.speed > TAKEOFF_ROLL_SPEED : agl < LANDING_LIGHTS_AGL
+        const taxi = pose.onGround && pose.speed > TAXI_SPEED
+        if (landing || taxi) {
+          // How directly the lights point at the camera (forward · toward camera).
+          const facing = Math.max(0, -(forward.x * dx + forward.y * dy + forward.z * dz) / Math.max(distance, 1e-3))
+          const lobe = SIDE_GLOW + (1 - SIDE_GLOW) * facing ** FACING_POWER
+          if (landing) {
+            const rootZ = p.wingRootZ * ls + r * 0.6
+            const [ax, ay, az] = at(r * 1.9, -r * 0.25, rootZ)
+            const [bx2, by2, bz2] = at(-r * 1.9, -r * 0.25, rootZ)
+            put(ax, ay, az, distance, LANDING, lobe, 2.4)
+            put(bx2, by2, bz2, distance, LANDING, lobe, 2.4)
+          }
+          const [nx, ny, nz] = at(0, -r * 1.35, (p.length / 2) * ls * 0.8)
+          put(nx, ny, nz, distance, TAXI, lobe * (landing ? 1 : 0.8), 1.8)
+          if (distance < BEAM_MAX_DISTANCE && (pose.onGround || agl < BEAM_MAX_AGL)) {
+            const beam = landing ? BEAM.landing : BEAM.taxi
+            // Aimed below the horizon in the direction of travel, whatever the pitch.
+            const plen = pose.position.length()
+            const ux = pose.position.x / plen
+            const uy = pose.position.y / plen
+            const uz = pose.position.z / plen
+            const fu = forward.x * ux + forward.y * uy + forward.z * uz
+            let hx = forward.x - ux * fu
+            let hy = forward.y - uy * fu
+            let hz = forward.z - uz * fu
+            const hl = Math.hypot(hx, hy, hz) || 1
+            hx /= hl
+            hy /= hl
+            hz /= hl
+            const ca = Math.cos(beam.aim * DEG_RAD)
+            const sa = Math.sin(beam.aim * DEG_RAD)
+            const c = (beamPool[beamCount++] ??= { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, intensity: 0, cos: 0, distance: 0 })
+            c.x = nx
+            c.y = ny
+            c.z = nz
+            c.dx = hx * ca - ux * sa
+            c.dy = hy * ca - uy * sa
+            c.dz = hz * ca - uz * sa
+            c.intensity = beam.intensity * pose.opacity
+            c.cos = beam.cos
+            c.distance = distance
+          }
+        }
+      }
       if (lit) {
         lightSurface(lx, ly, lz, distance, STROBE, strobe * SURFACE_CD.strobe, SURFACE_RANGE.strobe)
         lightSurface(rx, ry, rz, distance, STROBE, strobe * SURFACE_CD.strobe, SURFACE_RANGE.strobe)
       }
     }
     this.mesh.count = n
+
+    // The nearest beams light the ground (night lights pass).
+    const beams = beamPool.slice(0, beamCount).sort(byBeamDistance)
+    lightBeams.count = Math.min(MAX_LIGHT_BEAMS, beams.length)
+    for (let i = 0; i < lightBeams.count; ++i) {
+      const b = beams[i]!
+      lightBeams.position[i]!.set(b.x, b.y, b.z, b.intensity)
+      lightBeams.direction[i]!.set(b.dx, b.dy, b.dz, b.cos)
+    }
 
     // The nearest lights light the models (unused slots: range 0).
     const nearest = surfacePool.slice(0, surfaceCount).sort(byDistance)

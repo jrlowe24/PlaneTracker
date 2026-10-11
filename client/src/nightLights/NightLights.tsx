@@ -10,6 +10,7 @@ import { nightState } from '../scene/nightLighting'
 import { isMobileDevice, qualityStore } from '../state/quality'
 import { viewSolarHours } from '../state/skyTime'
 import { NightLightsPass } from './NightLightsPass'
+import { lightBeams } from '../aircraft/navLightsStore'
 import { nightEmission, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
 import { RoadLightTiles } from './roadTiles'
@@ -108,6 +109,7 @@ class NightLightsController {
     }
     this.runways.update(camera.position)
     effect.setRunways(this.runways.uniforms)
+    effect.setBeams(lightBeams.count)
 
     this.sinceFlush += delta
     if (this.sinceFlush >= FLUSH_INTERVAL_S) {

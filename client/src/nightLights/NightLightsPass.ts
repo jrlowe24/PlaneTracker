@@ -22,6 +22,7 @@ import {
 import { WINDOW_TILES } from './nightLightTiles'
 import { MAX_WINDOW, ROAD_LEVELS, ROAD_TILE_SIZE, type RoadLevelUniforms } from './roadTiles'
 import { MAX_RUNWAYS, type RunwayUniforms } from './runwayLights'
+import { lightBeams, MAX_LIGHT_BEAMS } from '../aircraft/navLightsStore'
 
 const drawingBuffer = new Vector2()
 
@@ -86,6 +87,9 @@ uniform vec4 runwayOrigin[${MAX_RUNWAYS}];
 uniform vec4 runwayAlong[${MAX_RUNWAYS}];
 uniform vec4 runwayAcross[${MAX_RUNWAYS}];
 uniform vec4 runwayApproach[${MAX_RUNWAYS}];
+uniform int beamCount;
+uniform vec4 beamPosition[${MAX_LIGHT_BEAMS}];
+uniform vec4 beamDirection[${MAX_LIGHT_BEAMS}];
 
 const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
 const int ROAD_STRIDE = ${MAX_WINDOW * MAX_WINDOW};
@@ -767,6 +771,26 @@ vec4 roadLevel(const int level, const vec3 offset, const float footprint, const 
   return vec4(pools, smoothstep(0.0, 0.25, edge) * fade);
 }
 
+/**
+ * Aircraft landing and taxi light beams on the surface at this offset:
+ * irradiance from each cone (soft edge), falling off with distance and
+ * the angle of incidence.
+ */
+vec3 lightBeams(const vec3 offset, const vec3 normal) {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < ${MAX_LIGHT_BEAMS}; ++i) {
+    if (i >= beamCount) break;
+    vec3 toPoint = offset - beamPosition[i].xyz;
+    float d2 = max(dot(toPoint, toPoint), 4.0);
+    vec3 l = toPoint * inversesqrt(d2);
+    float edge = beamDirection[i].w;
+    float cone = smoothstep(edge, mix(edge, 1.0, 0.6), dot(l, beamDirection[i].xyz));
+    float incidence = abs(dot(normal, l));
+    sum += vec3(1.0, 0.96, 0.88) * beamPosition[i].w * cone * incidence / d2;
+  }
+  return sum;
+}
+
 void main() {
   outColor = vec4(0.0, 0.0, 0.0, 1.0);
   float depth = texture(depthBuffer, vUv).r;
@@ -878,6 +902,12 @@ void main() {
   vec3 field = fieldLamps * lampGain * smoothstep(0.35, 0.85, upness) * fieldOn;
   vec3 light = lit * gain + field;
   float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
+  // Landing and taxi lights on the runway, taxiway or apron ahead.
+  if (beamCount > 0 && normalLength > 1e-12) {
+    vec3 beams = albedo.rgb * lightBeams(offset, normal / normalLength) * night;
+    light += beams;
+    glow += lightLuminance(beams) * 0.15;
+  }
   // Lit windows on walls (not on roofs or the ground).
   float wall = 1.0 - smoothstep(0.3, 0.55, upness);
   if (windowGain > 0.0 && wall > 0.0 && normalLength > 1e-12) {
@@ -1059,7 +1089,10 @@ export class NightLightsPass extends Pass {
         runwayOrigin: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         runwayAlong: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         runwayAcross: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
-        runwayApproach: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4()))
+        runwayApproach: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
+        beamCount: new Uniform(0),
+        beamPosition: new Uniform(lightBeams.position),
+        beamDirection: new Uniform(lightBeams.direction)
       }
     })
     const u = this.material.uniforms
@@ -1152,6 +1185,11 @@ export class NightLightsPass extends Pass {
       this.u<Vector4[]>('runwayAcross').value[i]!.copy(runways.across[i]!)
       this.u<Vector4[]>('runwayApproach').value[i]!.copy(runways.approach[i]!)
     }
+  }
+
+  /** Landing/taxi light beams this frame (NavLights fills lightBeams). */
+  setBeams(count: number): void {
+    this.u<number>('beamCount').value = count
   }
 
   /** Earth radius at the view plus the low cloud base altitude; 0 without clouds. */

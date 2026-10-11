@@ -33,3 +33,17 @@ export const surfaceLights = {
   position: Array.from({ length: MAX_SURFACE_LIGHTS }, () => new Vector4()),
   color: Array.from({ length: MAX_SURFACE_LIGHTS }, () => new Vector3())
 }
+
+/** Landing/taxi light beams that light the ground at night (nearest first). */
+export const MAX_LIGHT_BEAMS = 4
+
+/**
+ * Camera-relative beam origin (m) with intensity in w (renderer irradiance
+ * at 1 m on the axis), and direction with the cosine of the cone's edge
+ * in w. Shared with the night lights pass.
+ */
+export const lightBeams = {
+  count: 0,
+  position: Array.from({ length: MAX_LIGHT_BEAMS }, () => new Vector4()),
+  direction: Array.from({ length: MAX_LIGHT_BEAMS }, () => new Vector4())
+}

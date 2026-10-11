@@ -62,6 +62,8 @@ export interface QualitySettings {
   buildingWindows: boolean
   /** Most aircraft drawn with full models at once. */
   maxDetailedAircraft: number
+  /** Landing and taxi lights, with their beams on the ground at night. */
+  landingLights: boolean
   /** Tile cache (bytes): finer terrain needs more to hold the view. */
   tileCacheBytes: number
 }
@@ -161,6 +163,7 @@ export function resolveQuality(e: QualityElements): QualitySettings {
     cityLightDetail: e.cityLights !== 'low',
     buildingWindows: e.cityLights === 'high',
     maxDetailedAircraft: DETAILED_AIRCRAFT[e.aircraft],
+    landingLights: e.aircraft !== 'low',
     tileCacheBytes: TILE_CACHE[e.terrain]
   }
 }
