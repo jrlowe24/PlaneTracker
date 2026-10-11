@@ -19,18 +19,24 @@ export interface CloudSlab {
 export const cloudDepth: {
   texture: Texture | null
   /**
-   * 1 below ~25 km camera altitude, fading to 0 by ~70 km: volumetric
-   * clouds (their overlay, shadows and light shafts) only exist up close;
-   * from higher up the tiled cloud noise reads as a uniform blanket.
+   * How visible the clouds are (their overlay): 1 up to ~180 km camera
+   * altitude, fading out by ~450 km, where the regional weather no longer
+   * covers the view and the tiled noise would read as a uniform blanket.
    */
   fade: number
+  /**
+   * The volumetric clouds' shadows and light shafts: 1 up close, 0 once
+   * the far cloud layer has taken over (farClouds.ts); their shadow maps
+   * only reach ~40 km from the camera.
+   */
+  shadowFade: number
   /** Low cloud layer base above the ellipsoid (m); 0 when there is none. */
   baseAltitude: number
   /** The cloud layers now (for CPU-side occlusion: nav light halos). */
   slabs: CloudSlab[]
   /** Local cover per layer at an ECEF point (regional weather), if known. */
   coverAt: ((point: Vector3) => [low: number, mid: number, high: number] | null) | null
-} = { texture: null, fade: 1, baseAltitude: 0, slabs: [], coverAt: null }
+} = { texture: null, fade: 1, shadowFade: 1, baseAltitude: 0, slabs: [], coverAt: null }
 
 /**
  * How much of a light at `point` (ellipsoid height `height`) shows through

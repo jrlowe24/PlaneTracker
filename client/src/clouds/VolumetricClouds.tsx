@@ -24,16 +24,26 @@ import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
 import { marchRefine, patchCloudsMarch } from './marchShader'
 import { installNightClouds, patchNightClouds } from './nightClouds'
+import { farCloudMix, farCloudTune, patchFarClouds } from './farClouds'
 import { patchCloudsResolve, RegionalCoverageController } from './regionalShader'
 
 /**
- * Volumetric clouds fade out between these camera altitudes and aren't
- * rendered above: they're built from a fine noise texture tiled over the
- * globe, which from high up reads as a uniform blanket of repeating blobs
- * (and takram's clouds don't support views from space).
+ * From high up the clouds are a single sample per layer instead of the
+ * volumetric march (farClouds.ts): cross-faded between these camera
+ * altitudes. Below, the march; above, the far layer at a fraction of the
+ * cost, where the march's distant samples turned into a translucent veil.
  */
-const FADE_START_ALTITUDE = 25_000
-const FADE_END_ALTITUDE = 70_000
+const FAR_START_ALTITUDE = 9_000
+const FAR_END_ALTITUDE = 18_000
+/** Far layer resolution, relative to the preset's. */
+const FAR_RESOLUTION = 0.75
+/**
+ * All clouds fade out between these altitudes: beyond, the regional
+ * weather no longer covers the view and the tiled noise reads as a
+ * uniform blanket of repeating blobs.
+ */
+const FADE_START_ALTITUDE = 180_000
+const FADE_END_ALTITUDE = 450_000
 const SHADOW_MAX_FAR = 40_000
 const SHAFT_STEPS = 120
 const SHAFT_STEP_M = 150
@@ -195,8 +205,9 @@ export const VolumetricClouds: FC = () => {
       return
     }
     const altitude = ecefToGeodetic(camera.position.x, camera.position.y, camera.position.z).height
-    const t = Math.min(1, Math.max(0, (altitude - FADE_START_ALTITUDE) / (FADE_END_ALTITUDE - FADE_START_ALTITUDE)))
-    cloudDepth.fade = 1 - t * t * (3 - 2 * t)
+    cloudDepth.fade = 1 - smoothstep(FADE_START_ALTITUDE, FADE_END_ALTITUDE, altitude)
+    farCloudMix.value = smoothstep(FAR_START_ALTITUDE, FAR_END_ALTITUDE, altitude)
+    cloudDepth.shadowFade = 1 - farCloudMix.value
     // Never skip rendering: toggling it adds/removes the clouds' shadow data,
     // which recompiles the atmosphere's effect pass (a ~90 ms hitch while
     // descending through ~70 km). Faded out, render at a tiny resolution
@@ -212,7 +223,10 @@ export const VolumetricClouds: FC = () => {
     const coarse = dark.current && nightState.moon < MOONLIT
     // A fraction of CSS pixels, whatever the device pixel ratio.
     const resolution = Math.min(1, (qualityStore.get().settings.cloudResolution * (coarse ? NIGHT_RESOLUTION : 1)) / gl.getPixelRatio())
-    const scale = cloudDepth.fade > 0 ? resolution : 0.1
+    // The far layer (one sample per layer, soft from afar) at a lower
+    // resolution once it has taken over from the march.
+    const far = farCloudMix.value >= 0.999 ? FAR_RESOLUTION : 1
+    const scale = cloudDepth.fade > 0 ? resolution * far : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
     const settings = settingsStore.get()
@@ -306,12 +320,16 @@ export const VolumetricClouds: FC = () => {
       layer.densityScale =
         i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : i === 3 ? CONVECTIVE_DENSITY : LOW_MID_DENSITY
       layer.shapeAmount = i === 2 ? 0.4 : 1
-      layer.shapeDetailAmount = i === 2 ? 0 : i === 0 ? 0.25 : 1
+      // Mid-level billows fade as the layer closes into a deck: at full
+      // strength a solid altostratus deck showed a waffle of identical bumps.
+      layer.shapeDetailAmount = i === 2 ? 0 : i === 0 ? 0.25 : 0.7 - 0.55 * deck
       layer.densityProfile.set(0, 0, 0.75, 0.25)
       // Dense mid-level decks were producing a hard blue self-shadow rim.
       // Keep their shadows while broken, but let a near-overcast deck scatter
       // light without feeding its own coarse shadow map back into the edges.
-      layer.shadow = shadows && (i === 0 || (i === 1 && deck < 0.6))
+      // No shadow maps once the far layer has taken over (nothing reads
+      // them): the shadow pass then finds no cloud and ends early.
+      layer.shadow = shadows && farCloudMix.value < 0.999 && (i === 0 || (i === 1 && deck < 0.6))
     }
     // Widen the low-frequency Perlin-Worley body scale (one repeat per 20 km)
     // so high-coverage low decks form broad masses instead of many equal puffs.
@@ -369,8 +387,11 @@ export const VolumetricClouds: FC = () => {
         if (march != null && !patchNightClouds(march)) {
           console.warn('[clouds] night light patch did not apply')
         }
+        if (march != null && !patchFarClouds(march)) {
+          console.warn('[clouds] far cloud layer patch did not apply')
+        }
         installNightClouds(effect, camera, () => transientStates?.moonDirection ?? null, () => nightEmission.baseMap)
-        if (import.meta.env.DEV) (window as { __cloudMarchRefine?: typeof marchRefine }).__cloudMarchRefine = marchRefine
+        if (import.meta.env.DEV) Object.assign(window, { __cloudMarchRefine: marchRefine, __farCloudTune: farCloudTune })
         const resolve = passes.cloudsPass?.resolveMaterial
         if (resolve != null && !patchCloudsResolve(resolve)) {
           console.warn('[clouds] NaN guard patch did not apply')

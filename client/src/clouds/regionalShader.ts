@@ -31,6 +31,15 @@ uniform vec3 regionalNorth;
 uniform float regionalRadius;
 uniform float regionalEnabled;
 uniform vec4 coverageFallback;
+// Shape noise position with C1 (smoothstep) interpolation between texels:
+// stretched to 20 km a texel spans ~160 m, and trilinear filtering's kinks
+// showed as flat facets and straight edges on clouds.
+vec3 smoothTexelPosition(const vec3 position, const vec3 size) {
+  vec3 texel = position * size + 0.5;
+  vec3 corner = floor(texel);
+  vec3 f = texel - corner;
+  return (corner + f * f * (3.0 - 2.0 * f) - 0.5) / size;
+}
 
 vec4 applyRegionalCoverage(vec4 weather, const vec3 position, const float mipLevel, out vec4 localCover) {
   vec4 cover = coverageFallback;
@@ -89,6 +98,8 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
     'WeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel) {'
   const apply = '  #ifdef SHADOW\n  localWeather *= shadowLayerMask;'
   const mediaSample = '  vec4 density = weather.density;'
+  const detailBranch = '  if (mipLevel * 0.5 + (jitter - 0.5) * 0.5 < 0.5) {'
+  const shapeFetch = '  float shape = texture(shapeTexture, shapePosition).r;'
   const shapeRemap = 'density = remapClamped(density, vec4(1.0 - shape) * shapeAmounts, vec4(1.0));'
   const source = material.fragmentShader
   if (
@@ -96,7 +107,9 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
     !source.includes(apply) ||
     !source.includes(WEATHER_SAMPLE) ||
     !source.includes(mediaSample) ||
-    !source.includes(shapeRemap)
+    !source.includes(shapeRemap) ||
+    !source.includes(shapeFetch) ||
+    !source.includes(detailBranch)
   ) return false
   material.fragmentShader = source
     .replace(
@@ -116,7 +129,10 @@ export function patchCloudsMaterial(material: ShaderMaterial, uniforms: Regional
       mediaSample,
       `${mediaSample}\n  ${LOCAL_MORPH_MARKER}\n  vec4 localShapeAmounts = shapeAmounts;\n  vec4 localShapeDetailAmounts = shapeDetailAmounts;\n  float localDeck = smoothstep(0.3, 0.6, weather.localCoverage);\n  float lowStratus = smoothstep(0.42, 0.58, weather.localCoverage);\n  // Coverage-driven morphology: retain billows in broken weather; flatten\n  // dense low-cloud regions so cellular detail merges into a deck.\n  localShapeAmounts.x = mix(shapeAmounts.x, mix(0.95, 0.22, lowStratus), localDeck);\n  localShapeDetailAmounts.x = mix(shapeDetailAmounts.x, mix(0.55, 0.08, lowStratus), localDeck);`
     )
+    .replace(shapeFetch, '  float shape = texture(shapeTexture, smoothTexelPosition(shapePosition, vec3(textureSize(shapeTexture, 0)))).r;')
     .replace(shapeRemap, 'density = remapClamped(density, vec4(1.0 - shape) * localShapeAmounts, vec4(1.0));')
+    // No detail reads where the shape left no cloud.
+    .replace(detailBranch, '  if (mipLevel * 0.5 + (jitter - 0.5) * 0.5 < 0.5 && any(greaterThan(density, vec4(0.0)))) {')
     .replace('modifier = mix(vec4(0.0), modifier, shapeDetailAmounts);', 'modifier = mix(vec4(0.0), modifier, localShapeDetailAmounts);')
     .replaceAll('sampleWeather(uv, height, mipLevel)', 'sampleWeather(uv, height, mipLevel, position)')
   Object.assign(material.uniforms, uniforms)

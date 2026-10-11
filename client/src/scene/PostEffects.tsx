@@ -137,7 +137,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   const shader = source
     .replace(
       'void mainImage(',
-      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\nuniform float cloudFade;\nuniform sampler2D nightEmissionBuffer;\nuniform float nightEmissionOn;\n${CLOUD_DEPTH_TEST}\n${EMISSION_THROUGH_CLOUDS}\nvoid mainImage(`
+      `${marker}\nuniform vec3 nightAmbient;\nuniform vec3 nightSky;\nuniform sampler2D cloudDepthBuffer;\nuniform float hasCloudDepth;\nuniform float cloudFade;\nuniform float cloudShadowFade;\nuniform sampler2D nightEmissionBuffer;\nuniform float nightEmissionOn;\n${CLOUD_DEPTH_TEST}\n${EMISSION_THROUGH_CLOUDS}\nvoid mainImage(`
     )
     // Light shafts are half resolution too: the shadow length behind an
     // aircraft (rays reaching the ground) bleeds onto its pixels as in-
@@ -145,7 +145,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     // shafts in front of it are negligible.
     .replace(
       'shadowLength = texture(shadowLengthBuffer, uv).r;',
-      'shadowLength = texture(shadowLengthBuffer, uv).r * cloudFade;\n  if (isAircraftPixel(uv)) shadowLength = 0.0;'
+      'shadowLength = texture(shadowLengthBuffer, uv).r * cloudShadowFade;\n  if (isAircraftPixel(uv)) shadowLength = 0.0;'
     )
     // Clouds march their own night light: moon, starlight and city glow
     // (nightClouds.ts).
@@ -153,11 +153,11 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       'vec4 overlay = texture(overlayBuffer, uv);',
       'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (any(isnan(overlay)) || any(isinf(overlay))) overlay = vec4(0.0);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightEmissionOn * texture(nightEmissionBuffer, uv).a * CLOUD_UNDERGLOW;'
     )
-    // Volumetric clouds fade out with camera altitude (and stop rendering,
-    // leaving stale buffers): fade their overlay, shadows and shafts too.
+    // Cloud shadows (the volumetric clouds' shadow maps, ~40 km around
+    // the camera) fade out as the far cloud layer takes over from them.
     .replace(
       'float sunTransmittance = exp(-opticalDepth);',
-      'float sunTransmittance = mix(1.0, exp(-opticalDepth), cloudFade);'
+      'float sunTransmittance = mix(1.0, exp(-opticalDepth), cloudShadowFade);'
     )
     .replace(
       'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);',
@@ -178,7 +178,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       '#else // SKY\n    outputColor = inputColor;\n    outputColor.rgb += nightSky;\n    outputColor.rgb += nightEmissionOn * texture(nightEmissionBuffer, uv).rgb * nightEmissionThroughClouds(overlay);'
     )
   if (
-    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|nightEmissionBuffer, uv|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.35/g) ?? [])
+    (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|nightEmissionBuffer, uv|vec4\(radiance, 1\.0\)|cloudFade|cloudShadowFade|sunTransmittance, 0\.35/g) ?? [])
       .length < 15
   ) {
     // takram's shader changed: night light only partly applied.
@@ -189,6 +189,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
   effect.uniforms.set('cloudDepthBuffer', new Uniform(null))
   effect.uniforms.set('hasCloudDepth', new Uniform(0))
   effect.uniforms.set('cloudFade', new Uniform(1))
+  effect.uniforms.set('cloudShadowFade', new Uniform(1))
   effect.uniforms.set('nightEmissionBuffer', new Uniform(null))
   effect.uniforms.set('nightEmissionOn', new Uniform(0))
   ;(effect as unknown as { setFragmentShader: (s: string) => void }).setFragmentShader(shader)
@@ -279,6 +280,8 @@ export const PostEffects: FC = () => {
       if (has != null) has.value = cloudDepth.texture != null ? 1 : 0
       const fade = uniforms.get('cloudFade')
       if (fade != null) fade.value = cloudsEnabled ? cloudDepth.fade : 0
+      const shadowFade = uniforms.get('cloudShadowFade')
+      if (shadowFade != null) shadowFade.value = cloudsEnabled ? cloudDepth.shadowFade : 0
       const emission = uniforms.get('nightEmissionBuffer')
       if (emission != null) emission.value = nightEmission.texture
       const emissionOn = uniforms.get('nightEmissionOn')
