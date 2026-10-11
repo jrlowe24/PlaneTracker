@@ -11,6 +11,7 @@ import {
 
 import { flightConnection } from '../data/flightConnection'
 import { nightState } from '../scene/nightLighting'
+import { normalPassExclusions } from '../scene/normalPassExclusions'
 import { AIRFRAMES } from './airframes'
 
 /**
@@ -89,6 +90,8 @@ export class GroundShadows {
     this.mesh.frustumCulled = false
     this.mesh.name = 'ground-shadows'
     this.mesh.renderOrder = 1
+    // Not in the normal buffer: there it would be a full flat quad.
+    normalPassExclusions.add(this.mesh)
     this.allocate(256)
   }
 
@@ -149,6 +152,7 @@ export class GroundShadows {
   }
 
   dispose(): void {
+    normalPassExclusions.delete(this.mesh)
     this.geometry.dispose()
     this.material.dispose()
     this.mesh.dispose()
