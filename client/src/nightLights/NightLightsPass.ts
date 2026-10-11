@@ -940,7 +940,13 @@ vec3 viewOffset(const vec2 uv, const float depth) {
   return mat3(cameraWorld) * (view.xyz / view.w);
 }
 
-float underglow() {
+/**
+ * Blurred light (luminance) that, seen from above a cloud deck, glows
+ * through it as the full-strength underglow.
+ */
+const float THROUGH_CLOUD_FULL = 0.006;
+
+float underglow(const vec3 blurredLight) {
   if (cloudBaseRadius <= 0.0) return 0.0;
   float depth = texture(depthBuffer, vUv).r;
   vec3 ground;
@@ -953,9 +959,16 @@ float underglow() {
     float t = -b + sqrt(max(b * b - c, 0.0));
     ground = cameraPositionECEF + dir * t;
   } else {
-    // Above it: the cloud lies over the terrain seen through it.
+    // Above it: the cloud lies over the terrain seen through it, and the
+    // city's own lights there diffuse up through it: the blurred lights
+    // at this pixel (bright over streets, dark over water and parks), not
+    // NASA's coarse map, which lit far decks as an even wash that hid the
+    // city and didn't follow its lights.
     if (depth >= 0.9999999) return 0.0;
     ground = cameraPositionECEF + viewOffset(vUv, depth);
+    float nightAbove = smoothstep(0.06, -0.08, dot(normalize(ground), sunDirection));
+    float light = dot(blurredLight, vec3(0.2126, 0.7152, 0.0722));
+    return min(1.0, light / THROUGH_CLOUD_FULL) * nightAbove;
   }
   float lon = atan(ground.y, ground.x);
   float lat = atan(ground.z, length(ground.xy) * (1.0 - 0.00669438));
@@ -970,7 +983,7 @@ void main() {
   vec4 blurred = texture(glowBuffer, vUv);
   float luminance = dot(blurred.rgb, vec3(0.2126, 0.7152, 0.0722));
   vec3 glow = blurred.rgb * min(1.0, blurred.a / max(luminance, 1e-6)) * glowStrength;
-  float under = underglow();
+  float under = underglow(blurred.rgb);
   outColor = vec4(
     any(isnan(glow)) || any(isinf(glow)) ? vec3(0.0) : glow,
     isnan(under) || isinf(under) ? 0.0 : under
