@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "night-lights": "node scripts/build-night-lights.mjs",
+    "runways": "node scripts/build-runways.mjs",
     "optimize-models": "node scripts/optimize-models.mjs"
   },
   "dependencies": {

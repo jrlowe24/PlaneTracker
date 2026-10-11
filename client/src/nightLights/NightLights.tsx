@@ -13,6 +13,7 @@ import { NightLightsPass } from './NightLightsPass'
 import { nightEmission, nightLightsStore } from './nightLightsStore'
 import { NightLightTiles } from './nightLightTiles'
 import { RoadLightTiles } from './roadTiles'
+import { RunwayLights } from './runwayLights'
 
 /** Detail tiles stream only below this camera altitude (horizon ~2,800 km). */
 const DETAIL_MAX_ALTITUDE = 600_000
@@ -21,6 +22,8 @@ const FLUSH_INTERVAL_S = 0.25
 class NightLightsController {
   readonly tiles = new NightLightTiles()
   private roads: RoadLightTiles | null = null
+  /** Runway lights: the street tiles' (which add OSM runways), else alone (phones). */
+  private runways: RunwayLights
   readonly effect: NightLightsPass
   private ready = false
   private active = false
@@ -32,9 +35,14 @@ class NightLightsController {
     this.effect = new NightLightsPass(camera)
     this.effect.enabled = false
     // Phones: the 8192×4096 light map alone is ~180 MB of GPU memory, enough
-    // to get textures evicted on iOS (black terrain and sky).
-    if (isMobileDevice()) return
+    // to get textures evicted on iOS (black terrain and sky). Runway lights
+    // still come from the runway list.
+    if (isMobileDevice()) {
+      this.runways = new RunwayLights()
+      return
+    }
     this.roads = new RoadLightTiles()
+    this.runways = this.roads.runways
     void this.tiles.load().then(ok => {
       if (!ok) return
       this.effect.setMaps(this.tiles.base, this.tiles.detail)
@@ -96,9 +104,9 @@ class NightLightsController {
     if (this.roads != null) {
       this.roads.update(camera)
       effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.buildings, this.roads.levels.map(l => l.uniforms))
-      this.roads.runways.update(camera.position)
-      effect.setRunways(this.roads.runways.uniforms)
     }
+    this.runways.update(camera.position)
+    effect.setRunways(this.runways.uniforms)
 
     this.sinceFlush += delta
     if (this.sinceFlush >= FLUSH_INTERVAL_S) {

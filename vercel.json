@@ -1,12 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --filter @windowseat/client night-lights && pnpm build",
+  "buildCommand": "pnpm --filter @windowseat/client night-lights && pnpm --filter @windowseat/client runways && pnpm build",
   "outputDirectory": "client/dist",
   "headers": [
     {
       "source": "/night-lights/(.*)",
       "headers": [{ "key": "cache-control", "value": "public, max-age=31536000, immutable" }]
+    },
+    {
+      "source": "/runways/(.*)",
+      "headers": [{ "key": "cache-control", "value": "public, max-age=86400" }]
     },
     {
       "source": "/models/(.*)",
