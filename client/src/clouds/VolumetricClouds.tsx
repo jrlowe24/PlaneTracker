@@ -20,6 +20,7 @@ import { nightState } from '../scene/nightLighting'
 import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
+import { marchRefine, patchCloudsMarch } from './marchShader'
 import { patchCloudsResolve, RegionalCoverageController } from './regionalShader'
 
 /**
@@ -344,6 +345,11 @@ export const VolumetricClouds: FC = () => {
             console.warn('[clouds] regional coverage patch did not apply')
           }
         }
+        const march = passes.cloudsPass?.currentMaterial
+        if (march != null && !patchCloudsMarch(march)) {
+          console.warn('[clouds] march refinement patch did not apply')
+        }
+        if (import.meta.env.DEV) (window as { __cloudMarchRefine?: typeof marchRefine }).__cloudMarchRefine = marchRefine
         const resolve = passes.cloudsPass?.resolveMaterial
         if (resolve != null && !patchCloudsResolve(resolve)) {
           console.warn('[clouds] NaN guard patch did not apply')
