@@ -1,0 +1,109 @@
+/* Aircraft list: category dots, airport results, legend, loading rows. */
+
+.aircraft-list.open .aircraft-rows {
+  animation: aircraft-rows-in 160ms ease-out;
+}
+
+@keyframes aircraft-rows-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.aircraft-row {
+  align-items: center;
+  transition: background-color 120ms ease;
+}
+
+.aircraft-row .row-main {
+  flex: 1 1 auto;
+}
+
+.row-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35);
+}
+
+.airport-code {
+  flex: none;
+  min-width: 38px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.airport-row .row-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aircraft-row-skeleton {
+  height: 30px;
+  margin: 4px 8px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: aircraft-skeleton 1.2s linear infinite;
+}
+
+@keyframes aircraft-skeleton {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.category-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 12px 9px;
+  border-top: 1px solid var(--panel-border);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.category-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.category-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aircraft-list.open .aircraft-rows,
+  .aircraft-row-skeleton {
+    animation: none;
+  }
+}
+
+.aircraft-row .row-main {
+  min-width: 0;
+}
+
+.aircraft-row .row-numbers {
+  flex: none;
+}

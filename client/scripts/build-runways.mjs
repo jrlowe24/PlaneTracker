@@ -8,7 +8,12 @@
  * (degrees; lighting 0 basic, 1 instrument, 2 precision, as the shader
  * codes it; elevations in meters above sea level, or null).
  *
- * A failed download leaves an empty list (OSM-derived runways still work).
+ * Also writes public/runways/airports.json, the airport search index:
+ * every airport with an IATA code plus all large and medium ones, as
+ * [iata, icao, name, city, country, lat, lon, size] (size 2 large,
+ * 1 medium, 0 other).
+ *
+ * A failed download leaves empty lists (OSM-derived runways still work).
  */
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -16,6 +21,8 @@ import { fileURLToPath } from 'node:url'
 
 const BASE = 'https://davidmegginson.github.io/ourairports-data'
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'runways', 'runways.json')
+const AIRPORTS_OUT = join(dirname(OUT), 'airports.json')
+const SIZE = { large_airport: 2, medium_airport: 1 }
 
 /** Minimal CSV parser (quoted fields, doubled quotes). */
 function parseCsv(text) {
@@ -69,9 +76,23 @@ function lighting(lengthM) {
 
 async function main() {
   let runways = []
+  let index = []
   try {
     const [airportRows, runwayRows] = await Promise.all([download('airports.csv'), download('runways.csv')])
     const airports = new Map(airportRows.map(a => [a.id, a]))
+    for (const a of airportRows) {
+      if (a.type === 'closed' || a.type === 'heliport' || a.type === 'balloonport') continue
+      const size = SIZE[a.type] ?? 0
+      if (a.iata_code === '' && size === 0) continue
+      const lat = num(a.latitude_deg)
+      const lon = num(a.longitude_deg)
+      if (lat == null || lon == null) continue
+      const icao = a.icao_code !== '' ? a.icao_code : a.gps_code !== '' ? a.gps_code : a.ident
+      index.push([a.iata_code, icao, a.name, a.municipality, a.iso_country, Math.round(lat * 1e4) / 1e4, Math.round(lon * 1e4) / 1e4, size])
+    }
+    // Biggest first: ties in search go to the airport people mean.
+    index.sort((x, y) => y[7] - x[7])
+    console.info(`[runways] ${index.length} airports for search`)
     for (const r of runwayRows) {
       if (r.closed === '1') continue
       const airport = airports.get(r.airport_ref)
@@ -104,11 +125,13 @@ async function main() {
     }
     console.info(`[runways] ${runways.length} lit runways`)
   } catch (error) {
-    console.warn('[runways] OurAirports unavailable; writing an empty list:', error.message)
+    console.warn('[runways] OurAirports unavailable; writing empty lists:', error.message)
     runways = []
+    index = []
   }
   await mkdir(dirname(OUT), { recursive: true })
   await writeFile(OUT, JSON.stringify(runways))
+  await writeFile(AIRPORTS_OUT, JSON.stringify(index))
 }
 
 await main()

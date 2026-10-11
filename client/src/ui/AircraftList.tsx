@@ -4,18 +4,22 @@ import {
   type SearchResponse,
   type SearchResult
 } from '@windowseat/shared'
-import { useEffect, useState, type FC } from 'react'
+import { useEffect, useRef, useState, type FC } from 'react'
 
+import { CATEGORY_COLORS, CATEGORY_LABELS, type AircraftCategory } from '../aircraft/categories'
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { jumpTo } from '../camera/jump'
 import { config } from '../config'
+import { exactAirport, loadAirports, searchAirports, type Airport } from '../data/airports'
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { flightConnection } from '../data/flightConnection'
 import { startUserLocation, userLocationStore } from '../data/userLocation'
 import { routeFor } from '../data/routeDisplay'
-import { cameraModeStore, followAircraft } from '../state/cameraMode'
+import { cameraModeStore, exitToGlobe, followAircraft } from '../state/cameraMode'
 import { useStore } from '../state/createStore'
 import { selectionStore } from '../state/selection'
+
+import './aircraftList.css'
 
 const MAX_ROWS = 40
 const METERS_PER_NM = 1852
@@ -31,6 +35,7 @@ interface Row {
   altitude: string
   distanceNm: number
   onGround: boolean
+  category: AircraftCategory
 }
 
 const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -54,6 +59,30 @@ const HUBS: Array<{ code: string; lat: number; lon: number }> = [
 
 function jumpToHub(hub: { lat: number; lon: number }): void {
   jumpTo({ lat: hub.lat, lon: hub.lon, distance: 60_000, pitch: -40 })
+}
+
+/** Flies the camera to an airport (leaving follow mode). */
+function jumpToAirport(airport: Airport): void {
+  selectionStore.set({ selectedHex: null })
+  exitToGlobe()
+  jumpTo({ lat: airport.lat, lon: airport.lon, distance: 25_000, pitch: -35 })
+}
+
+/** Airport matches for a query; the index loads on the first search. */
+function useAirportSearch(query: string): Airport[] {
+  const [airports, setAirports] = useState<Airport[] | null>(null)
+  const wanted = query.trim().length >= 2
+  useEffect(() => {
+    if (!wanted || airports != null) return
+    let live = true
+    void loadAirports().then(list => {
+      if (live) setAirports(list)
+    })
+    return () => {
+      live = false
+    }
+  }, [wanted, airports])
+  return airports == null ? [] : searchAirports(airports, query)
 }
 
 /** Jumps the camera over a search result and follows it once its data arrives. */
@@ -130,9 +159,17 @@ function toRow(aircraft: TrackedAircraft, from: { lat: number; lon: number }): R
         ? '—'
         : `${fmt.format((state.altGeom ?? state.altBaro)!)} ft`,
     distanceNm,
-    onGround: state.onGround
+    onGround: state.onGround,
+    category: aircraft.category
   }
 }
+
+/**
+ * Distances are compared in steps of this many nm: within a step, rows
+ * keep their previous order, so the list doesn't reshuffle every second
+ * as aircraft at similar distances trade places.
+ */
+const ORDER_STEP_NM = 1.5
 
 function matches(aircraft: TrackedAircraft, query: string): boolean {
   const { state } = aircraft
@@ -146,8 +183,10 @@ function matches(aircraft: TrackedAircraft, query: string): boolean {
 /** Nearest aircraft to the user's location (else the view / followed aircraft). */
 function useRows(query: string): { rows: Row[]; total: number } {
   const [result, setResult] = useState<{ rows: Row[]; total: number }>({ rows: [], total: 0 })
+  const previous = useRef(new Map<string, number>())
   useEffect(() => {
     const update = (): void => {
+      const order = previous.current
       const q = query.trim().toLowerCase()
       const list = flightConnection.registry.list
       const candidates = q === '' ? list : list.filter(a => matches(a, q))
@@ -155,9 +194,16 @@ function useRows(query: string): { rows: Row[]; total: number } {
       const rows = candidates
         .filter(a => a.pose != null)
         .map(a => toRow(a, from))
-        // Airborne first, then nearest.
-        .sort((a, b) => Number(a.onGround) - Number(b.onGround) || a.distanceNm - b.distanceNm)
+        // Airborne first, then nearest (in steps, keeping the last order).
+        .sort(
+          (a, b) =>
+            Number(a.onGround) - Number(b.onGround) ||
+            Math.floor(a.distanceNm / ORDER_STEP_NM) - Math.floor(b.distanceNm / ORDER_STEP_NM) ||
+            (order.get(a.hex) ?? Infinity) - (order.get(b.hex) ?? Infinity) ||
+            a.distanceNm - b.distanceNm
+        )
         .slice(0, MAX_ROWS)
+      previous.current = new Map(rows.map((row, i) => [row.hex, i]))
       setResult({ rows, total: candidates.length })
     }
     update()
@@ -186,6 +232,7 @@ export const AircraftList: FC<{
   const open = sheet || expanded
   const { rows, total } = useRows(query)
   const world = useWorldSearch(query)
+  const airports = useAirportSearch(query)
   const localHexes = new Set(rows.map(r => r.hex))
   const worldRows =
     world.status === 'done' ? world.response.results.filter(r => !localHexes.has(r.hex)) : []
@@ -241,12 +288,23 @@ export const AircraftList: FC<{
               // Keep F/W/S/Esc shortcuts from firing while typing.
               e.stopPropagation()
               if (e.key !== 'Enter') return
-              if (rows[0] != null) {
-                selectionStore.set({ selectedHex: rows[0].hex })
-                followAircraft(rows[0].hex)
-              } else if (worldRows[0] != null) {
-                jumpToResult(worldRows[0])
-              }
+              void loadAirports().then(list => {
+                const airport = exactAirport(list, query)
+                if (airport != null) {
+                  jumpToAirport(airport)
+                  setQuery('')
+                  return
+                }
+                if (rows[0] != null) {
+                  selectionStore.set({ selectedHex: rows[0].hex })
+                  followAircraft(rows[0].hex)
+                } else if (worldRows[0] != null) {
+                  jumpToResult(worldRows[0])
+                } else if (airports[0] != null) {
+                  jumpToAirport(airports[0])
+                  setQuery('')
+                }
+              })
             }}
           />
           {sheet && (
@@ -255,6 +313,34 @@ export const AircraftList: FC<{
             </div>
           )}
           <ul className='aircraft-rows'>
+            {airports.length > 0 && <li className='aircraft-section muted'>Airports</li>}
+            {airports.map(airport => (
+              <li key={`airport-${airport.icao}-${airport.iata}`}>
+                <button
+                  type='button'
+                  className='aircraft-row airport-row'
+                  title={`Fly to ${airport.name}`}
+                  onClick={() => {
+                    jumpToAirport(airport)
+                    setQuery('')
+                  }}
+                >
+                  <span className='airport-code'>{airport.iata !== '' ? airport.iata : airport.icao}</span>
+                  <span className='row-main'>
+                    <span className='row-label'>{airport.name}</span>
+                    <span className='row-detail muted'>
+                      {[airport.city, airport.country, airport.iata !== '' ? airport.icao : null]
+                        .filter(v => v != null && v !== '')
+                        .join(' · ')}
+                    </span>
+                  </span>
+                  <span className='row-numbers'>
+                    <span className='muted'>{fmt.format(distanceFromOriginNm(airport.lat, airport.lon))} nm</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+            {airports.length > 0 && rows.length > 0 && <li className='aircraft-section muted'>Aircraft</li>}
             {rows.map(row => (
               <li key={row.hex}>
                 <button
@@ -266,6 +352,11 @@ export const AircraftList: FC<{
                     followAircraft(row.hex)
                   }}
                 >
+                  <span
+                    className='row-dot'
+                    style={{ background: CATEGORY_COLORS[row.category] }}
+                    title={CATEGORY_LABELS[row.category]}
+                  />
                   <span className='row-main'>
                     <span className='row-label'>
                       {row.label}
@@ -292,7 +383,11 @@ export const AircraftList: FC<{
                 </button>
               </li>
             ))}
-            {rows.length === 0 && (
+            {rows.length === 0 && total > 0 && query.trim() === '' &&
+              [0, 1, 2, 3].map(i => (
+                <li key={`skeleton-${i}`} className='aircraft-row-skeleton' aria-hidden />
+              ))}
+            {rows.length === 0 && !(total > 0 && query.trim() === '') && airports.length === 0 && (
               <li className='aircraft-list-empty muted'>
                 {query.trim() !== ''
                   ? 'No matching aircraft in view.'
@@ -318,7 +413,7 @@ export const AircraftList: FC<{
                 ))}
               </li>
             )}
-            {world.status !== 'idle' && (
+            {world.status !== 'idle' && !(airports.length > 0 && worldRows.length === 0) && (
               <li className='aircraft-section muted'>
                 Worldwide
                 {world.status === 'loading' && ' · searching…'}
@@ -355,6 +450,18 @@ export const AircraftList: FC<{
               </li>
             ))}
           </ul>
+          {query.trim() === '' && rows.length > 0 && (
+            <div className='category-legend' aria-label='Map colors'>
+              {(Object.keys(CATEGORY_LABELS) as AircraftCategory[])
+                .filter(c => c !== 'other')
+                .map(c => (
+                  <span key={c}>
+                    <i style={{ background: CATEGORY_COLORS[c] }} />
+                    {CATEGORY_LABELS[c]}
+                  </span>
+                ))}
+            </div>
+          )}
         </>
       )}
     </div>
