@@ -1,5 +1,5 @@
 {
-  "$comment": "Map ICAO type designators to glTF/GLB files in this folder. Types without an entry use the procedural placeholder for their class. Model space: +Z forward (nose), +Y up, +X left wing, meters, origin near the center of gravity; use scale/rotationDeg/offset to adapt other conventions. Only add models you are licensed to redistribute (see README, Aircraft models). `classes` gives a fallback model per aircraft class; `fit` ([length, span] in meters as transformed) stretches a model to each type's real dimensions. `liveries` maps an airline's ICAO code (first three letters of the callsign) to a model and wins over `models` and `classes` for airliners.",
+  "$comment": "Map ICAO type designators to glTF/GLB files in this folder. Types without an entry use the procedural placeholder for their class. Model space: +Z forward (nose), +Y up, +X left wing, meters, origin near the center of gravity; use scale/rotationDeg/offset to adapt other conventions. Only add models you are licensed to redistribute (see README, Aircraft models). `classes` gives a fallback model per aircraft class; `fit` ([length, span] in meters as transformed) stretches a model to each type's real dimensions. `liveries` maps an airline's ICAO code (first three letters of the callsign) to a model and wins over `models` and `classes` for narrowbodies and regional jets; a livery's own `classes.widebody` is used for its widebodies, other widebodies use their type or class model.",
   "version": 1,
   "models": {},
   "classes": {
@@ -23,8 +23,8 @@
       "license": "User-provided (Meshy AI), Boeing 737-800 in Alaska Airlines livery"
     },
     "widebody": {
-      "url": "Meshy_AI_boeing_737_multiview__1009082523_texture.glb",
-      "scale": 19.75,
+      "url": "Meshy_AI_airbus_a350_delta_20261011.glb",
+      "scale": 33.4,
       "rotationDeg": [
         0,
         90,
@@ -32,14 +32,14 @@
       ],
       "offset": [
         0,
-        2.9,
-        3.0
+        4.55,
+        5.1
       ],
       "fit": [
-        39.5,
-        35.8
+        66.8,
+        63.7
       ],
-      "license": "User-provided (Meshy AI), Boeing 737-800 in Alaska Airlines livery"
+      "license": "User-provided (Meshy AI), Airbus A350-900 in Delta Air Lines livery"
     },
     "regional": {
       "url": "Meshy_AI_boeing_737_multiview__1009082523_texture.glb",
@@ -79,7 +79,28 @@
         39.5,
         35.8
       ],
-      "license": "User-provided (Meshy AI), Boeing 737-800 in Delta Air Lines livery"
+      "license": "User-provided (Meshy AI), Boeing 737-800 in Delta Air Lines livery",
+      "classes": {
+        "widebody": {
+          "url": "Meshy_AI_airbus_a350_delta_20261011.glb",
+          "scale": 33.4,
+          "rotationDeg": [
+            0,
+            90,
+            0
+          ],
+          "offset": [
+            0,
+            4.55,
+            5.1
+          ],
+          "fit": [
+            66.8,
+            63.7
+          ],
+          "license": "User-provided (Meshy AI), Airbus A350-900 in Delta Air Lines livery"
+        }
+      }
     },
     "EDV": {
       "url": "Meshy_AI_boeing_737_delta_accu_1009173138_texture.glb",

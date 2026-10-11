@@ -53,9 +53,16 @@ export interface ModelManifest {
   classes?: Partial<Record<AircraftClass, ModelEntry>>
   /**
    * By airline ICAO code (callsign prefix, e.g. "DAL"): the airline's
-   * livery. Wins over type and class models, for airliner classes only.
+   * livery. Wins over type and class models for narrowbodies and regional
+   * jets; widebodies use it only from `classes.widebody` (a 737 livery
+   * stretched to an A350 looked wrong), else their type or class model.
    */
-  liveries?: Record<string, ModelEntry>
+  liveries?: Record<string, LiveryEntry>
+}
+
+/** An airline's livery model, optionally with its own model per class. */
+export interface LiveryEntry extends ModelEntry {
+  classes?: Partial<Record<AircraftClass, ModelEntry>>
 }
 
 /** Classes that carry airline liveries. */
@@ -86,7 +93,11 @@ export function findModelEntry(
 ): ModelEntry | null {
   const airline = airlineCode(callsign)
   const livery = airline == null || !LIVERY_CLASSES.has(cls) ? undefined : manifest.liveries?.[airline]
-  if (livery != null) return livery
+  if (livery != null) {
+    const byClass = livery.classes?.[cls]
+    if (byClass != null) return byClass
+    if (cls !== 'widebody') return livery
+  }
   const own = typeCode == null ? undefined : manifest.models[typeCode.toUpperCase()]
   return own ?? manifest.classes?.[cls] ?? null
 }
