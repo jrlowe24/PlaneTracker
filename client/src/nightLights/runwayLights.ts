@@ -1,6 +1,7 @@
 import { ecefToGeodetic, geodeticToEcef, geoidHeight } from '@windowseat/shared'
 import { Raycaster, Vector3, Vector4 } from 'three'
 
+import { loadRunwayCatalog, type CatalogEntry } from '../data/runwayCatalog'
 import { peekGoogleTiles } from '../globe/googleTiles'
 
 import type { RunwayRecord } from './roadRaster.worker'
@@ -35,10 +36,8 @@ const CATALOG_RESCAN_MS = 1000
 const CATALOG_MATCH = 150
 /** Nearest-first, but bigger fields count as this much nearer (by lighting class). */
 const CLASS_WEIGHT = [1, 1.6, 2.5]
-const CATALOG_URL = '/runways/runways.json'
 
 /** A listed runway: lat, lon, lat, lon, lighting, elevation (m MSL or null) ×2. */
-type CatalogEntry = [number, number, number, number, number, number | null, number | null]
 
 interface Runway {
   a: Vector3
@@ -115,23 +114,18 @@ export class RunwayLights {
   }
 
   private async loadCatalog(): Promise<void> {
-    try {
-      const response = await fetch(CATALOG_URL)
-      if (!response.ok) return
-      const list = (await response.json()) as CatalogEntry[]
-      const centers = new Float64Array(list.length * 3)
-      list.forEach((r, i) => {
-        const p = geodeticToEcef((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, 0)
-        centers[i * 3] = p.x
-        centers[i * 3 + 1] = p.y
-        centers[i * 3 + 2] = p.z
-      })
-      this.catalog = list
-      this.catalogCenters = centers
-      this.lastScanAt = -Infinity
-    } catch {
-      // No list: runways come from the street data alone.
-    }
+    // An empty list (no catalog): runways come from the street data alone.
+    const list = await loadRunwayCatalog()
+    const centers = new Float64Array(list.length * 3)
+    list.forEach((r, i) => {
+      const p = geodeticToEcef((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, 0)
+      centers[i * 3] = p.x
+      centers[i * 3 + 1] = p.y
+      centers[i * 3 + 2] = p.z
+    })
+    this.catalog = list
+    this.catalogCenters = centers
+    this.lastScanAt = -Infinity
   }
 
   /** Takes in listed runways near the camera. */

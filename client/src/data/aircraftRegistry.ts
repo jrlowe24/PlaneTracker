@@ -17,6 +17,8 @@ export interface Attitude {
   pitch: number
   /** 0 airborne … 1 on the ground (smoothed). */
   ground: number
+  /** How much the last airborne pose followed a runway's glide path (0 … 1). */
+  glide: number
   /**
    * Visual error offset (meters north/east/up) that absorbs jumps when new
    * data contradicts the extrapolated path, decaying back to zero.
@@ -110,6 +112,7 @@ export class AircraftRegistry {
           bank: 0,
           pitch: 0,
           ground: 0,
+          glide: 0,
           errorN: 0,
           errorE: 0,
           errorU: 0,

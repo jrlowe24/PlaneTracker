@@ -3,6 +3,7 @@ import { Vector3 } from 'three'
 
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { AIRFRAMES } from './airframes'
+import { glidePath } from './approach'
 import {
   bankAngle,
   defaultMotionOptions,
@@ -77,6 +78,13 @@ const ERROR_SNAP = 3000
 const HEADING_TIME_CONSTANT = 0.6
 const BANK_TIME_CONSTANT = 1.6
 const PITCH_TIME_CONSTANT = 1.2
+/** On the ground, slower than this (m/s) the heading holds: position noise isn't a turn. */
+const GROUND_HOLD_SPEED = 2.5
+/** Below this speed, moving against the heading is a pushback, not a U-turn. */
+const PUSHBACK_SPEED = 4
+/** Tightest taxi turn radius, meters: caps the ground turn rate at speed / radius. */
+const MIN_TURN_RADIUS = 18
+const MAX_GROUND_TURN_RATE = 25
 /** Turn rate is measured over this look-ahead along the trajectory. */
 const TURN_RATE_WINDOW_MS = 2000
 
@@ -116,6 +124,19 @@ export function computePose(
   const track = trackOf(k.vn, k.ve)
   const first = !attitude.initialized
   attitude.initialized = true
+  const clearance = AIRFRAMES[aircraft.cls].groundClearance * aircraft.scale.length
+
+  // On final: follow the runway's glide path down to the surface instead of
+  // coarse reported heights (see approach.ts).
+  if (!k.onGround && detailed && track != null) {
+    const path = glidePath(k.lat, k.lon, track, k.height - clearance, k.vu, speed, aircraft.groundHeight)
+    const weight = path?.weight ?? 0
+    if (path != null) {
+      k.height += (path.height + clearance - k.height) * weight
+      k.vu += (path.verticalSpeed - k.vu) * weight
+    }
+    attitude.glide = weight
+  }
 
   let targetBank = 0
   let targetPitch = 0
@@ -135,12 +156,20 @@ export function computePose(
     attitude.pitch = targetPitch
   } else {
     if (track != null) {
-      attitude.heading =
-        (attitude.heading +
-          angleDifference(attitude.heading, track) *
-            smoothingFactor(dt, HEADING_TIME_CONSTANT) +
-          360) %
-        360
+      let turn = angleDifference(attitude.heading, track) * smoothingFactor(dt, HEADING_TIME_CONSTANT)
+      if (k.onGround) {
+        // Slow or reversing (pushback) ground traffic keeps its heading:
+        // its positions jitter in every direction. Taxiing, it turns no
+        // tighter than an aircraft can.
+        const reversing = speed < PUSHBACK_SPEED && Math.abs(angleDifference(attitude.heading, track)) > 120
+        if (speed < GROUND_HOLD_SPEED || reversing) {
+          turn = 0
+        } else {
+          const maxTurn = Math.min(MAX_GROUND_TURN_RATE, speed / MIN_TURN_RADIUS / DEG) * dt
+          turn = Math.max(-maxTurn, Math.min(maxTurn, turn))
+        }
+      }
+      attitude.heading = (attitude.heading + turn + 360) % 360
     }
     attitude.bank += (targetBank - attitude.bank) * smoothingFactor(dt, BANK_TIME_CONSTANT)
     attitude.pitch += (targetPitch - attitude.pitch) * smoothingFactor(dt, PITCH_TIME_CONSTANT)
@@ -160,7 +189,11 @@ export function computePose(
   attitude.ground = first
     ? groundTarget
     : attitude.ground + (groundTarget - attitude.ground) * smoothingFactor(dt, 0.8)
-  const clearance = AIRFRAMES[aircraft.cls].groundClearance * aircraft.scale.length
+  // Touching down off a glide path: the wheels are already on the surface.
+  if (k.onGround) {
+    if (attitude.glide > 0.5) attitude.ground = 1
+    attitude.glide = 0
+  }
   let height = k.height + clearance * attitude.ground
   // Never below the terrain (late data on short final, baro errors).
   if (aircraft.groundHeight != null) {
