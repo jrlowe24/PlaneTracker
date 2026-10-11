@@ -642,9 +642,15 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
   vec2 h = vec2(dot(n, east), dot(n, north));
   if (dot(h, h) < 1e-4) return vec3(0.0);
   h = normalize(h);
+  // Which way the wall faces, to the nearest of the anchor's east/north
+  // axes: the window grid runs along the other one.
+  bool facesEast = abs(h.x) > abs(h.y);
   // The building behind this wall: a few meters in (OSM footprints and
   // the photographed walls are often meters apart), the tallest found.
-  vec3 inward = east * h.x + north * h.y;
+  // Straight in along that axis, not along the measured normal: the
+  // normal wavers from pixel to pixel and frame to frame, and so did the
+  // building found (stripes of different buildings' windows, flickering).
+  vec3 inward = facesEast ? east * sign(h.x) : north * sign(h.y);
   float window = roadWindow[0];
   vec2 b = vec2(0.0);
   ivec2 tile = ivec2(0);
@@ -690,7 +696,6 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
   // photogrammetry normals; walls at an angle get somewhat wider windows).
   vec3 pl = offset - roadAnchor[0];
   float altitude = dot(pl, normalize(cross(east, north)));
-  bool facesEast = abs(h.x) > abs(h.y);
   float along = facesEast ? dot(pl, north) : dot(pl, east);
   uint side = facesEast ? (h.x > 0.0 ? 0u : 1u) : (h.y > 0.0 ? 2u : 3u);
   vec2 cellF = vec2((along + r2 * 7.0) / columnWidth, (altitude + r1 * 5.0) / floorHeight);
@@ -789,6 +794,25 @@ vec3 lightBeams(const vec3 offset, const vec3 normal) {
     sum += vec3(1.0, 0.96, 0.88) * beamPosition[i].w * cone * incidence / d2;
   }
   return sum;
+}
+
+/**
+ * Surface normal from the depth over two pixels each way, from the side
+ * of each axis that doesn't cross a depth edge. The one-pixel derivatives
+ * of the photographed meshes' depth are noisy enough to flip which way a
+ * wall seems to face from frame to frame (window grids jumping, windows
+ * flickering); the wider baseline holds still.
+ */
+vec3 wideNormal(const vec2 uv, const vec3 center) {
+  vec2 sx = vec2(texelSize.x * 2.0, 0.0);
+  vec2 sy = vec2(0.0, texelSize.y * 2.0);
+  vec3 l = offsetFromDepth(uv - sx, texture(depthBuffer, uv - sx).r);
+  vec3 r = offsetFromDepth(uv + sx, texture(depthBuffer, uv + sx).r);
+  vec3 d = offsetFromDepth(uv - sy, texture(depthBuffer, uv - sy).r);
+  vec3 u = offsetFromDepth(uv + sy, texture(depthBuffer, uv + sy).r);
+  vec3 ax = length(center - l) < length(r - center) ? center - l : r - center;
+  vec3 ay = length(center - d) < length(u - center) ? center - d : u - center;
+  return cross(ax, ay);
 }
 
 void main() {
@@ -908,12 +932,21 @@ void main() {
     light += beams;
     glow += lightLuminance(beams) * 0.15;
   }
-  // Lit windows on walls (not on roofs or the ground).
-  float wall = 1.0 - smoothstep(0.3, 0.55, upness);
-  if (windowGain > 0.0 && wall > 0.0 && normalLength > 1e-12) {
-    vec3 windows = buildingWindows(offset, normal, dX, dY) * windowGain * wall * night;
-    light += windows;
-    glow += lightLuminance(windows) * 0.25;
+  // Lit windows on walls (not on roofs or the ground), judged by the
+  // steadier wide normal (wideNormal).
+  if (windowGain > 0.0 && upness < 0.6) {
+    vec3 wallNormal = wideNormal(vUv, offset);
+    float wallLength = length(wallNormal);
+    if (wallLength < 1e-10) {
+      wallNormal = normal;
+      wallLength = normalLength;
+    }
+    float wall = wallLength > 1e-12 ? 1.0 - smoothstep(0.3, 0.55, abs(dot(wallNormal, up)) / wallLength) : 0.0;
+    if (wall > 0.0) {
+      vec3 windows = buildingWindows(offset, wallNormal, dX, dY) * windowGain * wall * night;
+      light += windows;
+      glow += lightLuminance(windows) * 0.25;
+    }
   }
   // Never NaN or infinite: one such pixel turns the whole glow (and with it
   // every light on screen) black.
