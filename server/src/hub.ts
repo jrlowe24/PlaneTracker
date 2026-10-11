@@ -19,7 +19,7 @@ import type { AircraftCache } from './cache'
 import { mergeViewports } from './regions'
 import type { RouteResolver } from './routes'
 import { ADSB_FI_ATTRIBUTION, type FollowFeed } from './sources/followFeed'
-import { OPENSKY_ATTRIBUTION, type OpenSkySnapshot } from './sources/openskySnapshot'
+import type { OverviewSource } from './sources/readsbSnapshot'
 import { OPEN_METEO_ATTRIBUTION, type WeatherService } from './weather'
 import type { FlightSource } from './sources/types'
 
@@ -129,7 +129,7 @@ export class Hub {
     private readonly routes: RouteResolver | null = null,
     private readonly followFeed: FollowFeed | null = null,
     private readonly weather: WeatherService | null = null,
-    private readonly overview: OpenSkySnapshot | null = null
+    private readonly overview: OverviewSource | null = null
   ) {
     this.options = { ...defaultHubOptions, ...options }
   }
@@ -190,7 +190,7 @@ export class Hub {
       attribution: this.source.attribution,
       attributionUrl: this.source.attributionUrl,
       followAttribution: this.followFeed == null ? null : ADSB_FI_ATTRIBUTION,
-      overviewAttribution: this.overview == null ? null : OPENSKY_ATTRIBUTION
+      overviewAttribution: this.overview?.attribution ?? null
     }
     socket.send(JSON.stringify(hello))
 

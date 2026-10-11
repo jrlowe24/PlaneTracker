@@ -1,6 +1,7 @@
 import type { Attribution, AircraftState } from '@windowseat/shared'
 
 import { USER_AGENT } from './adsbLol'
+import type { OverviewSource } from './readsbSnapshot'
 
 /**
  * Worldwide overview from the OpenSky Network: one `GET /api/states/all`
@@ -69,7 +70,8 @@ export function normalizeOpenSky(states: StateVector[], snapshotTime: number): A
   return out
 }
 
-export class OpenSkySnapshot {
+export class OpenSkySnapshot implements OverviewSource {
+  readonly attribution = OPENSKY_ATTRIBUTION
   private timer: NodeJS.Timeout | null = null
   private token: { value: string; expiresAt: number } | null = null
   private readonly clientId = process.env.OPENSKY_CLIENT_ID
