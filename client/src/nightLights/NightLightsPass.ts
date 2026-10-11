@@ -536,36 +536,69 @@ float wTint;
 
 /** A home window's light: warm bulbs mostly, some white LED, a TV's blue. */
 vec3 homeColor(const float r) {
-  return r < 0.55 ? vec3(1.0, 0.62, 0.32)
-    : r < 0.82 ? vec3(1.0, 0.8, 0.58)
-    : r < 0.94 ? vec3(0.86, 0.9, 1.0)
-    : vec3(0.42, 0.58, 1.0) * 0.5;
+  // Incandescent and warm LED behind curtains, mostly; a few cooler rooms
+  // and the odd blue TV glow.
+  return r < 0.45 ? vec3(1.0, 0.52, 0.22)
+    : r < 0.78 ? vec3(1.0, 0.62, 0.3)
+    : r < 0.93 ? vec3(1.0, 0.74, 0.46)
+    : r < 0.98 ? vec3(0.9, 0.86, 0.8)
+    : vec3(0.45, 0.6, 1.0) * 0.6;
+}
+
+vec3 officeColor(const float r) {
+  // Warm white for most floors, some amber, a few cool fluorescent ones.
+  return r < 0.5 ? vec3(1.0, 0.72, 0.42)
+    : r < 0.8 ? vec3(1.0, 0.8, 0.54)
+    : r < 0.92 ? vec3(1.0, 0.64, 0.34)
+    : vec3(0.82, 0.88, 1.0) * 0.85;
 }
 
 /** Width (columns) of a lit cluster: an office suite, an apartment. */
 float wCluster;
 
+/** Office tenants span this many floors (per building), lit together. */
+float wSpan;
+
+float hash01(const uvec2 v) {
+  return float(pcg2d(v).x & 0xffffu) / 65535.0;
+}
+
 /**
- * Whether the cluster holding this window cell is lit (a suite's or a
- * home's lights on): windows light in runs along a floor, the way real
- * towers show patches of lit offices among dark ones. xyz: its light's
- * color, w: 1 if lit.
+ * Whether the cluster holding this window cell is lit, and its light's
+ * color (w: 1 if lit).
+ *
+ * Offices: a tenant takes a few floors and its lights are on or off
+ * together, on every side of the tower, in one color; within a lit
+ * tenant nearly every floor and suite is on. Towers read as bands of lit
+ * floors among dark ones, as they do at night, rather than a scatter.
+ * Homes: each apartment (2-3 windows) on its own.
  */
 vec4 cluster(const ivec2 cell) {
   int block = int(floor(float(cell.x) / wCluster));
-  uvec2 h = pcg2d(uvec2(uint(block + 65536) + wSide * 131071u, uint(cell.y + 65536)) ^ (wBuilding * 2246822519u));
+  uvec2 building = wBuilding * 2246822519u;
+  if (wOffice) {
+    uint span = uint(int(floor(float(cell.y) / wSpan)) + 65536);
+    uvec2 tenant = pcg2d(uvec2(span, 7u) ^ building);
+    float pTenant = clamp(wShare / (0.9 * 0.92 * 0.9), 0.0, 1.0);
+    bool on = float(tenant.x & 0xffffu) / 65535.0 < pTenant;
+    uvec2 suite = uvec2(uint(block + 65536) + wSide * 131071u, uint(cell.y + 65536)) ^ building;
+    if (!on) {
+      // A late worker here and there on a dark floor.
+      if (hash01(suite ^ uvec2(17u, 3u)) >= 0.03) return vec4(0.0);
+    } else {
+      if (hash01(uvec2(uint(cell.y + 65536), 11u) ^ building) >= 0.9) return vec4(0.0);
+      if (hash01(suite) >= 0.92) return vec4(0.0);
+    }
+    return vec4(officeColor(float(tenant.y & 0xffffu) / 65535.0), 1.0);
+  }
+  uvec2 h = pcg2d(uvec2(uint(block + 65536) + wSide * 131071u, uint(cell.y + 65536)) ^ building);
   if (float(h.x & 0xffffu) / 65535.0 >= wShare) return vec4(0.0);
-  float r = float(h.y & 0xffffu) / 65535.0;
-  // Mostly warm white (as offices look at night), some neutral, a few cool.
-  vec3 color = wOffice
-    ? (r < 0.6 ? vec3(1.0, 0.84, 0.6) : r < 0.9 ? vec3(1.0, 0.93, 0.8) : vec3(0.85, 0.92, 1.0))
-    : homeColor(r);
-  return vec4(color, 1.0);
+  return vec4(homeColor(float(h.y & 0xffffu) / 65535.0), 1.0);
 }
 
 /** Share of a lit cluster's windows that are lit (rooms, desks left dark). */
 float clusterFill() {
-  return wOffice ? 0.85 : 0.7;
+  return wOffice ? 0.9 : 0.7;
 }
 
 /**
@@ -595,7 +628,7 @@ vec3 windowPoints(const vec2 cellF, const vec2 w, const float k, const float are
       if (k > wCluster) {
         // Many clusters per group: lit by chance, in a typical color.
         if (float(h.x & 0xffffu) / 65535.0 >= anyLit) continue;
-        lit = vec4(wOffice ? vec3(1.0, 0.86, 0.64) : vec3(1.0, 0.7, 0.42), 1.0);
+        lit = vec4(wOffice ? vec3(1.0, 0.74, 0.46) : vec3(1.0, 0.58, 0.28), 1.0);
       }
       if (lit.w <= 0.0) continue;
       vec2 jitter = vec2(float(h.x >> 16u), float(h.y & 0xffffu)) / 65535.0;
@@ -613,13 +646,11 @@ vec3 windowAt(const ivec2 cell) {
   float rw = float(hw.x & 0xffffu) / 65535.0;
   float rc = float(hw.y & 0xffffu) / 65535.0;
   vec4 lit = cluster(cell);
-  if (lit.w <= 0.0) {
-    // A rare light on in a dark office floor.
-    return wOffice && rw < 0.01 ? vec3(1.0, 0.9, 0.72) * 0.6 : vec3(0.0);
-  }
+  if (lit.w <= 0.0) return vec3(0.0);
   if (rw >= clusterFill()) return vec3(0.0);
-  // Curtains and blinds dim many home windows; offices are evenly lit.
-  return lit.rgb * (wOffice ? mix(0.65, 0.9, rc) : mix(0.3, 1.0, rc));
+  // Curtains, blinds and lamps vary home windows a lot (many a dim glow);
+  // office floors are evenly lit, a little brighter near the core.
+  return lit.rgb * (wOffice ? mix(0.7, 0.95, rc) : mix(0.22, 1.0, rc * rc));
 }
 
 /**
@@ -718,7 +749,9 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
   wSide = side;
   wTint = r1;
   // Suites of 4-10 windows; homes of 2-3.
-  wCluster = office ? floor(mix(4.0, 10.99, fract(r2 * 7.31))) : floor(mix(2.0, 3.99, fract(r2 * 7.31)));
+  // Office suites span much of a floor (6-14 windows); homes 2-3.
+  wCluster = office ? floor(mix(6.0, 14.99, fract(r2 * 7.31))) : floor(mix(2.0, 3.99, fract(r2 * 7.31)));
+  wSpan = floor(mix(2.0, 5.99, fract(r1 * 5.71)));
 
   // Up close, an exact box filter: the share of this pixel (in cell
   // units, w wide) each window opening covers, over the up to 2x2 cells
@@ -976,7 +1009,7 @@ function litShare(table: readonly number[], hour: number): number {
 }
 
 /** Lit windows' brightness (relative to the street lamps' lampGain). */
-const WINDOW_GAIN = 0.02
+const WINDOW_GAIN = 0.013
 
 /** Glow around night lights (blurred light added to them). */
 const NIGHT_GLOW = 0.45
