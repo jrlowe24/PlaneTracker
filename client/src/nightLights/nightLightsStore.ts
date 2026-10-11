@@ -18,8 +18,11 @@ export const nightEmission: {
   texture: Texture | null
   enabled: boolean
   roads: RoadLightTiles | null
+  /** NASA's coarse night light map (equirectangular), once loaded. */
+  baseMap: Texture | null
 } = {
   texture: null,
   enabled: false,
-  roads: null
+  roads: null,
+  baseMap: null
 }

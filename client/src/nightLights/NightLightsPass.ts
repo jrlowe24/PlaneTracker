@@ -919,12 +919,10 @@ const WINDOW_GAIN = 0.02
 const NIGHT_GLOW = 0.45
 
 /**
- * Adds the lights' glow, and writes the cloud underglow into alpha: how
- * much city light rises under the cloud seen at this pixel, from NASA's
- * map (its coarse base, ~5 km: light spreads under a cloud deck) at the
- * ground point beneath it. Looking down, that's the terrain behind the
- * cloud; looking up, where the view ray meets the low cloud base.
- * AerialPerspective (patched) lights cloud with it, by cloud opacity.
+ * Adds the lights' glow, and writes the cloud underglow into alpha: seen
+ * from above a deck, how much of the city's light below diffuses up
+ * through the cloud at this pixel. AerialPerspective (patched) lights
+ * cloud with it, by cloud opacity.
  */
 const COMBINE_SHADER = /* glsl */ `
 precision highp float;
@@ -956,34 +954,20 @@ const float THROUGH_CLOUD_FULL = 0.006;
 
 float underglow(const vec3 blurredLight) {
   if (cloudBaseRadius <= 0.0) return 0.0;
+  // Below the base, the clouds light their own bases with the city's glow,
+  // volumetrically (clouds/nightClouds.ts).
+  if (dot(cameraPositionECEF, cameraPositionECEF) < cloudBaseRadius * cloudBaseRadius) return 0.0;
+  // Above it: the cloud lies over the terrain seen through it, and the
+  // city's own lights there diffuse up through it: the blurred lights at
+  // this pixel (bright over streets, dark over water and parks), not NASA's
+  // coarse map, which lit far decks as an even wash that hid the city and
+  // didn't follow its lights.
   float depth = texture(depthBuffer, vUv).r;
-  vec3 ground;
-  float c = dot(cameraPositionECEF, cameraPositionECEF) - cloudBaseRadius * cloudBaseRadius;
-  if (c < 0.0) {
-    // Below the base: the cloud seen is where the ray meets the base
-    // (anything farther, terrain or stars, is behind it).
-    vec3 dir = normalize(viewOffset(vUv, 0.5));
-    float b = dot(cameraPositionECEF, dir);
-    float t = -b + sqrt(max(b * b - c, 0.0));
-    ground = cameraPositionECEF + dir * t;
-  } else {
-    // Above it: the cloud lies over the terrain seen through it, and the
-    // city's own lights there diffuse up through it: the blurred lights
-    // at this pixel (bright over streets, dark over water and parks), not
-    // NASA's coarse map, which lit far decks as an even wash that hid the
-    // city and didn't follow its lights.
-    if (depth >= 0.9999999) return 0.0;
-    ground = cameraPositionECEF + viewOffset(vUv, depth);
-    float nightAbove = smoothstep(0.06, -0.08, dot(normalize(ground), sunDirection));
-    float light = dot(blurredLight, vec3(0.2126, 0.7152, 0.0722));
-    return min(1.0, light / THROUGH_CLOUD_FULL) * nightAbove;
-  }
-  float lon = atan(ground.y, ground.x);
-  float lat = atan(ground.z, length(ground.xy) * (1.0 - 0.00669438));
-  vec2 deg = vec2(degrees(lon) + 180.0, 90.0 - degrees(lat));
-  float value = texture(baseMap, deg / vec2(360.0, 180.0)).r;
-  float night = smoothstep(0.06, -0.08, dot(normalize(ground), sunDirection));
-  return value * value * night;
+  if (depth >= 0.9999999) return 0.0;
+  vec3 ground = cameraPositionECEF + viewOffset(vUv, depth);
+  float nightAbove = smoothstep(0.06, -0.08, dot(normalize(ground), sunDirection));
+  float light = dot(blurredLight, vec3(0.2126, 0.7152, 0.0722));
+  return min(1.0, light / THROUGH_CLOUD_FULL) * nightAbove;
 }
 
 void main() {

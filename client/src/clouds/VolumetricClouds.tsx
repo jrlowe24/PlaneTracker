@@ -1,18 +1,20 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import type { CloudsEffect } from '@takram/three-clouds'
 import { Clouds } from '@takram/three-clouds/r3f'
+import { AtmosphereContext } from '@takram/three-atmosphere/r3f'
 import {
   cloudLayersFromWeather,
   ecefToGeodetic,
   geoidHeight,
   type CloudWeatherSpec
 } from '@windowseat/shared'
-import { useEffect, useMemo, useRef, type FC } from 'react'
+import { useContext, useEffect, useMemo, useRef, type FC } from 'react'
 import { Quaternion, Vector3, type ShaderMaterial, type Texture } from 'three'
 
 import { lightAnchor } from '../aircraft/lightAnchor'
 import { smoothingFactor } from '../aircraft/motion'
 import { weatherStore } from '../data/weather'
+import { nightEmission } from '../nightLights/nightLightsStore'
 import { useStore } from '../state/createStore'
 import { qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
@@ -21,6 +23,7 @@ import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
 import { marchRefine, patchCloudsMarch } from './marchShader'
+import { installNightClouds, patchNightClouds } from './nightClouds'
 import { patchCloudsResolve, RegionalCoverageController } from './regionalShader'
 
 /**
@@ -32,8 +35,10 @@ import { patchCloudsResolve, RegionalCoverageController } from './regionalShader
 const FADE_START_ALTITUDE = 25_000
 const FADE_END_ALTITUDE = 70_000
 const SHADOW_MAX_FAR = 40_000
-/** Cloud resolution at night, relative to the preset's. */
+/** Cloud resolution on dark nights, relative to the preset's. */
 const NIGHT_RESOLUTION = 0.7
+/** Moonlight (nightState.moon) above which night clouds keep full resolution. */
+const MOONLIT = 0.003
 
 /**
  * Drops the clouds' temporal history after a camera cut or a resolution
@@ -152,6 +157,7 @@ interface CloudsPassInternals {
 
 export const VolumetricClouds: FC = () => {
   const camera = useThree(({ camera }) => camera)
+  const { transientStates } = useContext(AtmosphereContext)
   const preset = useStore(qualityStore, s => s.settings)
   const coverageTexture = useMemo(() => new CoverageTexture(), [])
   const regional = useMemo(() => new RegionalCoverageController(), [])
@@ -195,11 +201,13 @@ export const VolumetricClouds: FC = () => {
     // fade), which costs next to nothing.
     effect.skipRendering = false
     historyReset.update(effect, camera.position, camera.quaternion)
-    // At night the clouds only show as dim underglow and moonlight: render
-    // them coarser (hysteresis so dusk doesn't reallocate back and forth).
+    // On dark nights the clouds only show as dim starlight and city glow:
+    // render them coarser (hysteresis so dusk doesn't reallocate back and forth).
     if (!dark.current && nightState.night > 0.95) dark.current = true
     else if (dark.current && nightState.night < 0.75) dark.current = false
-    const resolution = qualityStore.get().settings.cloudResolution * (dark.current ? NIGHT_RESOLUTION : 1)
+    // Moonlit clouds show their shape and edges again: full resolution.
+    const coarse = dark.current && nightState.moon < MOONLIT
+    const resolution = qualityStore.get().settings.cloudResolution * (coarse ? NIGHT_RESOLUTION : 1)
     const scale = cloudDepth.fade > 0 ? resolution : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
@@ -349,6 +357,10 @@ export const VolumetricClouds: FC = () => {
         if (march != null && !patchCloudsMarch(march)) {
           console.warn('[clouds] march refinement patch did not apply')
         }
+        if (march != null && !patchNightClouds(march)) {
+          console.warn('[clouds] night light patch did not apply')
+        }
+        installNightClouds(effect, camera, () => transientStates?.moonDirection ?? null, () => nightEmission.baseMap)
         if (import.meta.env.DEV) (window as { __cloudMarchRefine?: typeof marchRefine }).__cloudMarchRefine = marchRefine
         const resolve = passes.cloudsPass?.resolveMaterial
         if (resolve != null && !patchCloudsResolve(resolve)) {

@@ -46,6 +46,7 @@ class NightLightsController {
     void this.tiles.load().then(ok => {
       if (!ok) return
       this.effect.setMaps(this.tiles.base, this.tiles.detail)
+      nightEmission.baseMap = this.tiles.base
       this.ready = true
     })
   }
@@ -134,6 +135,7 @@ class NightLightsController {
       nightEmission.enabled = false
       nightEmission.roads = null
     }
+    if (nightEmission.baseMap === this.tiles.base) nightEmission.baseMap = null
     this.effect.dispose()
     this.tiles.dispose()
     this.roads?.dispose()

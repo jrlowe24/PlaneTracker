@@ -22,7 +22,9 @@ export const nightState = {
   sky: new Vector3(),
   exposureGain: 1,
   /** 0 by day, 1 at full night (sun ≥ ~12° below the horizon). */
-  night: 0
+  night: 0,
+  /** Moonlight irradiance (phase, elevation and night included). */
+  moon: 0
 }
 
 /** Irradiance of a full moon high in the sky (renderer units; sun ≈ 1.5). */
@@ -32,9 +34,9 @@ const FULL_MOON = 0.012
  * adaptation a moonless night reads at ~1/30 of daylight, so terrain stays
  * faintly legible.
  */
-const STARLIGHT = 0.002
-const MOON_TINT = new Vector3(0.82, 0.9, 1.0)
-const STAR_TINT = new Vector3(0.6, 0.72, 1.0)
+export const STARLIGHT = 0.002
+export const MOON_TINT = new Vector3(0.82, 0.9, 1.0)
+export const STAR_TINT = new Vector3(0.6, 0.72, 1.0)
 const SKY_GLOW = new Vector3(0.00008, 0.00013, 0.0003)
 /** Exposure multiplier at full night. */
 const MAX_GAIN = 4
@@ -65,6 +67,7 @@ export function updateNightLighting(
   const moon = FULL_MOON * phase * moonUp * night
   const stars = STARLIGHT * night
   nightState.ambient.copy(MOON_TINT).multiplyScalar(moon).addScaledVector(STAR_TINT, stars)
+  nightState.moon = moon
   nightState.sky.copy(SKY_GLOW).multiplyScalar(night * (1 + 4 * phase * moonUp))
 
   const targetGain = 1 + (MAX_GAIN - 1) * night

@@ -147,13 +147,11 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
       'shadowLength = texture(shadowLengthBuffer, uv).r;',
       'shadowLength = texture(shadowLengthBuffer, uv).r * cloudFade;\n  if (isAircraftPixel(uv)) shadowLength = 0.0;'
     )
-    // Clouds get no light at night from takram (sun and sky only), so they
-    // render as black slabs cutting through the scene. Light them with the
-    // same moonlight/starlight as the ground (perceptually tuned below their
-    // ~0.9 albedo so they read as moonlit, not overcast day), by opacity.
+    // Clouds march their own night light: moon, starlight and city glow
+    // (nightClouds.ts).
     .replace(
       'vec4 overlay = texture(overlayBuffer, uv);',
-      'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (any(isnan(overlay)) || any(isinf(overlay))) overlay = vec4(0.0);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightAmbient * 0.35 * RECIPROCAL_PI;\n  overlay.rgb += overlay.a * nightEmissionOn * texture(nightEmissionBuffer, uv).a * CLOUD_UNDERGLOW;'
+      'vec4 overlay = texture(overlayBuffer, uv) * cloudFade;\n  if (any(isnan(overlay)) || any(isinf(overlay))) overlay = vec4(0.0);\n  if (isAircraftPixel(uv)) {\n    if (!cloudInFrontOfAircraft(uv)) overlay = vec4(0.0);\n  } else {\n    overlay = overlayAroundAircraft(uv, overlay);\n  }\n  overlay.rgb += overlay.a * nightEmissionOn * texture(nightEmissionBuffer, uv).a * CLOUD_UNDERGLOW;'
     )
     // Volumetric clouds fade out with camera altitude (and stop rendering,
     // leaving stale buffers): fade their overlay, shadows and shafts too.
@@ -181,7 +179,7 @@ function patchNightLight(effect: AerialPerspectiveEffect): void {
     )
   if (
     (shader.match(/nightAmbient|nightSky|cloudInFrontOfAircraft|overlayAroundAircraft|nightEmissionBuffer, uv|vec4\(radiance, 1\.0\)|cloudFade|sunTransmittance, 0\.35/g) ?? [])
-      .length < 16
+      .length < 15
   ) {
     // takram's shader changed: night light only partly applied.
     console.warn('[night] AerialPerspective shader patch did not fully apply')
