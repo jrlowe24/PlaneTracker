@@ -849,18 +849,26 @@ void main() {
   vec3 glowing = pools * roadGain * albedo.rgb + lamps * lampGain * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
 
   // Residential carpet where only the coarse level's main roads are drawn,
-  // and a faint glow beyond every window.
+  // and beyond the street tiles (not loaded yet, or past the windows): the
+  // same world-fixed scatter of lamps, so the far city has the texture of
+  // the near one instead of a flat, straight-edged wash at the tiles'
+  // edge. A faint even glow only where there's no coarse grid at all
+  // (very high up).
   // Sparser where NASA's map is dimmer: suburbs thin out to the dark edges.
   float density = pow(smoothstep(0.12, 0.8, value), 1.5) * 0.3;
   float land = 1.0 - waterScore(albedo.rgb);
-  if (coarse > 0.0) {
-    vec3 c = carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * coarse * land;
+  bool coarseGrid = roadEnabled[${ROAD_LEVELS - 1}] > 0.5;
+  float carpetShare = coarse + (coarseGrid ? remaining : 0.0);
+  if (carpetShare > 0.0) {
+    vec3 c = carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * carpetShare * land;
     lit += c;
     glowing += c * glowShare(0.5 / max(0.35, 0.6 * footprint));
   }
-  vec3 average = vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
-  lit += average;
-  glowing += average;
+  if (!coarseGrid) {
+    vec3 average = vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
+    lit += average;
+    glowing += average;
+  }
 
   // Brighter where NASA's map is: downtown cores stand out from suburbs
   // instead of one even sheet of light across the metro area.
