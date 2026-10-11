@@ -3,6 +3,7 @@ import { ecefToGeodetic, geoidHeight } from '@windowseat/shared'
 import { useEffect, useMemo, useRef, useState, type FC } from 'react'
 
 import { config } from '../config'
+import { setAirportDetailBoost } from '../globe/airportDetail'
 import { getGoogleTiles, setTileCacheBytes } from '../globe/googleTiles'
 import { useStore } from '../state/createStore'
 import { qualityStore, stepDownAuto } from '../state/quality'
@@ -192,6 +193,8 @@ export const QualityApplier: FC = () => {
     if (config.tilesDisabled) return
     const tiles = getGoogleTiles({ apiKey: config.googleMapsApiKey })
     tiles.errorTarget = preset.tileErrorTarget * tileFactor * (dark ? NIGHT_TILE_FACTOR : 1)
+    // ...except around airports, where the night is spent looking.
+    setAirportDetailBoost(dark ? NIGHT_TILE_FACTOR : 1)
     setTileCacheBytes(tiles, preset.tileCacheBytes)
     // Distant terrain gets coarser tiles than the target: it's small, in
     // haze, and away from where you look, and it's where most tiles go in

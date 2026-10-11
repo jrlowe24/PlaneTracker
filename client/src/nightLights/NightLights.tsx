@@ -122,13 +122,30 @@ class NightLightsController {
     }
   }
 
-  /** Set after update() threw: the lights stay off for this page load. */
-  failed = false
+  /**
+   * After update() threw, the lights are off until `retryAt` (ms), then
+   * tried again, waiting longer after each failure (1 s … 30 s): a passing
+   * error (a tile or worker hiccup) used to leave them off for the rest of
+   * the page load.
+   */
+  private failures = 0
+  private retryAt = 0
 
-  fail(): void {
-    this.failed = true
+  get failed(): boolean {
+    return performance.now() < this.retryAt
+  }
+
+  fail(error: unknown): void {
+    this.failures += 1
+    this.retryAt = performance.now() + Math.min(30_000, 1000 * 2 ** (this.failures - 1))
     this.effect.enabled = false
     nightEmission.enabled = false
+    ;(window as { __windowSeatNightLightsError?: unknown }).__windowSeatNightLightsError = error
+  }
+
+  /** A frame went through: the next failure waits from 1 s again. */
+  succeeded(): void {
+    this.failures = 0
   }
 
   dispose(): void {
@@ -183,11 +200,12 @@ export const NightLights: FC = () => {
     if (transientStates == null || controller.failed) return
     try {
       controller.update(camera, transientStates, delta, gl)
+      controller.succeeded()
     } catch (error) {
       // An error thrown here stops the whole render loop (a frozen globe):
-      // switch the night lights off instead and keep going.
-      console.error('[night lights] disabled after an error', error)
-      controller.fail()
+      // switch the night lights off for a moment instead and keep going.
+      console.error('[night lights] off after an error; retrying', error)
+      controller.fail(error)
     }
   })
   return <primitive object={controller.effect} dispose={null} />

@@ -198,6 +198,10 @@ const int QUIET_FLAG = 16;
 /** 0 in busy areas … 1 in quiet ones (NASA's map), set per pixel. */
 float quietness;
 
+/** Narrowest lamp drawn (pixels, gaussian radius). */
+const float MIN_LAMP_PIXELS = 1.1;
+float sq(const float x) { return x * x; }
+
 float lampFade(const float radius) {
   float share = 0.5 / radius;
   return min(1.0, pow(share, 0.9) * pow(min(1.0, share / 0.1), 0.7));
@@ -224,8 +228,11 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
   mat2 toPixel = inverse(toTexel);
   // Fixture ~0.7 m; drawn at least ~1 px, dimmed as that outgrows it.
   float physical = 0.35 / max(footprint, 1e-3);
-  float core = max(0.8, physical);
-  float fade = distantFade(physical / 0.8);
+  // Never narrower than MIN_LAMP_PIXELS: a smaller dot is bright on a pixel
+  // center and gone between them, so distant lamps twinkled as the camera
+  // moved. Widened lamps are dimmed to keep the same light.
+  float core = max(MIN_LAMP_PIXELS, physical);
+  float fade = distantFade(physical / 0.8) * sq(max(0.8, physical) / core);
   // The 3x3 cell search reaches about a texel from this pixel in every
   // direction: radii (pixels) beyond that would be clipped into dashes
   // where a pixel spans a lot of ground (grazing views).
@@ -254,11 +261,11 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
       // aircraft: much brighter, with a few pixels of glare, and they carry
       // farther.
       bool airfield = index >= AIRFIELD;
-      float r = min(airfield ? max(0.8, physical * 0.6) : core, reach);
+      float r = min(airfield ? max(MIN_LAMP_PIXELS, physical * 0.6) : core, reach);
       float glare = min(r + 2.0, reach);
       // Airfield lights (taxiways here; runways are drawn exactly) fade
       // slower than streets, so they read from farther off (airfieldK).
-      float k = airfield ? airfieldK(physical / 0.8) : fade;
+      float k = airfield ? airfieldK(physical / 0.8) * sq(max(0.8, physical * 0.6) / max(MIN_LAMP_PIXELS, physical * 0.6)) : fade;
       float spot = exp(-d * d / (r * r));
       float light = spot * (airfield ? airfieldBoost(physical / 0.8) : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.08 : 0.06);
       vec3 contribution = LAMP_COLORS[index] * lamp.a * k * light;
@@ -290,13 +297,21 @@ uvec2 pcg2d(uvec2 v) {
  * level (world-fixed cells), lit with a probability following how bright
  * NASA's map says the area is.
  */
-vec3 carpet(const int level, const vec2 local, const float footprint, const float density) {
-  float meters = roadTexelMeters[level];
+vec3 carpet(const int level, const vec2 local, const float footprint, const float density, const vec3 dX, const vec3 dY) {
   vec2 texel = local * float(TILE);
   ivec2 base = ivec2(floor(texel));
   ivec2 origin = ivec2(roadOrigin[level]) * TILE;
-  float radius = max(0.35, 0.6 * footprint);
-  float fade = lampFade(radius);
+  // Sized on screen (pixels, like nearLamps): measured on the ground, the
+  // dots shrank to slivers at grazing angles and twinkled in motion.
+  vec4 m = roadMercator[level];
+  mat2 toTexel = float(TILE) * mat2(
+    m.z * dot(dX, roadEast[level]), -m.w * dot(dX, roadNorth[level]),
+    m.z * dot(dY, roadEast[level]), -m.w * dot(dY, roadNorth[level]));
+  if (abs(determinant(toTexel)) < 1e-8) return vec3(0.0);
+  mat2 toPixel = inverse(toTexel);
+  float drawn = max(0.35 / max(footprint, 1e-3), 0.6);
+  float radius = max(drawn, MIN_LAMP_PIXELS);
+  float fade = lampFade(max(0.35, 0.6 * footprint)) * sq(drawn / radius);
   vec3 sum = vec3(0.0);
   for (int dy = -1; dy <= 1; ++dy) {
     for (int dx = -1; dx <= 1; ++dx) {
@@ -305,7 +320,7 @@ vec3 carpet(const int level, const vec2 local, const float footprint, const floa
       vec2 r = vec2(h & 0xffffu) / 65535.0;
       if (r.x >= density) continue;
       vec2 position = vec2(c) + 0.15 + 0.7 * vec2(fract(r.y * 7.13), fract(r.y * 13.7));
-      float d = length(texel - position) * meters;
+      float d = length(toPixel * (position - texel));
       float i = 0.7 + 0.8 * fract(r.y * 31.1);
       vec3 color = fract(r.y * 3.7) < 0.55 ? LAMP_COLORS[1] : LAMP_COLORS[2];
       sum += color * i * fade * exp(-d * d / (radius * radius));
@@ -577,7 +592,9 @@ float clusterFill() {
  * points stay put. Groups wider than a cluster are lit by chance.
  */
 vec3 windowPoints(const vec2 cellF, const vec2 w, const float k, const float area) {
-  const float RADIUS = 0.7;
+  // At least about a pixel wide: narrower points twinkle as they cross
+  // pixel centers in motion (peak below keeps their light the same).
+  const float RADIUS = 0.95;
   float clusters = max(1.0, k / wCluster) * k;
   float anyLit = k > wCluster ? 1.0 - pow(1.0 - wShare, clusters) : 1.0;
   if (anyLit <= 0.001) return vec3(0.0);
@@ -884,7 +901,7 @@ void main() {
   bool coarseGrid = roadEnabled[${ROAD_LEVELS - 1}] > 0.5;
   float carpetShare = coarse + (coarseGrid ? remaining : 0.0);
   if (carpetShare > 0.0) {
-    vec3 c = carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * carpetShare * land;
+    vec3 c = carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density, dX, dY) * lampGain * carpetShare * land;
     lit += c;
     glowing += c * glowShare(0.5 / max(0.35, 0.6 * footprint));
   }

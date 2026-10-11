@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, type FC } from 'react'
 import { Vector2, type Object3D } from 'three'
 
 import { getGoogleTiles, tileResolutionScale } from './googleTiles'
+import { installAirportDetail } from './airportDetail'
 import { setLoadOrder, updateLoadOrderView } from './loadOrder'
 import { TileLookahead, TileSurround } from './lookahead'
 import type { TileNormalsPlugin } from './TileNormalsPlugin'
@@ -36,6 +37,7 @@ export const GoogleTilesGlobe: FC<GoogleTilesGlobeProps> = ({
 
   useLayoutEffect(() => {
     setLoadOrder(tiles, true)
+    installAirportDetail(tiles)
   }, [tiles])
 
   useLayoutEffect(() => {
