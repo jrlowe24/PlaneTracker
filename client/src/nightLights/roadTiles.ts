@@ -14,7 +14,6 @@ import {
 
 import type { RoadRasterRequest, RoadRasterResponse } from './roadRaster.worker'
 import { RunwayLights } from './runwayLights'
-import { AirportFloodLightController } from './AirportFloodLights'
 
 /**
  * Street, area and airport lighting from OpenStreetMap (OpenFreeMap vector
@@ -268,8 +267,6 @@ export class RoadLightTiles {
   private readonly buildingLayers: number
   /** Whole runways seen in the tiles, lit exactly by the shader. */
   readonly runways = new RunwayLights()
-  /** Elevated high-mast lights derived from detailed apron polygons. */
-  readonly floodlights = new AirportFloodLightController()
   /** False until OpenFreeMap's tile URL is known; stays false if it fails. */
   available = false
   private template: string | null = null
@@ -448,7 +445,6 @@ export class RoadLightTiles {
     if (entry == null) return
     this.pending.delete(response.id)
     if (response.runways != null) this.runways.add(response.runways)
-    if (response.floodlights != null) this.floodlights.add(response.floodlights)
     const { level, slot, key } = entry
     const s = level.slots[slot]!
     if (response.pixels == null || response.lamps == null || response.water == null) {
@@ -543,6 +539,5 @@ export class RoadLightTiles {
     this.lamps.dispose()
     this.buildings.dispose()
     this.water.dispose()
-    this.floodlights.clear()
   }
 }

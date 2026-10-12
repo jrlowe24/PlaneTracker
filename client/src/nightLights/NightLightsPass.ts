@@ -22,10 +22,6 @@ import {
 import { WINDOW_TILES } from './nightLightTiles'
 import { MAX_WINDOW, ROAD_LEVELS, ROAD_TILE_SIZE, type RoadLevelUniforms } from './roadTiles'
 import { MAX_RUNWAYS, type RunwayUniforms } from './runwayLights'
-import {
-  airportFloodLights,
-  MAX_AIRPORT_FLOOD_LIGHTS
-} from './AirportFloodLights'
 import { lightBeams, MAX_LIGHT_BEAMS } from '../aircraft/navLightsStore'
 
 const drawingBuffer = new Vector2()
@@ -94,9 +90,6 @@ uniform vec4 runwayApproach[${MAX_RUNWAYS}];
 uniform int beamCount;
 uniform vec4 beamPosition[${MAX_LIGHT_BEAMS}];
 uniform vec4 beamDirection[${MAX_LIGHT_BEAMS}];
-uniform int airportFloodLightCount;
-uniform vec4 airportFloodLightPosition[${MAX_AIRPORT_FLOOD_LIGHTS}];
-uniform vec3 airportFloodLightColor[${MAX_AIRPORT_FLOOD_LIGHTS}];
 
 const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
 const int ROAD_STRIDE = ${MAX_WINDOW * MAX_WINDOW};
@@ -843,25 +836,6 @@ vec3 lightBeams(const vec3 offset, const vec3 normal) {
   return sum;
 }
 
-/** Elevated high-mast apron lights, evaluated against the actual surface. */
-vec3 airportFloodLightIrradiance(const vec3 offset, const vec3 normal) {
-  vec3 sum = vec3(0.0);
-  for (int i = 0; i < ${MAX_AIRPORT_FLOOD_LIGHTS}; ++i) {
-    if (i >= airportFloodLightCount) break;
-    vec4 light = airportFloodLightPosition[i];
-    vec3 toLight = light.xyz - offset;
-    float d2 = max(dot(toLight, toLight), 25.0);
-    float reach = clamp(1.0 - d2 / (light.w * light.w), 0.0, 1.0);
-    if (reach <= 0.0) continue;
-    vec3 direction = toLight * inversesqrt(d2);
-    // Photogrammetry triangles can have either winding. The light still
-    // reaches vertical gate walls, roofs and the apron beneath the mast.
-    float incidence = max(0.08, abs(dot(normal, direction)));
-    sum += airportFloodLightColor[i] * reach * reach * incidence / d2;
-  }
-  return sum;
-}
-
 /**
  * Surface normal from the depth over two pixels each way, from the side
  * of each axis that doesn't cross a depth edge. The one-pixel derivatives
@@ -903,9 +877,6 @@ void main() {
     float upDay = nLength > 1e-12 ? abs(dot(n, up)) / nLength : 0.0;
     vec3 dirDay = normalize(offset);
     vec3 runway = runwayLights(offset, footprintDay, dXDay, dYDay, dirDay, dFdx(dirDay), dFdy(dirDay)) * lampGain * smoothstep(0.35, 0.85, upDay) * fieldOn;
-    if (nLength > 1e-12) {
-      runway += airportFloodLightIrradiance(offset, n / nLength);
-    }
     if (any(isnan(runway)) || any(isinf(runway))) runway = vec3(0.0);
     outColor = vec4(runway, lightLuminance(runway) * glowShare(0.35 / max(footprintDay, 1e-3) / 0.8));
     return;
@@ -956,14 +927,17 @@ void main() {
   vec3 normal = cross(dX, dY);
   float normalLength = length(normal);
   float upness = normalLength > 1e-12 ? abs(dot(normal, up)) / normalLength : 0.0;
-  // Lamps are light sources; their pools light the surface, so they show
-  // its own color (dark asphalt, markings, sidewalks) rather than glowing.
-  vec3 lit = pools * roadGain * albedo.rgb + lamps * lampGain;
+  // Keep photographed surface detail but suppress the daytime capture's
+  // baked vegetation/soil color. At night the fixture determines most of
+  // the hue; the ground contributes primarily luminance and texture.
+  float greenExcess = max(0.0, albedo.g - max(albedo.r, albedo.b));
+  vec3 nightAlbedo = albedo.rgb - vec3(0.0, greenExcess * 0.4, 0.0);
+  vec3 lit = pools * roadGain * nightAlbedo + lamps * lampGain;
   // What feeds the glow (alpha, below): lamps drawn bigger and brighter
   // than their true share of a pixel far away would make a distant
   // airport's or city's glow grow as it shrinks on screen. Beyond a few
   // km, scale the glow down towards the lamps' true energy.
-  vec3 glowing = pools * roadGain * albedo.rgb + lamps * lampGain * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
+  vec3 glowing = pools * roadGain * nightAlbedo + lamps * lampGain * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
 
   // Residential carpet where only the coarse level's main roads are drawn,
   // and beyond the street tiles (not loaded yet, or past the windows): the
@@ -989,13 +963,10 @@ void main() {
 
   // Brighter where NASA's map is: downtown cores stand out from suburbs
   // instead of one even sheet of light across the metro area.
-  float cores = mix(0.7, 1.3, smoothstep(0.35, 0.95, value));
+  float cores = mix(0.7, 1.5, smoothstep(0.35, 0.95, value));
   float facing = smoothstep(0.35, 0.85, upness) * night;
   float gain = urban * cores * facing;
   vec3 field = fieldLamps * lampGain * smoothstep(0.35, 0.85, upness) * fieldOn;
-  if (normalLength > 1e-12) {
-    field += airportFloodLightIrradiance(offset, normal / normalLength);
-  }
   vec3 light = lit * gain + field;
   float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
   // Landing and taxi lights on the runway, taxiway or apron ahead.
@@ -1172,12 +1143,12 @@ export class NightLightsPass extends Pass {
         cameraWorld: new Uniform(new Matrix4()),
         cameraPositionECEF: new Uniform(new Vector3()),
         sunDirection: new Uniform(new Vector3()),
-        roadGain: new Uniform(0.08),
+        roadGain: new Uniform(0.085),
         airfieldOn: new Uniform(0),
         pixelAngle: new Uniform(0.001),
         roadLights: new Uniform(null),
         roadLamps: new Uniform(null),
-        lampGain: new Uniform(0.12),
+        lampGain: new Uniform(0.095),
         buildingMap: new Uniform(null),
         windowGain: new Uniform(WINDOW_GAIN),
         windowShares: new Uniform(new Vector2(0.2, 0.2)),
@@ -1199,10 +1170,7 @@ export class NightLightsPass extends Pass {
         runwayApproach: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         beamCount: new Uniform(0),
         beamPosition: new Uniform(lightBeams.position),
-        beamDirection: new Uniform(lightBeams.direction),
-        airportFloodLightCount: airportFloodLights.count,
-        airportFloodLightPosition: new Uniform(airportFloodLights.position),
-        airportFloodLightColor: new Uniform(airportFloodLights.color)
+        beamDirection: new Uniform(lightBeams.direction)
       }
     })
     const u = this.material.uniforms

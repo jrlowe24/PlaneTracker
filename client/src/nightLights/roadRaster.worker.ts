@@ -46,8 +46,6 @@ export interface RoadRasterResponse {
   water?: Uint8Array | null
   /** Whole runways near the tile, for exact runway lighting (runwayLights.ts). */
   runways?: RunwayRecord[]
-  /** Sparse elevated apron-mast candidates: lon/lat degree pairs. */
-  floodlights?: Float32Array | null
   error?: string
 }
 
@@ -63,7 +61,7 @@ type Rgb = readonly [number, number, number]
 // Linear light colors (relative), roughly by lamp type.
 const SODIUM: Rgb = [1.0, 0.56, 0.22]
 const WARM_LED: Rgb = [1.0, 0.68, 0.36]
-const NEUTRAL_LED: Rgb = [0.95, 0.85, 0.7]
+const NEUTRAL_LED: Rgb = [0.82, 0.72, 0.58]
 const WHITE: Rgb = [0.92, 0.94, 1.0]
 const GREEN: Rgb = [0.15, 1.0, 0.35]
 const BLUE: Rgb = [0.2, 0.35, 1.0]
@@ -118,13 +116,26 @@ const ROADS: Record<string, RoadStyle> = {
  * Lit areas: a faint glow plus scattered lamps (parking lots, yards) on a
  * jittered grid of `spacing` meters, a `share` of them lit.
  */
-const AREAS: Record<string, { glow: number; color: Rgb; spacing: number; share: number; lamp: number }> = {
-  commercial: { glow: 0.012, color: WARM_LED, spacing: 40, share: 0.5, lamp: 0.6 },
-  retail: { glow: 0.015, color: NEUTRAL_LED, spacing: 35, share: 0.6, lamp: 0.7 },
-  industrial: { glow: 0.008, color: SODIUM, spacing: 45, share: 0.45, lamp: 0.65 },
-  railway: { glow: 0.006, color: SODIUM, spacing: 60, share: 0.35, lamp: 0.6 },
-  residential: { glow: 0.003, color: WARM_LED, spacing: 0, share: 0, lamp: 0 },
-  stadium: { glow: 0.03, color: WHITE, spacing: 30, share: 0.8, lamp: 0.9 }
+const AREAS: Record<
+  string,
+  {
+    glow: number
+    color: Rgb
+    spacing: number
+    share: number
+    lamp: number
+    poolSpacing: number
+    poolShare: number
+    poolRadius: number
+    pool: number
+  }
+> = {
+  commercial: { glow: 0.006, color: WARM_LED, spacing: 45, share: 0.45, lamp: 0.55, poolSpacing: 120, poolShare: 0.35, poolRadius: 50, pool: 0.55 },
+  retail: { glow: 0.008, color: NEUTRAL_LED, spacing: 40, share: 0.5, lamp: 0.65, poolSpacing: 100, poolShare: 0.45, poolRadius: 45, pool: 0.6 },
+  industrial: { glow: 0.004, color: SODIUM, spacing: 55, share: 0.4, lamp: 0.6, poolSpacing: 160, poolShare: 0.3, poolRadius: 65, pool: 0.6 },
+  railway: { glow: 0.003, color: SODIUM, spacing: 75, share: 0.3, lamp: 0.5, poolSpacing: 180, poolShare: 0.25, poolRadius: 55, pool: 0.5 },
+  residential: { glow: 0.003, color: WARM_LED, spacing: 0, share: 0, lamp: 0, poolSpacing: 0, poolShare: 0, poolRadius: 0, pool: 0 },
+  stadium: { glow: 0.015, color: WHITE, spacing: 40, share: 0.7, lamp: 0.8, poolSpacing: 120, poolShare: 0.5, poolRadius: 70, pool: 0.7 }
 }
 
 /** Deterministic 0…1 hash of integer coordinates. */
@@ -164,10 +175,32 @@ let lampCells = new Uint8Array(0)
 let lampEnergy = new Float32Array(0)
 let lampSize = 0
 /**
- * Coarse zooms (tens of meters per pixel): lamps only. Pools and area
- * glows a pixel or more wide read as glowing bands from afar.
+ * At the coarsest zoom (about 100 m per texel), lamps only. The medium
+ * level keeps diffuse pools so arterials and lit districts remain coherent
+ * ribbons from altitude instead of dissolving into isolated dots.
  */
 let poolsEnabled = true
+
+/** A diffuse footprint only: no visible point source is written. */
+function paintPool(
+  ctx: Ctx,
+  x: number,
+  y: number,
+  radius: number,
+  color: Rgb,
+  intensity: number
+): void {
+  if (!poolsEnabled) return
+  const r = Math.max(1.5, radius * 2)
+  const gradient = ctx.createRadialGradient(x, y, 0, x, y, r)
+  gradient.addColorStop(0, rgba(color, intensity * 0.3))
+  gradient.addColorStop(0.2, rgba(color, intensity * 0.2))
+  gradient.addColorStop(0.45, rgba(color, intensity * 0.08))
+  gradient.addColorStop(0.7, rgba(color, intensity * 0.025))
+  gradient.addColorStop(1, 'rgb(0,0,0)')
+  ctx.fillStyle = gradient
+  ctx.fillRect(x - r, y - r, 2 * r, 2 * r)
+}
 
 /**
  * A lamp: its exact position goes into the lamp cells (the shader draws it
@@ -198,16 +231,7 @@ function lamp(ctx: Ctx, x: number, y: number, radius: number, color: Rgb, base: 
   }
   // Airfield lights are inset fixtures: no pool on the ground.
   if (!pool || !poolsEnabled) return
-  const r = Math.max(1.5, radius * 2)
-  const gradient = ctx.createRadialGradient(x, y, 0, x, y, r)
-  // Smooth falloff (no visible rim): bright under the lamp, fading out.
-  gradient.addColorStop(0, rgba(color, intensity * 0.3))
-  gradient.addColorStop(0.2, rgba(color, intensity * 0.2))
-  gradient.addColorStop(0.45, rgba(color, intensity * 0.08))
-  gradient.addColorStop(0.7, rgba(color, intensity * 0.025))
-  gradient.addColorStop(1, 'rgb(0,0,0)')
-  ctx.fillStyle = gradient
-  ctx.fillRect(x - r, y - r, 2 * r, 2 * r)
+  paintPool(ctx, x, y, radius, color, intensity)
 }
 
 function strokeLine(ctx: Ctx, line: Point[], width: number, style: string): void {
@@ -225,69 +249,6 @@ function fillRings(ctx: Ctx, rings: Point[][], style: string): void {
   ctx.fill('evenodd')
 }
 
-function insideRings(point: Point, rings: Point[][]): boolean {
-  let inside = false
-  for (const ring of rings) {
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const a = ring[i]!
-      const b = ring[j]!
-      if (
-        (a.y > point.y) !== (b.y > point.y) &&
-        point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x
-      ) {
-        inside = !inside
-      }
-    }
-  }
-  return inside
-}
-
-/** Sparse, world-fixed high-mast positions inside a detailed apron polygon. */
-function apronFloodlights(
-  rings: Point[][],
-  request: RoadRasterRequest,
-  out: number[]
-): void {
-  if (request.z !== 14 || rings.length === 0 || out.length >= 64) return
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const ring of rings) {
-    for (const p of ring) {
-      minX = Math.min(minX, p.x)
-      minY = Math.min(minY, p.y)
-      maxX = Math.max(maxX, p.x)
-      maxY = Math.max(maxY, p.y)
-    }
-  }
-  const spacing = 140 / request.metersPerPixel
-  const worldX = request.x * request.size
-  const worldY = request.y * request.size
-  const firstX = Math.floor((worldX + minX) / spacing)
-  const lastX = Math.ceil((worldX + maxX) / spacing)
-  const firstY = Math.floor((worldY + minY) / spacing)
-  const lastY = Math.ceil((worldY + maxY) / spacing)
-  const n = 2 ** request.z
-  for (let gy = firstY; gy <= lastY && out.length < 64; ++gy) {
-    for (let gx = firstX; gx <= lastX && out.length < 64; ++gx) {
-      if (hash(gx, gy, 83) > 0.52) continue
-      const jitterX = (hash(gx, gy, 89) - 0.5) * spacing * 0.35
-      const jitterY = (hash(gx, gy, 97) - 0.5) * spacing * 0.35
-      const x = (gx + 0.5) * spacing + jitterX - worldX
-      const y = (gy + 0.5) * spacing + jitterY - worldY
-      const p = { x, y }
-      if (!insideRings(p, rings)) continue
-      const tileX = request.x + x / request.size
-      const tileY = request.y + y / request.size
-      const lon = (tileX / n) * 360 - 180
-      const mercator = Math.PI * (1 - (2 * tileY) / n)
-      const lat = (Math.atan(Math.sinh(mercator)) * 180) / Math.PI
-      out.push(lon, lat)
-    }
-  }
-}
-
 async function render(
   request: RoadRasterRequest,
   data: ArrayBuffer
@@ -297,11 +258,10 @@ async function render(
   buildings: Uint8Array | null
   water: Uint8Array
   runways: RunwayRecord[]
-  floodlights: Float32Array
 }> {
   const { size, metersPerPixel: mpp } = request
   lampSize = size
-  poolsEnabled = mpp < 8
+  poolsEnabled = mpp < 40
   lampCells = new Uint8Array(size * size * 4)
   lampEnergy = new Float32Array(size * size)
   const canvas = new OffscreenCanvas(size, size)
@@ -313,7 +273,6 @@ async function render(
   ctx.lineJoin = 'round'
 
   const tile = new VectorTile(new Pbf(new Uint8Array(data)))
-  const floodlights: number[] = []
   const geometry = (feature: VectorTileFeature): Point[][] => {
     const k = size / feature.extent
     return feature.loadGeometry().map(ring => ring.map(p => ({ x: p.x * k, y: p.y * k })))
@@ -384,7 +343,31 @@ async function render(
     if (area == null || feature.type !== 3) continue
     const rings = geometry(feature)
     if (poolsEnabled) fillRings(ctx, rings, rgba(area.color, area.glow))
-    if (area.spacing > 0) scatterLamps(ctx, rings, area.spacing / mpp, area.share, area.color, area.lamp, 4 / mpp, request)
+    if (area.spacing > 0) {
+      // Visible fixtures and the light they cast are intentionally separate:
+      // many small sources can sit inside a few broad floodlit regions.
+      scatterLamps(
+        ctx,
+        rings,
+        area.spacing / mpp,
+        area.share,
+        area.color,
+        area.lamp,
+        0,
+        request,
+        false
+      )
+      scatterPools(
+        ctx,
+        rings,
+        area.poolSpacing / mpp,
+        area.poolShare,
+        area.color,
+        area.pool,
+        area.poolRadius / mpp,
+        request
+      )
+    }
   }
 
   // Streets: light pools, then lamps.
@@ -403,13 +386,13 @@ async function render(
       // Some districts are brighter than others.
       const level = 0.6 + 0.8 * district(mid.x, mid.y, 2)
       const width = Math.max(1, style.width / mpp)
-      // Barely any continuous light along the road: the light comes from
-      // each lamp's pool, islands of light with darkness between them.
-      if (poolsEnabled) strokeLine(ctx, line, width, rgba(color, style.pool * 0.04 * level))
+      // A restrained continuous component joins overlapping pools into the
+      // illuminated road corridors visible from altitude.
+      if (poolsEnabled) strokeLine(ctx, line, width, rgba(color, style.pool * 0.08 * level))
       const spacing = style.spacing / mpp
       const side = (style.width * 0.4) / mpp
-      // Pool radius (lamp() draws it twice this): ~18 m on the ground.
-      const radius = 9 / mpp
+      // Pool radius (lamp() draws it twice this): ~28 m on the ground.
+      const radius = 14 / mpp
       let n = 0
       along(line, spacing, spacing * hash(i, 7), (x, y, dx, dy) => {
         const s = style.bothSides ? (n++ % 2 === 0 ? 1 : -1) : 1
@@ -444,11 +427,9 @@ async function render(
     const feature = aeroway!.feature(i)
     const cls = String(feature.properties.class)
     if (cls === 'apron' && feature.type === 3) {
-      // Aprons no longer glow uniformly. Sparse elevated masts are handed
-      // to the 3D lighting paths instead, so walls and aircraft receive the
-      // light while the pavement between fixtures can stay dark.
       const rings = geometry(feature)
-      apronFloodlights(rings, request, floodlights)
+      if (poolsEnabled) fillRings(ctx, rings, rgba(NEUTRAL_LED, 0.05))
+      scatterLamps(ctx, rings, 70 / mpp, 0.9, NEUTRAL_LED, 1.0, 12 / mpp, request)
       continue
     }
     if (feature.type !== 2) continue
@@ -525,8 +506,7 @@ async function render(
     lamps: lampCells,
     buildings: buildingMap,
     water,
-    runways: index?.runways ?? [],
-    floodlights: new Float32Array(floodlights)
+    runways: index?.runways ?? []
   }
 }
 
@@ -539,7 +519,8 @@ function scatterLamps(
   color: Rgb,
   intensity: number,
   radius: number,
-  tile: RoadRasterRequest
+  tile: RoadRasterRequest,
+  pool = true
 ): void {
   if (spacing < 2) return
   let minX = Infinity
@@ -565,7 +546,66 @@ function scatterLamps(
       if (h > share) continue
       const jx = hash(gx, gy, 11) - 0.5
       const jy = hash(gx, gy, 13) - 0.5
-      lamp(ctx, (gx + 0.5 + 0.6 * jx) * spacing, (gy + 0.5 + 0.6 * jy) * spacing, radius, color, intensity * (0.5 + h / share))
+      lamp(
+        ctx,
+        (gx + 0.5 + 0.6 * jx) * spacing,
+        (gy + 0.5 + 0.6 * jy) * spacing,
+        radius,
+        color,
+        intensity * (0.5 + h / share),
+        pool
+      )
+    }
+  }
+  ctx.restore()
+}
+
+/** Broad light cast onto an area, deliberately without an emissive core. */
+function scatterPools(
+  ctx: Ctx,
+  rings: Point[][],
+  spacing: number,
+  share: number,
+  color: Rgb,
+  intensity: number,
+  radius: number,
+  tile: RoadRasterRequest
+): void {
+  if (!poolsEnabled || spacing < 2) return
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const ring of rings) {
+    for (const p of ring) {
+      minX = Math.min(minX, p.x)
+      minY = Math.min(minY, p.y)
+      maxX = Math.max(maxX, p.x)
+      maxY = Math.max(maxY, p.y)
+    }
+  }
+  ctx.save()
+  ctx.beginPath()
+  for (const ring of rings) {
+    ring.forEach((p, i) =>
+      i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)
+    )
+  }
+  ctx.clip('evenodd')
+  for (let gy = Math.floor(minY / spacing); gy * spacing <= maxY; ++gy) {
+    for (let gx = Math.floor(minX / spacing); gx * spacing <= maxX; ++gx) {
+      const h = hash(gx + tile.x * 3571, gy + tile.y * 6971, tile.z + 31)
+      if (h > share) continue
+      const jx = hash(gx, gy, 29) - 0.5
+      const jy = hash(gx, gy, 37) - 0.5
+      paintPool(
+        ctx,
+        (gx + 0.5 + 0.5 * jx) * spacing,
+        (gy + 0.5 + 0.5 * jy) * spacing,
+        radius,
+        color,
+        intensity * (0.65 + 0.55 * h / share)
+      )
     }
   }
   ctx.restore()
@@ -824,9 +864,9 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
   try {
     const response = await fetch(request.url)
     if (!response.ok) throw new Error(`tile ${response.status}`)
-    const { pixels, lamps, buildings, water, runways, floodlights } = await render(request, await response.arrayBuffer())
-    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, water, runways, floodlights }
-    const transfer = [pixels.buffer, lamps.buffer, water.buffer, floodlights.buffer]
+    const { pixels, lamps, buildings, water, runways } = await render(request, await response.arrayBuffer())
+    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, water, runways }
+    const transfer = [pixels.buffer, lamps.buffer, water.buffer]
     if (buildings != null) transfer.push(buildings.buffer)
     ;(self as unknown as Worker).postMessage(message, transfer)
   } catch (error) {
@@ -834,7 +874,6 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
       id: request.id,
       pixels: null,
       lamps: null,
-      floodlights: null,
       error: error instanceof Error ? error.message : String(error)
     }
     ;(self as unknown as Worker).postMessage(message)

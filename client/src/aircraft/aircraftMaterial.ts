@@ -6,10 +6,6 @@ import {
 } from 'three'
 
 import { MAX_SURFACE_LIGHTS, surfaceLights } from './navLightsStore'
-import {
-  airportFloodLights,
-  MAX_AIRPORT_FLOOD_LIGHTS
-} from '../nightLights/AirportFloodLights'
 
 /**
  * Aircraft materials are lit by SunLight/SkyLight (light sources, not post
@@ -59,20 +55,6 @@ for (int i = 0; i < ${MAX_SURFACE_LIGHTS}; ++i) {
   // the wingtip/tail visibly pick up the light without turning emissive.
   reflectedLight.indirectDiffuse += material.diffuseColor * navLight.color * 0.12;
 }
-for (int i = 0; i < ${MAX_AIRPORT_FLOOD_LIGHTS}; ++i) {
-  if (i >= airportFloodLightCount) break;
-  vec4 floodPosition = airportFloodLightPosition[i];
-  vec3 toLight = mat3(viewMatrix) * floodPosition.xyz - geometryPosition;
-  float d2 = max(dot(toLight, toLight), 25.0);
-  float reach = saturate(1.0 - d2 / (floodPosition.w * floodPosition.w));
-  if (reach <= 0.0) continue;
-  IncidentLight floodLight;
-  floodLight.direction = toLight * inversesqrt(d2);
-  floodLight.color = airportFloodLightColor[i] * pow2(reach) / d2;
-  floodLight.visible = true;
-  RE_Direct(floodLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
-  reflectedLight.indirectDiffuse += material.diffuseColor * floodLight.color * 0.04;
-}
 #endif
 #include <lights_fragment_end>`
 
@@ -90,13 +72,6 @@ export function patchAircraftMaterial(material: MeshStandardMaterial, instanced:
       shader.uniforms.navLightPosition = { value: surfaceLights.position }
       shader.uniforms.navLightColor = { value: surfaceLights.color }
       shader.uniforms.navLightDirection = { value: surfaceLights.direction }
-      shader.uniforms.airportFloodLightCount = airportFloodLights.count
-      shader.uniforms.airportFloodLightPosition = {
-        value: airportFloodLights.position
-      }
-      shader.uniforms.airportFloodLightColor = {
-        value: airportFloodLights.color
-      }
     }
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -116,7 +91,7 @@ vShading = ${instanced ? 'instanceShading' : 'aircraftShading'};`
         `#include <common>\nvarying vec3 vShading;\nuniform vec3 aircraftGroundLight;${
           instanced
             ? ''
-            : `\nuniform vec4 navLightPosition[${MAX_SURFACE_LIGHTS}];\nuniform vec3 navLightColor[${MAX_SURFACE_LIGHTS}];\nuniform vec4 navLightDirection[${MAX_SURFACE_LIGHTS}];\nuniform int airportFloodLightCount;\nuniform vec4 airportFloodLightPosition[${MAX_AIRPORT_FLOOD_LIGHTS}];\nuniform vec3 airportFloodLightColor[${MAX_AIRPORT_FLOOD_LIGHTS}];`
+            : `\nuniform vec4 navLightPosition[${MAX_SURFACE_LIGHTS}];\nuniform vec3 navLightColor[${MAX_SURFACE_LIGHTS}];\nuniform vec4 navLightDirection[${MAX_SURFACE_LIGHTS}];`
         }`
       )
       .replace(

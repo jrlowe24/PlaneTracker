@@ -90,10 +90,6 @@ class NightLightsController {
     // Airports light their runways at dusk and in low overcast too.
     this.airfieldOn += (airfieldTarget(states.sunDirection) - this.airfieldOn) * Math.min(1, delta / 3)
     effect.setAirfieldOn(this.airfieldOn)
-    this.roads?.floodlights.update(
-      camera.position,
-      Math.max(nightState.night, this.airfieldOn)
-    )
     const active = elevation < reach + margin || this.airfieldOn > 0.01
     if (active !== this.active) {
       this.active = active
