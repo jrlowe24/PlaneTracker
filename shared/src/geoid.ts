@@ -3,7 +3,13 @@ import { GEOID_BASE64, GEOID_COLS, GEOID_ROWS } from './geoidGrid'
 let grid: Int16Array | null = null
 
 function decode(): Int16Array {
-  const binary = atob(GEOID_BASE64)
+  // `atob` exists in every supported browser and in Node >= 16, but this
+  // shared package intentionally does not include DOM typings. Access it
+  // through globalThis so the package remains typecheckable in both targets.
+  const { atob: decodeBase64 } = globalThis as unknown as {
+    atob(value: string): string
+  }
+  const binary = decodeBase64(GEOID_BASE64)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; ++i) bytes[i] = binary.charCodeAt(i)
   // Little-endian int16 (matches every platform we run on).

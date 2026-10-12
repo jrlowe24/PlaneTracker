@@ -108,6 +108,7 @@ interface LoadedModel {
 }
 
 const gltfCache = new Map<string, Promise<LoadedModel | null>>()
+const instancedCache = new Map<string, Promise<InstancedModel | null>>()
 
 /**
  * Nav light positions from a model's geometry (in its normalized body
@@ -239,6 +240,11 @@ function loadTypeModel(entry: ModelEntry): Promise<LoadedModel | null> {
  * this once no aircraft shows the model.
  */
 export function evictModel(url: string): void {
+  // Instanced materials clone the material but share its Texture objects.
+  // Disposing the source model would invalidate those textures for every
+  // distant aircraft using the batch. Keep the shared source alive while an
+  // instanced representation owns references to it.
+  if (instancedCache.has(url)) return
   const promise = gltfCache.get(url)
   if (promise == null) return
   gltfCache.delete(url)
@@ -403,8 +409,6 @@ export interface InstancedModel {
   /** Lowest point (wheels), meters below the model origin (negative). */
   lowest: number
 }
-
-const instancedCache = new Map<string, Promise<InstancedModel | null>>()
 
 /**
  * The model of a manifest entry for the instanced (non-detailed) aircraft:

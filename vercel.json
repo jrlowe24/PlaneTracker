@@ -5,7 +5,11 @@
   "outputDirectory": "client/dist",
   "headers": [
     {
-      "source": "/night-lights/(.*)",
+      "source": "/night-lights/manifest.json",
+      "headers": [{ "key": "cache-control", "value": "public, max-age=0, must-revalidate" }]
+    },
+    {
+      "source": "/night-lights/(.*).jpg",
       "headers": [{ "key": "cache-control", "value": "public, max-age=31536000, immutable" }]
     },
     {

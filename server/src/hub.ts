@@ -16,6 +16,7 @@ import {
 import type { WebSocket } from 'ws'
 
 import type { AircraftCache } from './cache'
+import { acceptClientMessage, type MessageRateWindow } from './httpSecurity'
 import { mergeViewports } from './regions'
 import type { RouteResolver } from './routes'
 import { ADSB_FI_ATTRIBUTION, type FollowFeed } from './sources/followFeed'
@@ -32,13 +33,16 @@ export interface HubOptions {
   viewportMargin: number
   /** Skip a push when a client's socket has this much unsent data. */
   maxBufferedBytes: number
+  /** Close clients that send more messages than this in one second. */
+  maxMessagesPerSecond: number
 }
 
 export const defaultHubOptions: HubOptions = {
   pushIntervalMs: 1000,
   staleAfterMs: 60_000,
   viewportMargin: 1.15,
-  maxBufferedBytes: 4 * 1024 * 1024
+  maxBufferedBytes: 4 * 1024 * 1024,
+  maxMessagesPerSecond: 30
 }
 
 /** A followed aircraft is kept this long without data. */
@@ -65,6 +69,7 @@ interface ClientSession {
   resetPending: boolean
   /** The user's own location, if shared: traffic around it stays live. */
   home: { lat: number; lon: number } | null
+  messageRate: MessageRateWindow
 }
 
 export function parseClientMessage(data: unknown): ClientMessage | null {
@@ -183,6 +188,7 @@ export class Hub {
       gridAt: null,
       gridSentAt: 0,
       home: null,
+      messageRate: { startedAt: Date.now(), count: 0 },
       resetPending: false
     }
     this.clients.add(client)
@@ -198,6 +204,16 @@ export class Hub {
     socket.send(JSON.stringify(hello))
 
     socket.on('message', data => {
+      if (
+        !acceptClientMessage(
+          client.messageRate,
+          Date.now(),
+          this.options.maxMessagesPerSecond
+        )
+      ) {
+        socket.close(1008, 'Message rate limit')
+        return
+      }
       const message = parseClientMessage(data)
       if (message?.type === 'viewport') {
         client.viewport = message.viewport

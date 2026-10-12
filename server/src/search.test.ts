@@ -97,6 +97,30 @@ describe('RegionPoller one-off requests', () => {
     poller.stop()
     expect(calls[0]).toBe('extra')
   })
+
+  it('alternates queued requests with due live regions', async () => {
+    const calls: string[] = []
+    const poller = new RegionPoller(
+      () => {
+        calls.push('region')
+        return Promise.resolve([])
+      },
+      { minRequestIntervalMs: 0, minRegionIntervalMs: 0 }
+    )
+    poller.setRegions([{ lat: 0, lon: 0, radiusNm: 50 }])
+    const first = poller.request(() => {
+      calls.push('extra-1')
+      return Promise.resolve([])
+    })
+    const second = poller.request(() => {
+      calls.push('extra-2')
+      return Promise.resolve([])
+    })
+    poller.start(() => undefined)
+    await Promise.all([first, second])
+    poller.stop()
+    expect(calls.slice(0, 3)).toEqual(['extra-1', 'region', 'extra-2'])
+  })
 })
 
 describe('weather grid cells', () => {

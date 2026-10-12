@@ -6,6 +6,11 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { AircraftCache } from './cache'
+import {
+  acceptClientMessage,
+  isOriginAllowed,
+  parseAllowedOrigins
+} from './httpSecurity'
 import { parseClientMessage } from './hub'
 import {
   enclosingRegion,
@@ -22,6 +27,7 @@ import {
   adaptRequestInterval,
   nextBackoff,
   pickNextRegion,
+  serveExtraNext,
   UpstreamError,
   type RegionSchedule
 } from './sources/regionPoller'
@@ -203,6 +209,13 @@ describe('poller scheduling', () => {
     )
     expect(nextBackoff(50_000, new Error('x'), options)).toBe(60_000)
   })
+
+  it('serves extras first without starving primary work', () => {
+    expect(serveExtraNext(true, true, false)).toBe(true)
+    expect(serveExtraNext(true, true, true)).toBe(false)
+    expect(serveExtraNext(true, false, true)).toBe(true)
+    expect(serveExtraNext(false, true, false)).toBe(false)
+  })
 })
 
 describe('AircraftCache', () => {
@@ -233,6 +246,63 @@ describe('AircraftCache', () => {
     expect(cache.get('abc123')!.revision).toBe(rev)
     expect(cache.upsert([{ ...base, positionTimestamp: 1500, lat: 47.6 }], 2000)).toBe(1)
     expect(cache.get('abc123')!.revision).toBeGreaterThan(rev)
+  })
+
+  it('keeps rich metadata when a newer overview position is sparse', () => {
+    const cache = new AircraftCache()
+    const rich = {
+      ...base,
+      callsign: 'ASA1',
+      registration: 'N491AS',
+      typeCode: 'B739',
+      category: 'A3'
+    }
+    cache.upsert([rich], 1000)
+    cache.upsert(
+      [
+        {
+          ...base,
+          lat: 47.6,
+          positionTimestamp: 2000,
+          overview: true
+        }
+      ],
+      2000
+    )
+    expect(cache.get('abc123')?.state).toMatchObject({
+      lat: 47.6,
+      callsign: 'ASA1',
+      registration: 'N491AS',
+      typeCode: 'B739',
+      category: 'A3',
+      overview: false
+    })
+  })
+
+  it('lets an older regional report fill sparse overview metadata', () => {
+    const cache = new AircraftCache()
+    cache.upsert([{ ...base, positionTimestamp: 2000, overview: true }], 2000)
+    expect(
+      cache.upsert(
+        [
+          {
+            ...base,
+            callsign: 'ASA1',
+            registration: 'N491AS',
+            typeCode: 'B739',
+            positionTimestamp: 1500
+          }
+        ],
+        2100
+      )
+    ).toBe(1)
+    expect(cache.get('abc123')?.state).toMatchObject({
+      positionTimestamp: 2000,
+      callsign: 'ASA1',
+      registration: 'N491AS',
+      typeCode: 'B739',
+      overview: false
+    })
   })
 
   it('drops aircraft unseen for the max age', () => {
@@ -279,6 +349,24 @@ describe('parseClientMessage', () => {
         JSON.stringify({ type: 'viewport', viewport: { lat: 100, lon: 0, radiusNm: 1 } })
       )
     ).toBeNull()
+  })
+})
+
+describe('public endpoint guards', () => {
+  it('allows configured browser origins and non-browser clients', () => {
+    const allowed = parseAllowedOrigins('https://window-seat.example, http://localhost:5173')
+    expect(isOriginAllowed('https://window-seat.example', allowed)).toBe(true)
+    expect(isOriginAllowed('https://other.example', allowed)).toBe(false)
+    expect(isOriginAllowed(undefined, allowed)).toBe(true)
+    expect(isOriginAllowed('https://other.example', parseAllowedOrigins('*'))).toBe(true)
+  })
+
+  it('limits message bursts and resets the window', () => {
+    const rate = { startedAt: 1000, count: 0 }
+    expect(acceptClientMessage(rate, 1000, 2)).toBe(true)
+    expect(acceptClientMessage(rate, 1100, 2)).toBe(true)
+    expect(acceptClientMessage(rate, 1200, 2)).toBe(false)
+    expect(acceptClientMessage(rate, 2000, 2)).toBe(true)
   })
 })
 

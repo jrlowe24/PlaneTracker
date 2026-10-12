@@ -101,6 +101,18 @@ export function nextBackoff(
 }
 
 /**
+ * Extra requests may go first, but never twice in a row while primary work is
+ * waiting. This keeps public searches from starving the live feed.
+ */
+export function serveExtraNext(
+  extraAvailable: boolean,
+  primaryAvailable: boolean,
+  extraWasLast: boolean
+): boolean {
+  return extraAvailable && (!primaryAvailable || !extraWasLast)
+}
+
+/**
  * One upstream poller for all clients: a single request in flight at a time,
  * spaced at least `minRequestIntervalMs` apart (adapting upward on 429),
  * each region refreshed at most every `minRegionIntervalMs`. With N regions
@@ -115,6 +127,7 @@ export class RegionPoller {
   private nextRequestAt = 0
   private backoffMs = 0
   private requestIntervalMs: number
+  private extraWasLast = false
   private onData: ((states: AircraftState[], receivedAt: number) => void) | null =
     null
   /** One-off requests (e.g. search) served in the poll slot before regions. */
@@ -153,9 +166,9 @@ export class RegionPoller {
   }
 
   /**
-   * Runs a one-off upstream request in the next poll slot (ahead of region
-   * polls, same spacing and backoff). Resolves empty on failure or when a
-   * few are already queued.
+   * Runs a one-off upstream request in a shared poll slot (alternating with a
+   * due live region, with the same spacing and backoff). Resolves empty on
+   * failure or when a few are already queued.
    */
   request(run: (signal: AbortSignal) => Promise<AircraftState[]>): Promise<AircraftState[]> {
     if (this.extra.length >= 4) return Promise.resolve([])
@@ -182,10 +195,20 @@ export class RegionPoller {
   private tick(): void {
     const now = Date.now()
     if (this.inFlight != null || now < this.nextRequestAt) return
-    const extra = this.extra.shift()
-    const schedule =
-      extra == null ? pickNextRegion(this.schedules, now, this.options.minRegionIntervalMs) : null
+    const dueRegion = pickNextRegion(
+      this.schedules,
+      now,
+      this.options.minRegionIntervalMs
+    )
+    const takeExtra = serveExtraNext(
+      this.extra.length > 0,
+      dueRegion != null,
+      this.extraWasLast
+    )
+    const extra = takeExtra ? this.extra.shift() : undefined
+    const schedule = extra == null ? dueRegion : null
     if (extra == null && schedule == null) return
+    this.extraWasLast = extra != null
 
     if (schedule != null) schedule.lastPolledAt = now
     this.nextRequestAt = now + this.requestIntervalMs

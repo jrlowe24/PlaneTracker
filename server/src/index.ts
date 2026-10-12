@@ -7,6 +7,11 @@ import { WebSocketServer } from 'ws'
 
 import { AircraftCache } from './cache'
 import { readFixture } from './fixtures'
+import {
+  isOriginAllowed,
+  parseAllowedOrigins,
+  WS_MAX_PAYLOAD_BYTES
+} from './httpSecurity'
 import { Hub } from './hub'
 import { RouteResolver } from './routes'
 import { SearchService } from './search'
@@ -86,12 +91,17 @@ const search = new SearchService(cache, followFeed, source instanceof AdsbLolSou
  * Origins allowed to call the HTTP API from a browser (the site is hosted
  * separately in production): comma-separated, or * (default).
  */
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '*').split(',').map(o => o.trim())
+const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS ?? '*')
 
 const http = createServer((req, res) => {
   const origin = req.headers.origin
-  if (origin != null && (ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin))) {
-    res.setHeader('access-control-allow-origin', ALLOWED_ORIGINS.includes('*') ? '*' : origin)
+  if (!isOriginAllowed(origin, ALLOWED_ORIGINS)) {
+    res.writeHead(403)
+    res.end()
+    return
+  }
+  if (origin != null) {
+    res.setHeader('access-control-allow-origin', ALLOWED_ORIGINS.has('*') ? '*' : origin)
     res.setHeader('vary', 'origin')
   }
   if (req.method === 'OPTIONS') {
@@ -113,19 +123,48 @@ const http = createServer((req, res) => {
   }
   const url = new URL(req.url ?? '/', 'http://localhost')
   if (url.pathname === '/api/search') {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { allow: 'GET' })
+      res.end()
+      return
+    }
     const query = (url.searchParams.get('q') ?? '').slice(0, 32)
-    void search.search(query).then(response => {
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-      res.end(JSON.stringify(response))
-    })
+    void search
+      .search(query)
+      .then(response => {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(response))
+      })
+      .catch(error => {
+        console.warn('[search]', error instanceof Error ? error.message : error)
+        if (res.writableEnded) return
+        res.writeHead(502, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        res.end(JSON.stringify({ error: 'Search temporarily unavailable' }))
+      })
     return
   }
   res.writeHead(404)
   res.end()
 })
 
-const wss = new WebSocketServer({ server: http, path: '/ws', perMessageDeflate: true })
+const wss = new WebSocketServer({
+  server: http,
+  path: '/ws',
+  perMessageDeflate: true,
+  maxPayload: WS_MAX_PAYLOAD_BYTES,
+  verifyClient: ({ origin }, done) => {
+    if (isOriginAllowed(origin, ALLOWED_ORIGINS)) done(true)
+    else done(false, 403, 'Origin not allowed')
+  }
+})
 wss.on('connection', socket => {
+  // Protocol errors such as an oversized or invalid compressed frame are
+  // emitted on the individual socket. Without a listener Node treats them as
+  // uncaught errors and terminates the whole server.
+  socket.on('error', error => {
+    const code = 'code' in error ? String(error.code) : error.name
+    console.warn(`[ws] closing client after ${code}`)
+  })
   hub.addClient(socket)
 })
 

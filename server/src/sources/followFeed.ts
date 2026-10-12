@@ -1,7 +1,7 @@
 import type { AircraftState } from '@windowseat/shared'
 
 import { normalizeReadsb, USER_AGENT, type ReadsbResponse } from './adsbLol'
-import { nextBackoff, UpstreamError } from './regionPoller'
+import { nextBackoff, serveExtraNext, UpstreamError } from './regionPoller'
 
 /**
  * Fast updates for the aircraft clients are following, from adsb.fi's open
@@ -13,7 +13,7 @@ import { nextBackoff, UpstreamError } from './regionPoller'
  * One request at a time, ≥ 1.1 s apart, round-robin over followed hexes;
  * the rest of the traffic stays on the slower adsb.lol region poller.
  * One-off lookups (worldwide search by callsign, registration or hex) share
- * the same slot and go first.
+ * the same slot and alternate with followed aircraft while both are waiting.
  */
 
 export const ADSB_FI_BASE_URL = 'https://opendata.adsb.fi/api'
@@ -37,6 +37,7 @@ export class FollowFeed {
   private busy = false
   private pausedUntil = 0
   private backoffMs = 0
+  private lookupWasLast = false
   private readonly lookups: Lookup[] = []
 
   constructor(
@@ -80,8 +81,14 @@ export class FollowFeed {
       for (const lookup of this.lookups.splice(0)) lookup.resolve([])
       return
     }
-    const lookup = this.lookups.shift()
+    const takeLookup = serveExtraNext(
+      this.lookups.length > 0,
+      this.hexes.length > 0,
+      this.lookupWasLast
+    )
+    const lookup = takeLookup ? this.lookups.shift() : undefined
     if (lookup == null && this.hexes.length === 0) return
+    this.lookupWasLast = lookup != null
     const path = lookup?.path ?? `/v2/hex/${this.hexes[this.next++ % this.hexes.length]!}`
     this.busy = true
     try {

@@ -11,6 +11,47 @@ export interface CacheEntry {
   revision: number
 }
 
+const metadataFields = [
+  'callsign',
+  'registration',
+  'typeCode',
+  'category',
+  'squawk'
+] as const
+
+/** New position data keeps metadata omitted by sparse overview feeds. */
+function mergeNewerState(
+  previous: AircraftState,
+  next: AircraftState
+): AircraftState {
+  const merged = { ...next }
+  for (const field of metadataFields) merged[field] ??= previous[field]
+  // Once a regional/follow feed has seen an aircraft, it is no longer known
+  // only from the slow worldwide overview.
+  merged.overview = previous.overview === true && next.overview === true
+  return merged
+}
+
+/** Older data may still fill metadata that the newest position omitted. */
+function fillMissingMetadata(
+  current: AircraftState,
+  incoming: AircraftState
+): AircraftState | null {
+  let changed = false
+  const merged = { ...current }
+  for (const field of metadataFields) {
+    if (merged[field] == null && incoming[field] != null) {
+      merged[field] = incoming[field]
+      changed = true
+    }
+  }
+  if (merged.overview === true && incoming.overview !== true) {
+    merged.overview = false
+    changed = true
+  }
+  return changed ? merged : null
+}
+
 /** Latest state per aircraft, keyed by ICAO hex. */
 export class AircraftCache {
   private readonly entries = new Map<string, CacheEntry>()
@@ -43,9 +84,16 @@ export class AircraftCache {
       }
       entry.lastSeenAt = Math.max(entry.lastSeenAt, receivedAt)
       if (state.positionTimestamp > entry.state.positionTimestamp) {
-        entry.state = state
+        entry.state = mergeNewerState(entry.state, state)
         entry.revision = ++this.revision
         ++changed
+      } else {
+        const merged = fillMissingMetadata(entry.state, state)
+        if (merged != null) {
+          entry.state = merged
+          entry.revision = ++this.revision
+          ++changed
+        }
       }
     }
     return changed

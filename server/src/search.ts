@@ -11,7 +11,7 @@ import type { FollowFeed } from './sources/followFeed'
  * - callsign, registration and hex: adsb.fi (`/v2/callsign`, `/v2/registration`,
  *   `/v2/hex`), queued in the follow feed's shared request slot;
  * - ICAO type ("A388", "B738"): adsb.lol `/v2/type` (adsb.fi has none), in
- *   the region poller's rate-limited slot, ahead of region polls;
+ *   the region poller's rate-limited slot, interleaved with region polls;
  * - plus a substring match over everything the server already tracks.
  *
  * Found aircraft are also fed into the cache, so they appear in the view as
