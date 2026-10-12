@@ -142,7 +142,7 @@ float semanticWaterCoverage(
   const vec3 positionECEF,
   const vec2 screenUv
 ) {
-  if (waterMaterialEnabled < 0.5) return 0.0;
+  if (waterMaterialEnabled < 0.001) return 0.0;
   #ifdef HAS_LIGHTING_MASK
   if (texture(lightingMaskBuffer, screenUv).LIGHTING_MASK_CHANNEL_ < 0.5) return 0.0;
   #endif
@@ -166,7 +166,7 @@ float semanticWaterCoverage(
     result += texture(waterTileMap, vec3(fract(local), layer)).r * take;
     ownership += take;
   }
-  return smoothstep(0.12, 0.88, result);
+  return smoothstep(0.12, 0.88, result) * waterMaterialEnabled;
 }
 
 /** Small animated waves in a globe-local tangent frame. */
@@ -237,21 +237,9 @@ export function patchWaterSurface(effect: AerialPerspectiveEffect): boolean {
   }
   const lighting =
     'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);'
-  const skyComposite =
-    '    #ifdef HAS_OVERLAY\n    outputColor.rgb = outputColor.rgb * (1.0 - overlay.a) + overlay.rgb;\n    #endif // HAS_OVERLAY\n    return;\n  }\n  depth = reverseLogDepth(depth, cameraNear, cameraFar);'
-  if (
-    !source.includes('void mainImage(') ||
-    !source.includes(lighting) ||
-    !source.includes(skyComposite)
-  ) return false
+  if (!source.includes('void mainImage(') || !source.includes(lighting)) return false
   let shader = source
     .replace('void mainImage(', `${CHUNK}\nvoid mainImage(`)
-    // A missing/torn photogrammetry surface reports sky depth. Fill it from
-    // the same sea-level reconstruction before clouds are composited.
-    .replace(
-      skyComposite,
-      `    vec3 skyWaterPosition;\n    vec3 skyWaterNormal;\n    if (flatWaterSurface(skyWaterPosition, skyWaterNormal)) {\n      float skyWater = semanticWaterCoverage(skyWaterPosition, uv);\n      if (skyWater > 0.0) {\n        vec3 skyWaterRadiance = waterSurfaceRadiance(\n          skyWaterPosition,\n          waterWaveNormal(skyWaterPosition),\n          1.0\n        );\n        #if defined(TRANSMITTANCE) || defined(INSCATTER)\n        applyTransmittanceInscatter(skyWaterPosition, shadowLength, skyWaterRadiance);\n        #endif\n        if (!any(isnan(skyWaterRadiance)) && !any(isinf(skyWaterRadiance))) {\n          outputColor.rgb = mix(outputColor.rgb, skyWaterRadiance, skyWater);\n        }\n      }\n    }\n\n${skyComposite}`
-    )
     .replace(
       lighting,
       `${lighting}\n    vec3 flatWaterPosition;\n    vec3 flatWaterNormal;\n    float semanticWater = 0.0;\n    if (flatWaterSurface(flatWaterPosition, flatWaterNormal)) {\n      semanticWater = semanticWaterCoverage(flatWaterPosition, uv)\n        * photographedWaterShare(\n          positionECEF,\n          flatWaterPosition,\n          flatWaterNormal,\n          inputColor.rgb\n        );\n      if (semanticWater > 0.0) {\n        vec3 waterRadiance = waterSurfaceRadiance(\n          flatWaterPosition,\n          waterWaveNormal(flatWaterPosition),\n          sunTransmittance\n        );\n        if (!any(isnan(waterRadiance)) && !any(isinf(waterRadiance))) {\n          radiance = mix(radiance, waterRadiance, semanticWater);\n          // Atmospheric distance and haze now end at the flat water plane,\n          // not at the torn photogrammetry triangle that happened to win depth.\n          positionECEF = mix(positionECEF, flatWaterPosition, semanticWater);\n        }\n      }\n    }`
@@ -264,8 +252,7 @@ export function patchWaterSurface(effect: AerialPerspectiveEffect): boolean {
   )
   if (
     !shader.includes('float semanticWater =') ||
-    !shader.includes('flatWaterSurface(') ||
-    !shader.includes('skyWaterRadiance')
+    !shader.includes('flatWaterSurface(')
   ) {
     return false
   }
@@ -303,24 +290,28 @@ export function updateWaterSurface(
   nightAmbient: Vector3
 ): void {
   uniforms.waterTime.value += Math.min(delta, 0.1)
+  const geodetic = ecefToGeodetic(cameraPosition.x, cameraPosition.y, cameraPosition.z)
   if (!seaLevelInitialized || seaLevelAnchor.distanceToSquared(cameraPosition) > 50_000 ** 2) {
     seaLevelInitialized = true
     seaLevelAnchor.copy(cameraPosition)
-    const geodetic = ecefToGeodetic(cameraPosition.x, cameraPosition.y, cameraPosition.z)
     uniforms.waterSeaLevel.value = geoidHeight(geodetic.lat, geodetic.lon) / 1000
   }
   uniforms.waterNightAmbient.value.copy(nightAmbient)
   uniforms.waterTileMap.value = roads?.water ?? null
-  uniforms.waterMaterialEnabled.value = enabled && roads?.available === true ? 1 : 0
+  const altitudeT = Math.min(1, Math.max(0, (geodetic.height - 15_000) / 25_000))
+  const altitudeFade = 1 - altitudeT * altitudeT * (3 - 2 * altitudeT)
+  uniforms.waterMaterialEnabled.value =
+    enabled && roads?.available === true ? altitudeFade : 0
   if (roads == null) updateLevels([])
   else updateLevels(roads.levels.map(level => level.uniforms))
   if (import.meta.env.DEV) {
-    if (uniforms.waterMaterialEnabled.value === 1 && !reportedEnabled) {
+    if (uniforms.waterMaterialEnabled.value > 0.001 && !reportedEnabled) {
       reportedEnabled = true
       console.info('[water] semantic material enabled on atmosphere pass')
     }
     ;(window as unknown as { __windowSeatWater?: unknown }).__windowSeatWater = {
-      enabled: uniforms.waterMaterialEnabled.value === 1,
+      enabled: uniforms.waterMaterialEnabled.value > 0.001,
+      strength: uniforms.waterMaterialEnabled.value,
       available: roads?.available ?? false,
       loadedTiles:
         roads?.levels.map(level => level.slots.filter(slot => slot.loaded).length) ?? []

@@ -20,7 +20,7 @@ describe('semantic water shader contract', () => {
       expect(shader).toContain('texture(waterTileMap')
       expect(shader).toContain('waterSurfaceRadiance(')
       expect(shader).toContain('bool flatWaterSurface(')
-      expect(shader).toContain('vec3 skyWaterRadiance')
+      expect(shader).not.toContain('vec3 skyWaterRadiance')
       expect(shader).toContain('/ METER_TO_LENGTH_UNIT')
       expect(shader).not.toContain('waterScore(')
       const effectUniforms = effect.uniforms as unknown as Map<string, unknown>
