@@ -401,18 +401,14 @@ export const VolumetricClouds: FC = () => {
   if (preset.clouds === false) return null
   return (
     <Clouds
-      // High clouds enable an extra source texture in Takram's march. Give a
-      // changed quality level a fresh effect so High can be isolated before
-      // its post-process shader is compiled, while Low/Medium keep the
-      // cheaper merged compositor path.
-      key={`weather-system-v2-${preset.clouds}`}
+      key='weather-system-v2'
       ref={effect => {
         ref.current = effect
         if (effect == null) {
           initialized.current = false
           return
         }
-        if (preset.clouds === 'high') isolateCloudComposition(effect)
+        isolateCloudComposition(effect)
         // One texture tile now spans roughly 1,000 km on a cube-sphere face.
         // Its broad correlated lobes form 100–500 km weather systems; the 3D
         // shape textures still supply the individual 10–30 km cloud bodies.
