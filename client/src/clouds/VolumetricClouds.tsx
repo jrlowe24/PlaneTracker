@@ -20,6 +20,7 @@ import { qualityStore } from '../state/quality'
 import { settingsStore, type WeatherPrototype } from '../state/settings'
 import { nightState } from '../scene/nightLighting'
 import { cloudCoverStore } from './cloudCoverStore'
+import { isolateCloudComposition } from './cloudComposition'
 import { cloudDepth } from './cloudDepth'
 import { CoverageTexture, FILTER_WIDTH, GLOBAL_COVERAGE } from './coverageTexture'
 import { marchRefine, patchCloudsMarch } from './marchShader'
@@ -407,6 +408,7 @@ export const VolumetricClouds: FC = () => {
           initialized.current = false
           return
         }
+        isolateCloudComposition(effect)
         // One texture tile now spans roughly 1,000 km on a cube-sphere face.
         // Its broad correlated lobes form 100–500 km weather systems; the 3D
         // shape textures still supply the individual 10–30 km cloud bodies.

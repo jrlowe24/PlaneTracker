@@ -1,12 +1,27 @@
 import { CloudsEffect } from '@takram/three-clouds'
 import { describe, expect, it } from 'vitest'
 
+import { EffectAttribute } from 'postprocessing'
+
+import { isolateCloudComposition } from './cloudComposition'
 import { patchFarClouds } from './farClouds'
 import { patchCloudsMarch } from './marchShader'
 import { patchNightClouds } from './nightClouds'
 import { patchCloudsResolve, RegionalCoverageController } from './regionalShader'
 
 describe('cloud shader contracts', () => {
+  it('isolates cloud composition from the sampler-heavy atmosphere pass', () => {
+    const effect = new CloudsEffect()
+    try {
+      isolateCloudComposition(effect)
+      expect(effect.getAttributes() & EffectAttribute.CONVOLUTION).not.toBe(0)
+    } finally {
+      effect.cloudsPass.dispose()
+      effect.shadowPass.dispose()
+      effect.dispose()
+    }
+  })
+
   it('patches the installed Takram shaders in production order', () => {
     const effect = new CloudsEffect()
     const regional = new RegionalCoverageController()
