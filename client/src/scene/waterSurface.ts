@@ -1,10 +1,11 @@
 import type { AerialPerspectiveEffect } from '@takram/three-atmosphere'
-import { ecefToGeodetic, geoidHeight } from '@windowseat/shared'
+import { ecefToGeodetic, geodeticToEcef, geoidHeight } from '@windowseat/shared'
 import {
   Uniform,
   Vector3,
   Vector4,
-  type DataArrayTexture
+  type DataArrayTexture,
+  type IUniform
 } from 'three'
 
 import {
@@ -21,11 +22,16 @@ let reportedEnabled = false
 const seaLevelAnchor = new Vector3()
 let seaLevelInitialized = false
 
-const uniforms = {
+export const waterSurfaceUniforms = {
   waterMaterialEnabled: new Uniform(0),
   waterTime: new Uniform(0),
   /** Mean sea level above WGS84, in Takram atmosphere kilometres. */
   waterSeaLevel: new Uniform(0),
+  waterCameraPosition: new Uniform(new Vector3()),
+  /** Local curved water patch frame, in ECEF metres. */
+  waterGeometryAnchor: new Uniform(new Vector3()),
+  waterGeometryEast: new Uniform(new Vector3()),
+  waterGeometryNorth: new Uniform(new Vector3()),
   waterNightAmbient: new Uniform(new Vector3()),
   waterTileMap: new Uniform<DataArrayTexture | null>(null),
   waterTileEnabled: new Uniform(new Float32Array(ROAD_LEVELS)),
@@ -48,6 +54,91 @@ const uniforms = {
   waterTileFade: new Uniform(new Float32Array(ROAD_LEVELS * STRIDE)),
   waterTileWindow: new Uniform(new Float32Array(ROAD_LEVELS))
 }
+const uniforms = waterSurfaceUniforms
+
+const WATER_MASK_UNIFORM_NAMES = [
+  'waterMaterialEnabled',
+  'waterCameraPosition',
+  'waterTileMap',
+  'waterTileEnabled',
+  'waterTileAnchor',
+  'waterTileEast',
+  'waterTileNorth',
+  'waterTileMercator',
+  'waterTileCurvature',
+  'waterTileLayers',
+  'waterTileFade',
+  'waterTileWindow'
+] as const
+
+/** Shares the live semantic-water tile window with ordinary Three materials. */
+export function bindWaterMaskUniforms(target: Record<string, IUniform>): void {
+  for (const name of WATER_MASK_UNIFORM_NAMES) target[name] = uniforms[name]
+}
+
+/**
+ * Material-space water lookup. `offset` is an ECEF position relative to the
+ * camera, in metres. This is also used by the Google-tile cutout and the
+ * replacement sea-level mesh, so both sides of the cut have identical edges.
+ */
+export const WATER_MASK_MATERIAL_CHUNK = /* glsl */ `
+uniform float waterMaterialEnabled;
+uniform vec3 waterCameraPosition;
+uniform sampler2DArray waterTileMap;
+uniform float waterTileEnabled[${ROAD_LEVELS}];
+uniform vec3 waterTileAnchor[${ROAD_LEVELS}];
+uniform vec3 waterTileEast[${ROAD_LEVELS}];
+uniform vec3 waterTileNorth[${ROAD_LEVELS}];
+uniform vec4 waterTileMercator[${ROAD_LEVELS}];
+uniform float waterTileCurvature[${ROAD_LEVELS}];
+uniform float waterTileLayers[${ROAD_LEVELS * STRIDE}];
+uniform float waterTileFade[${ROAD_LEVELS * STRIDE}];
+uniform float waterTileWindow[${ROAD_LEVELS}];
+
+const int WATER_MATERIAL_STRIDE = ${STRIDE};
+
+vec2 waterMaterialLocal(const int level, const vec3 offset) {
+  vec3 d = offset - waterTileAnchor[level];
+  float east = dot(d, waterTileEast[level]);
+  float north = dot(d, waterTileNorth[level]);
+  float curvature = north * waterTileCurvature[level];
+  vec4 mercator = waterTileMercator[level];
+  return vec2(
+    mercator.x + mercator.z * east * (1.0 + curvature),
+    mercator.y - mercator.w * north * (1.0 + 0.5 * curvature)
+  );
+}
+
+float waterMaterialLayer(const int level, const ivec2 cell) {
+  int window = int(waterTileWindow[level]);
+  if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell, ivec2(window)))) {
+    return -1.0;
+  }
+  return waterTileLayers[level * WATER_MATERIAL_STRIDE + cell.y * window + cell.x];
+}
+
+float semanticWaterAtOffset(const vec3 offset) {
+  if (waterMaterialEnabled < 0.001) return 0.0;
+  float result = 0.0;
+  float ownership = 0.0;
+  for (int level = 0; level < ${ROAD_LEVELS}; ++level) {
+    if (waterTileEnabled[level] < 0.5 || ownership > 0.999) continue;
+    vec2 local = waterMaterialLocal(level, offset);
+    float window = waterTileWindow[level];
+    if (any(lessThan(local, vec2(0.0))) || any(greaterThanEqual(local, vec2(window)))) continue;
+    ivec2 cell = ivec2(floor(local));
+    float layer = waterMaterialLayer(level, cell);
+    if (layer < 0.0) continue;
+    float edge = min(min(local.x, local.y), min(window - local.x, window - local.y));
+    float fade = waterTileFade[level * WATER_MATERIAL_STRIDE + cell.y * int(window) + cell.x]
+      * smoothstep(0.0, 0.2, edge);
+    float take = (1.0 - ownership) * fade;
+    result += texture(waterTileMap, vec3(fract(local), layer)).r * take;
+    ownership += take;
+  }
+  return smoothstep(0.12, 0.88, result) * waterMaterialEnabled;
+}
+`
 
 const CHUNK = /* glsl */ `
 ${MARKER}
@@ -290,7 +381,18 @@ export function updateWaterSurface(
   nightAmbient: Vector3
 ): void {
   uniforms.waterTime.value += Math.min(delta, 0.1)
+  uniforms.waterCameraPosition.value.copy(cameraPosition)
   const geodetic = ecefToGeodetic(cameraPosition.x, cameraPosition.y, cameraPosition.z)
+  const surface = geodeticToEcef(geodetic.lat, geodetic.lon, 0)
+  const lat = (geodetic.lat * Math.PI) / 180
+  const lon = (geodetic.lon * Math.PI) / 180
+  uniforms.waterGeometryAnchor.value.set(surface.x, surface.y, surface.z)
+  uniforms.waterGeometryEast.value.set(-Math.sin(lon), Math.cos(lon), 0)
+  uniforms.waterGeometryNorth.value.set(
+    -Math.sin(lat) * Math.cos(lon),
+    -Math.sin(lat) * Math.sin(lon),
+    Math.cos(lat)
+  )
   if (!seaLevelInitialized || seaLevelAnchor.distanceToSquared(cameraPosition) > 50_000 ** 2) {
     seaLevelInitialized = true
     seaLevelAnchor.copy(cameraPosition)

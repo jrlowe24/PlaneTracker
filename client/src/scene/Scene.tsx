@@ -31,6 +31,7 @@ import { PostEffects } from './PostEffects'
 import { QualityApplier } from './QualityApplier'
 import { nightState } from './nightLighting'
 import { RainShafts } from '../weather/RainShafts'
+import { WaterGeometry } from './WaterGeometry'
 
 // Present at runtime in 3d-tiles-renderer 0.5.3, but omitted from its .d.ts.
 type GlobeControlsRuntime = GlobeControlsImpl & {
@@ -200,6 +201,7 @@ export const Scene: FC = () => {
         <Stars data='/atmosphere/stars.bin' intensity={6} pointSize={1.5} />
       </group>
       <GlobeAndControls />
+      {!config.tilesDisabled && <WaterGeometry />}
       <AircraftSystem />
       <RainShafts />
       <CameraRig />

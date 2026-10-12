@@ -9,6 +9,7 @@ import {
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'
 
 import { TileNormalsPlugin } from './TileNormalsPlugin'
+import { installTileWaterMask } from './TileWaterMaskPlugin'
 import { isMobileDevice } from '../state/quality'
 import { tileStatusStore } from './tileStatus'
 
@@ -42,6 +43,7 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
   const g = globalThis as TilesGlobal
   const existing = g[GLOBAL_KEY]
   if (existing != null) {
+    installTileWaterMask(existing)
     return existing
   }
 
@@ -66,6 +68,7 @@ export function getGoogleTiles(options: GoogleTilesOptions): TilesRenderer {
   tiles.registerPlugin(new TileNormalsPlugin())
   // Keep mipmaps: they matter for the grazing angles of a window-seat view.
   tiles.registerPlugin(new TileCompressionPlugin({ disableMipmaps: false }))
+  installTileWaterMask(tiles)
   tiles.registerPlugin(new UpdateOnChangePlugin())
   // A longer cross-fade turns coarse-to-fine swaps into a blend, not a pop.
   tiles.registerPlugin(new TilesFadePlugin({ fadeDuration: 600, maximumFadeOutTiles: 120 }))
