@@ -27,7 +27,7 @@ export const cloudDepth: {
   /**
    * The volumetric clouds' shadows and light shafts: 1 up close, 0 once
    * the far cloud layer has taken over (farClouds.ts); their shadow maps
-   * only reach ~40 km from the camera.
+   * reach 40–120 km from the camera depending on quality.
    */
   shadowFade: number
   /** Low cloud layer base above the ellipsoid (m); 0 when there is none. */

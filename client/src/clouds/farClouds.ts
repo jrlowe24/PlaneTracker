@@ -55,9 +55,28 @@ uniform float farCloudMix;
 uniform vec4 farCloudTune;
 const float CIRRUS_OPACITY = 30.0;
 
+/**
+ * At map distance the 20 km repeating 3D shape texture is visible as rows.
+ * Keep only the layer density shaped by the mesoscale weather texture; the
+ * full march brings the 3D erosion back as the camera descends.
+ */
+MediaSample farCloudMedia(const WeatherSample weather, const vec4 layerMask) {
+  vec4 density = saturate(
+    weather.density * densityScales * getLayerDensity(weather.heightFraction)
+  ) * layerMask;
+  float densitySum = density.x + density.y + density.z + density.w;
+  MediaSample media;
+  media.weight = densitySum > 1e-6 ? density / densitySum : vec4(0.0);
+  media.scattering = densitySum * scatteringCoefficient;
+  media.extinction = densitySum * absorptionCoefficient + media.scattering;
+  return media;
+}
+
 void farCloudLayer(
   const float bottom,
   const float top,
+  const vec4 layerMask,
+  const float sampleHeight,
   const float opacityScale,
   const vec3 cameraPosition,
   const vec3 rayDirection,
@@ -68,7 +87,7 @@ void farCloudLayer(
   inout float frontDepth
 ) {
   if (top - bottom < 1.0) return;
-  float height = mix(bottom, top, farCloudTune.w);
+  float height = mix(bottom, top, sampleHeight);
   float radius = bottomRadius + height;
   float b = dot(cameraPosition, rayDirection);
   float c = dot(cameraPosition, cameraPosition) - radius * radius;
@@ -81,9 +100,8 @@ void farCloudLayer(
   vec3 position = cameraPosition + t * rayDirection;
   vec2 uv = getGlobeUv(position);
   WeatherSample weather = sampleWeather(uv, height, mipLevel, position);
-  if (!any(greaterThan(weather.density, vec4(minDensity)))) return;
-  // No detail noise: sub-pixel from this far up.
-  MediaSample media = sampleMedia(weather, position, uv, max(mipLevel, 0.5), 1.0);
+  if (dot(weather.density, layerMask) <= minDensity) return;
+  MediaSample media = farCloudMedia(weather, layerMask);
   float opticalDepth = media.extinction * (top - bottom) * farCloudTune.z * opacityScale;
   float alpha = 1.0 - exp(-opticalDepth);
   if (alpha < 1e-3) return;
@@ -106,9 +124,18 @@ void farCloudLayer(
 }
 
 /** Opacity of a layer where the ray from a ground point toward the sun crosses it. */
-float farCloudShadowLayer(const float bottom, const float top, const vec3 ground, const vec3 toSun, const float mipLevel) {
+float farCloudShadowLayer(
+  const float bottom,
+  const float top,
+  const vec4 layerMask,
+  const float sampleHeight,
+  const float opacityScale,
+  const vec3 ground,
+  const vec3 toSun,
+  const float mipLevel
+) {
   if (top - bottom < 1.0) return 0.0;
-  float height = mix(bottom, top, farCloudTune.w);
+  float height = mix(bottom, top, sampleHeight);
   float radius = bottomRadius + height;
   float b = dot(ground, toSun);
   float c = dot(ground, ground) - radius * radius;
@@ -116,10 +143,9 @@ float farCloudShadowLayer(const float bottom, const float top, const vec3 ground
   vec3 position = ground + (-b + sqrt(b * b - c)) * toSun;
   vec2 uv = getGlobeUv(position);
   WeatherSample weather = sampleWeather(uv, height, mipLevel, position);
-  if (!any(greaterThan(weather.density, vec4(minDensity)))) return 0.0;
-  // No detail noise: sub-pixel from this far up.
-  MediaSample media = sampleMedia(weather, position, uv, max(mipLevel, 0.5), 1.0);
-  return 1.0 - exp(-media.extinction * (top - bottom) * farCloudTune.z);
+  if (dot(weather.density, layerMask) <= minDensity) return 0.0;
+  MediaSample media = farCloudMedia(weather, layerMask);
+  return 1.0 - exp(-media.extinction * (top - bottom) * farCloudTune.z * opacityScale);
 }
 
 /**
@@ -131,8 +157,8 @@ float farCloudShadow(const vec3 ground, const float mipLevel) {
   vec3 toSun = ${night ? 'realSunDirection' : 'sunDirection'};
   float sunUp = smoothstep(0.0, 0.1, dot(normalize(ground), toSun));
   if (sunUp <= 0.0) return 0.0;
-  float low = farCloudShadowLayer(minLayerHeights.x, maxLayerHeights.x, ground, toSun, mipLevel);
-  float mid = farCloudShadowLayer(minLayerHeights.y, maxLayerHeights.y, ground, toSun, mipLevel);
+  float low = farCloudShadowLayer(minLayerHeights.x, maxLayerHeights.x, vec4(1.0, 0.0, 0.0, 0.0), farCloudTune.w, 1.0, ground, toSun, mipLevel);
+  float mid = farCloudShadowLayer(minLayerHeights.y, maxLayerHeights.y, vec4(0.0, 1.0, 0.0, 0.0), farCloudTune.w, 1.0, ground, toSun, mipLevel);
   return (1.0 - (1.0 - low) * (1.0 - mid)) * sunUp * 0.4;
 }
 
@@ -146,11 +172,10 @@ vec4 farClouds(
 ) {
   vec4 color = vec4(0.0);
   frontDepth = -1.0;
-  // Seen from above: cirrus (thin: its own opacity scale), the mid layer,
-  // then the low one.
-  farCloudLayer(minLayerHeights.z, maxLayerHeights.z, CIRRUS_OPACITY, cameraPosition, rayDirection, rayNearFar.y, cosTheta, mipLevel, color, frontDepth);
-  farCloudLayer(minLayerHeights.y, maxLayerHeights.y, 1.0, cameraPosition, rayDirection, rayNearFar.y, cosTheta, mipLevel, color, frontDepth);
-  farCloudLayer(minLayerHeights.x, maxLayerHeights.x, 1.0, cameraPosition, rayDirection, rayNearFar.y, cosTheta, mipLevel, color, frontDepth);
+  // Seen from above: cirrus, the mid layer, then low.
+  farCloudLayer(minLayerHeights.z, maxLayerHeights.z, vec4(0.0, 0.0, 1.0, 0.0), farCloudTune.w, CIRRUS_OPACITY, cameraPosition, rayDirection, rayNearFar.y, cosTheta, mipLevel, color, frontDepth);
+  farCloudLayer(minLayerHeights.y, maxLayerHeights.y, vec4(0.0, 1.0, 0.0, 0.0), farCloudTune.w, 1.0, cameraPosition, rayDirection, rayNearFar.y, cosTheta, mipLevel, color, frontDepth);
+  farCloudLayer(minLayerHeights.x, maxLayerHeights.x, vec4(1.0, 0.0, 0.0, 0.0), farCloudTune.w, 1.0, cameraPosition, rayDirection, rayNearFar.y, cosTheta, mipLevel, color, frontDepth);
   return color;
 }
 `

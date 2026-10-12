@@ -79,6 +79,25 @@ export function convectiveDepth(cape: number | null): number {
   return clampValue(3500 + Math.max(0, cape ?? 0) * 3, 3500, 10_000)
 }
 
+/**
+ * Visual precipitation strength from a WMO current-weather code. This is a
+ * rendering signal, not a measured rain rate: drizzle is faint, continuous
+ * rain is moderate, showers are strong and thunderstorms use the full range.
+ */
+export function precipitationIntensity(
+  code: number | null,
+  cape: number | null = null
+): number {
+  if (code == null) return 0
+  if (code >= 95 && code <= 99) {
+    return clampValue(0.8 + Math.max(0, cape ?? 0) / 10_000, 0.8, 1)
+  }
+  if (code >= 80 && code <= 82) return 0.55 + (code - 80) * 0.2
+  if (code >= 61 && code <= 67) return 0.35 + (code - 61) * 0.075
+  if (code >= 51 && code <= 57) return 0.12 + (code - 51) * 0.035
+  return 0
+}
+
 function smoothstep01(x: number): number {
   const t = Math.min(1, Math.max(0, x))
   return t * t * (3 - 2 * t)

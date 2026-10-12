@@ -17,7 +17,7 @@ import { weatherStore } from '../data/weather'
 import { nightEmission } from '../nightLights/nightLightsStore'
 import { useStore } from '../state/createStore'
 import { qualityStore } from '../state/quality'
-import { settingsStore } from '../state/settings'
+import { settingsStore, type WeatherPrototype } from '../state/settings'
 import { nightState } from '../scene/nightLighting'
 import { cloudCoverStore } from './cloudCoverStore'
 import { cloudDepth } from './cloudDepth'
@@ -33,8 +33,10 @@ import { patchCloudsResolve, RegionalCoverageController } from './regionalShader
  * altitudes. Below, the march; above, the far layer at a fraction of the
  * cost, where the march's distant samples turned into a translucent veil.
  */
-const FAR_START_ALTITUDE = 9_000
-const FAR_END_ALTITUDE = 18_000
+// Preserve full volumetric structure throughout normal airliner altitudes.
+// The single-sample far representation is for high map views, not chase cam.
+const FAR_START_ALTITUDE = 32_000
+const FAR_END_ALTITUDE = 65_000
 /** Far layer resolution, relative to the preset's. */
 const FAR_RESOLUTION = 0.75
 /**
@@ -44,7 +46,7 @@ const FAR_RESOLUTION = 0.75
  */
 const FADE_START_ALTITUDE = 180_000
 const FADE_END_ALTITUDE = 450_000
-const SHADOW_MAX_FAR = 40_000
+const SHADOW_FAR = { low: 40_000, medium: 70_000, high: 120_000, ultra: 120_000 } as const
 const SHAFT_STEPS = 120
 const SHAFT_STEP_M = 150
 /** Cloud resolution on dark nights, relative to the preset's. */
@@ -95,10 +97,6 @@ class CloudHistoryReset {
  */
 const COVER_TIME_CONSTANT = 30
 const HEIGHT_TIME_CONSTANT = 60
-/** After you pick a weather, it settles in a few seconds instead. */
-const CHOSEN_TIME_CONSTANT = 1.5
-const CHOSEN_DURATION = 8
-
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)))
   return t * t * (3 - 2 * t)
@@ -119,6 +117,19 @@ function manualSpec(coverage: number): CloudWeatherSpec {
     mid: { altitude: 3600, height: 1500, coverage: Math.max(0, (c - 0.45) * 1.6) },
     high: { altitude: 8000, height: 500, coverage: c === 0 ? 0 : 0.15 + 0.4 * c },
     convective: { altitude: 900, height: 0, coverage: 0 }
+  }
+}
+
+/** Fixed, repeatable scenes with unambiguous baselines for visual development. */
+function prototypeSpec(kind: Exclude<WeatherPrototype, 'live'>): CloudWeatherSpec {
+  if (kind === 'clear') return manualSpec(0)
+  if (kind === 'fair') return manualSpec(0.3)
+  return {
+    coverage: 0.95,
+    low: { altitude: 650, height: 1050, coverage: 0.94 },
+    mid: { altitude: 2500, height: 1900, coverage: 0.58 },
+    high: { altitude: 8200, height: 650, coverage: 0.38 },
+    convective: { altitude: 650, height: 0, coverage: 0 }
   }
 }
 
@@ -143,6 +154,7 @@ const LOW_MID_DENSITY = 0.2
 const CIRRUS_DENSITY = 0.004
 /** Towering cumulus / cumulonimbus: denser than fair-weather cumulus. */
 const CONVECTIVE_DENSITY = 0.3
+/** Disabled until the tower/anvil morphology is replaced with a credible model. */
 const CONVECTIVE_ENABLED = false
 
 /**
@@ -190,9 +202,8 @@ export const VolumetricClouds: FC = () => {
   // layers <Clouds> may reset to defaults).
   const heights = useRef<Array<{ altitude: number; height: number }>>([])
   const sinceDisplay = useRef(0)
-  // Weather choice last frame, and how long the quick blend still runs.
+  // Weather choice last frame. Explicit choices snap; forecast updates blend.
   const lastChoice = useRef('')
-  const quickBlend = useRef(0)
   const dark = useRef(false)
 
   useFrame(({ gl }, delta) => {
@@ -229,17 +240,29 @@ export const VolumetricClouds: FC = () => {
     const scale = cloudDepth.fade > 0 ? resolution * far : 0.1
     if (effect.resolutionScale !== scale) effect.resolutionScale = scale
 
+    // Takram can retain or swap shader materials independently of this React
+    // controller. Keep the active materials bound to this controller's live
+    // uniforms; otherwise the UI changes while the GPU reads stale values.
+    const activePasses = effect as unknown as CloudsPassInternals
+    for (const material of [activePasses.cloudsPass?.currentMaterial, activePasses.shadowPass?.currentMaterial]) {
+      if (
+        material != null &&
+        material.uniforms.coverageFallback !== regional.uniforms.coverageFallback &&
+        !regional.patch(material)
+      ) {
+        console.warn('[clouds] regional coverage patch did not rebind')
+      }
+    }
+
     const settings = settingsStore.get()
     const sample = weatherStore.get().sample
-    const live = settings.cloudSource === 'weather' && sample != null
-    const spec = live ? cloudLayersFromWeather(sample) : manualSpec(settings.cloudCoverage)
-    // Dev: fixed cover per layer ([low, mid, high]) for testing one layer alone.
-    const override = import.meta.env.DEV ? (window as { __cloudCover?: [number, number, number] }).__cloudCover : undefined
-    if (override != null && !live) {
-      spec.low = { ...spec.low, coverage: override[0] }
-      spec.mid = { ...spec.mid, coverage: override[1] }
-      spec.high = { ...spec.high, coverage: override[2] }
-    }
+    const prototype = settings.weatherPrototype
+    const live = prototype === 'live' && settings.cloudSource === 'weather' && sample != null
+    const spec = prototype === 'live'
+      ? live
+        ? cloudLayersFromWeather(sample)
+        : manualSpec(settings.cloudCoverage)
+      : prototypeSpec(prototype)
     // Cover at the view center comes from the blended grid when there is
     // one (the same field the shader uses everywhere), not the single
     // nearest reading, which jumps between cells.
@@ -257,15 +280,13 @@ export const VolumetricClouds: FC = () => {
     const dt = Math.min(delta, 0.1)
     const first = !initialized.current
     initialized.current = true
-    const choice = `${settings.cloudSource}:${settings.cloudCoverage}`
-    if (choice !== lastChoice.current) {
-      if (lastChoice.current !== '') quickBlend.current = CHOSEN_DURATION
+    const choice = `${settings.cloudSource}:${settings.cloudCoverage}:${prototype}:presets-v4`
+    const selectionChanged = choice !== lastChoice.current
+    if (selectionChanged) {
       lastChoice.current = choice
     }
-    quickBlend.current = Math.max(0, quickBlend.current - dt)
-    const quick = quickBlend.current > 0
-    const kCover = first ? 1 : smoothingFactor(dt, quick ? CHOSEN_TIME_CONSTANT : COVER_TIME_CONSTANT)
-    const kHeight = first ? 1 : smoothingFactor(dt, quick ? CHOSEN_TIME_CONSTANT : HEIGHT_TIME_CONSTANT)
+    const kCover = first || selectionChanged ? 1 : smoothingFactor(dt, COVER_TIME_CONSTANT)
+    const kHeight = first || selectionChanged ? 1 : smoothingFactor(dt, HEIGHT_TIME_CONSTANT)
     effect.coverage = GLOBAL_COVERAGE
     const layers = effect.cloudLayers
     const cover = blended.current
@@ -280,8 +301,6 @@ export const VolumetricClouds: FC = () => {
       if (layer == null) continue
       layer.altitude = h.altitude
       // An empty layer (no towers forecast) costs no ray marching.
-      // Convective towers are disabled until their shapes are finished
-      // (work in progress on branch wip-storm-clouds).
       // Nor does a layer with no cloud anywhere: clear sky marched every
       // ray through the empty shell (~10 ms, more than a cloudy sky, whose
       // rays stop early in cloud).
@@ -323,7 +342,7 @@ export const VolumetricClouds: FC = () => {
         : i === 1
           ? smoothstep(0.4, 0.78, cover[i]!)
           : 0
-      layer.shapeAlteringBias = i === 3 ? 0.6 : 0.35
+      layer.shapeAlteringBias = 0.35
       layer.densityScale =
         i === 2 ? CIRRUS_DENSITY * (0.6 + cover[2]!) : i === 3 ? CONVECTIVE_DENSITY : LOW_MID_DENSITY
       layer.shapeAmount = i === 2 ? 0.4 : 1
@@ -336,7 +355,10 @@ export const VolumetricClouds: FC = () => {
       // light without feeding its own coarse shadow map back into the edges.
       // No shadow maps once the far layer has taken over (nothing reads
       // them): the shadow pass then finds no cloud and ends early.
-      layer.shadow = shadows && farCloudMix.value < 0.999 && (i === 0 || (i === 1 && deck < 0.6))
+      layer.shadow =
+        shadows &&
+        farCloudMix.value < 0.999 &&
+        (i === 0 || (i === 1 && deck < 0.6))
     }
     // Widen the low-frequency Perlin-Worley body scale (one repeat per 20 km)
     // so high-coverage low decks form broad masses instead of many equal puffs.
@@ -350,7 +372,24 @@ export const VolumetricClouds: FC = () => {
     // Cover per layer: from the regional grid at each sample's position
     // when there is weather data (patched shader), else the blended
     // view-center / manual cover everywhere.
-    regional.update(dt, live, lightAnchor, weatherStore.get().grid, [cover[0]!, cover[1]!, cover[2]!, cover[3]!])
+    regional.update(
+      dt,
+      live,
+      lightAnchor,
+      weatherStore.get().grid,
+      [cover[0]!, cover[1]!, cover[2]!, cover[3]!]
+    )
+
+    // Four cascades retain close detail while extending moving cloud shadows
+    // far enough to read as a weather system from a low flight. The far-cloud
+    // path takes over at altitude, so this cost is limited to near views.
+    const level = qualityStore.get().level
+    const shadowFar = SHADOW_FAR[level]
+    if (effect.shadow.maxFar !== shadowFar) effect.shadow.maxFar = shadowFar
+    const shadowMapSize = level === 'low' ? 512 : 1024
+    if (effect.shadow.mapSize.x !== shadowMapSize) {
+      effect.shadow.mapSize.setScalar(shadowMapSize)
+    }
     sinceDisplay.current += dt
     if (sinceDisplay.current > 0.5) {
       sinceDisplay.current = 0
@@ -361,26 +400,29 @@ export const VolumetricClouds: FC = () => {
   if (preset.clouds === false) return null
   return (
     <Clouds
+      key='weather-system-v2'
       ref={effect => {
         ref.current = effect
         if (effect == null) {
           initialized.current = false
           return
         }
-        // Slow drift of the coverage pattern (wind).
-        effect.localWeatherVelocity.set(0.00002, 0.000005)
+        // One texture tile now spans roughly 1,000 km on a cube-sphere face.
+        // Its broad correlated lobes form 100–500 km weather systems; the 3D
+        // shape textures still supply the individual 10–30 km cloud bodies.
+        // The former default (100 repeats) exposed obvious rows when zoomed
+        // out and gave cloud fields no coherent mesoscale structure.
+        effect.localWeatherRepeat.setScalar(8)
+        effect.localWeatherVelocity.set(0.000006, 0.0000015)
         // The library's default powder term darkens very thin cloud samples
         // strongly. At sunset this reads as a blue shadow around sunlit wisps.
         effect.powderScale = 0.28
         effect.powderExponent = 100
-        // Cloud shadow cascades span 40 km, not the whole view (180 km+):
-        // spread over the far plane, the far cascades were ~200 m per texel
-        // and painted blocky smudges over distant terrain and aircraft.
-        effect.shadow.maxFar = SHADOW_MAX_FAR
-        effect.shadow.splitLambda = 0.8
-        if (qualityStore.get().settings.clouds === 'high') {
-          effect.shadow.mapSize.set(1024, 1024)
-        }
+        effect.shadow.maxFar = SHADOW_FAR[qualityStore.get().level]
+        // Bias resolution toward the aircraft while retaining a broad final
+        // cascade for the weather system's large-scale shadow footprint.
+        effect.shadow.splitLambda = 0.88
+        effect.shadow.mapSize.setScalar(qualityStore.get().level === 'low' ? 512 : 1024)
         const passes = effect as unknown as CloudsPassInternals
         for (const material of [passes.cloudsPass?.currentMaterial, passes.shadowPass?.currentMaterial]) {
           if (material != null && !regional.patch(material)) {

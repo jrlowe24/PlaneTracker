@@ -16,7 +16,7 @@ import {
   useState,
   type FC
 } from 'react'
-import type { Object3D } from 'three'
+import type { Group, Object3D } from 'three'
 
 import { AircraftSystem } from '../aircraft/AircraftSystem'
 import { CameraRig } from '../camera/CameraRig'
@@ -29,8 +29,19 @@ import { useStore } from '../state/createStore'
 import { getSimulatedDate } from '../state/settings'
 import { PostEffects } from './PostEffects'
 import { QualityApplier } from './QualityApplier'
+import { nightState } from './nightLighting'
+import { RainShafts } from '../weather/RainShafts'
 
-/** Default view: Seattle from above, north up (the free camera is a top-down map). */
+// Present at runtime in 3d-tiles-renderer 0.5.3, but omitted from its .d.ts.
+type GlobeControlsRuntime = GlobeControlsImpl & {
+  scaleZoomOrientationAtEdges: boolean
+}
+
+function setEdgeZoomScaling(controls: GlobeControlsRuntime, enabled: boolean): void {
+  controls.scaleZoomOrientationAtEdges = enabled
+}
+
+/** Default view: Seattle from above, north up. */
 const DEFAULT_VIEW = {
   latitude: 47.6062,
   longitude: -122.3321,
@@ -40,14 +51,11 @@ const DEFAULT_VIEW = {
 }
 
 /**
- * The free camera looks straight down and stays that way, like a map:
- * drag pans, the wheel zooms toward the cursor, right-drag turns the
- * heading. Tilted views were confusing here (zooming out slid sideways
- * along a grazing view and only slowly turned to look down); following an
- * aircraft gives the 3D views. (The controls' "altitude" limits are angles
- * from straight down, despite their docs: 0 = top-down.)
+ * Furthest the globe camera may tilt from straight down. GlobeControls calls
+ * this "altitude", but zero is top-down and PI / 2 is on the horizon. Leave
+ * a margin above the horizon so zooming cannot pull the camera through land.
  */
-const TOP_DOWN = 0
+const MAX_FREE_LOOK_TILT = Math.PI * 0.45
 
 /**
  * `?view=lat,lon,heading,pitch,distance[,height]` (degrees / meters; height
@@ -81,7 +89,7 @@ const GlobeAndControls: FC = () => {
   }, [])
 
   const controls = useThree(
-    ({ controls }) => controls as GlobeControlsImpl | null
+    ({ controls }) => controls as GlobeControlsRuntime | null
   )
   // The camera rig drives the camera while following an aircraft and during
   // fly-to transitions.
@@ -94,12 +102,15 @@ const GlobeAndControls: FC = () => {
   // Re-enable it on the first user interaction (as takram's examples do).
   useEffect(() => {
     if (controls == null) return
+    const previousEdgeZoom = controls.scaleZoomOrientationAtEdges
+    setEdgeZoomScaling(controls, true)
     const onStart = (): void => {
       controls.adjustHeight = true
       controls.removeEventListener('start', onStart)
     }
     controls.addEventListener('start', onStart)
     return () => {
+      setEdgeZoomScaling(controls, previousEdgeZoom)
       controls.removeEventListener('start', onStart)
     }
   }, [controls])
@@ -120,8 +131,8 @@ const GlobeAndControls: FC = () => {
           enabled={globeControlsEnabled}
           enableDamping
           adjustHeight={false}
-          minAltitude={TOP_DOWN}
-          maxAltitude={TOP_DOWN}
+          minAltitude={0}
+          maxAltitude={MAX_FREE_LOOK_TILT}
         />
       )}
     </>
@@ -174,8 +185,10 @@ export const Scene: FC = () => {
 
   // Sun and moon follow the (optionally offset) real UTC clock.
   const atmosphereRef = useRef<AtmosphereApi>(null)
+  const starsRef = useRef<Group>(null)
   useFrame(() => {
     atmosphereRef.current?.updateByDate(getSimulatedDate())
+    if (starsRef.current != null) starsRef.current.visible = nightState.night > 0.12
   })
 
   return (
@@ -183,9 +196,12 @@ export const Scene: FC = () => {
       <Sky />
       {/* Brighter than takram's default so the night sky reads at our
           (reduced) night exposure. */}
-      <Stars data='/atmosphere/stars.bin' intensity={6} pointSize={1.5} />
+      <group ref={starsRef}>
+        <Stars data='/atmosphere/stars.bin' intensity={6} pointSize={1.5} />
+      </group>
       <GlobeAndControls />
       <AircraftSystem />
+      <RainShafts />
       <CameraRig />
       <PostEffects />
       <QualityApplier />

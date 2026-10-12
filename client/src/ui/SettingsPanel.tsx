@@ -4,7 +4,7 @@ import { cloudCoverStore } from '../clouds/cloudCoverStore'
 import { useStore } from '../state/createStore'
 import { qualityStore, setQualityChoice, type QualityLevel } from '../state/quality'
 import { resolutionStore } from '../state/resolution'
-import { settingsStore } from '../state/settings'
+import { settingsStore, setWeatherPrototype } from '../state/settings'
 import { formatHours, setViewSolarHours, timePresets, viewSolarHours } from '../state/skyTime'
 import { uiStore } from '../state/ui'
 import { QualityDetails } from './QualityDetails'
@@ -20,6 +20,12 @@ const WEATHER: Array<{ id: string; label: string; coverage: number | null }> = [
   { id: 'cloudy', label: 'Cloudy', coverage: 0.6 },
   { id: 'overcast', label: 'Overcast', coverage: 0.95 }
 ]
+
+const LAB_WEATHER_LABEL = {
+  clear: 'Clear',
+  fair: 'Fair',
+  overcast: 'Overcast'
+} as const
 
 const QUALITY: Array<{ id: QualityLevel | 'auto'; label: string }> = [
   { id: 'auto', label: 'Auto' },
@@ -88,9 +94,12 @@ const TimeSection: FC = () => {
 const WeatherSection: FC = () => {
   const source = useStore(settingsStore, s => s.cloudSource)
   const coverage = useStore(settingsStore, s => s.cloudCoverage)
+  const prototype = useStore(settingsStore, s => s.weatherPrototype)
   const cover = useStore(cloudCoverStore, s => s)
   const active =
-    source === 'weather'
+    prototype !== 'live'
+      ? null
+      : source === 'weather'
       ? 'live'
       : (WEATHER.find(w => w.coverage != null && Math.abs(w.coverage - coverage) < 0.01)?.id ?? null)
   const here = Math.round(Math.max(cover.low, cover.mid) * 100)
@@ -99,7 +108,11 @@ const WeatherSection: FC = () => {
       <div className='settings-label'>
         <span>Weather</span>
         <span className='settings-value'>
-          {source === 'weather' ? `Live forecast · ${here}% cloud here` : 'Same everywhere'}
+          {prototype !== 'live'
+            ? `Lab · ${LAB_WEATHER_LABEL[prototype]}`
+            : source === 'weather'
+              ? `Live forecast · ${here}% cloud here`
+              : 'Same everywhere'}
         </span>
       </div>
       <Segmented
@@ -108,10 +121,16 @@ const WeatherSection: FC = () => {
         value={active}
         onChange={id => {
           const choice = WEATHER.find(w => w.id === id)!
+          // A normal weather choice explicitly leaves the developer scene;
+          // no hidden lab override remains to fight this control.
+          setWeatherPrototype('live')
           if (choice.coverage == null) settingsStore.set({ cloudSource: 'weather' })
           else settingsStore.set({ cloudSource: 'manual', cloudCoverage: choice.coverage })
         }}
       />
+      {prototype !== 'live' && (
+        <p className='settings-note'>A generated lab scene is active. Pick any weather above to leave it.</p>
+      )}
     </section>
   )
 }

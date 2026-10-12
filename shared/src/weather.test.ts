@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   cloudLayersFromWeather,
   convectiveCoverage,
+  precipitationIntensity,
   cumulusBaseAboveGround,
   type WeatherSample
 } from './weather'
@@ -29,6 +30,14 @@ describe('cloud layers from weather', () => {
     expect(spec.low.altitude).toBe(120 + 1250)
     expect(spec.low.coverage).toBeCloseTo(0.4, 9)
     expect(spec.coverage).toBeCloseTo(0.4, 9)
+  })
+
+  it('maps WMO rain and storm codes to a visual intensity', () => {
+    expect(precipitationIntensity(0)).toBe(0)
+    expect(precipitationIntensity(51)).toBeGreaterThan(0)
+    expect(precipitationIntensity(65)).toBeGreaterThan(precipitationIntensity(51))
+    expect(precipitationIntensity(82)).toBeGreaterThan(precipitationIntensity(65))
+    expect(precipitationIntensity(95, 3000)).toBe(1)
   })
 
   it('keeps layers ordered and within sensible bounds', () => {

@@ -10,7 +10,7 @@ import {
 
 /**
  * Cloud noise for takram's clouds ("local weather": r = low coverage,
- * g = mid, b = cirrus, a = disabled convective layer), tiled over the globe.
+ * g = mid, b = cirrus, a = reserved), tiled over the globe.
  *
  * Each channel holds tileable fBm noise rank-transformed to a uniform
  * distribution u ∈ [0, 1). The patched clouds shader (regionalShader.ts)
@@ -76,9 +76,24 @@ const STYLES: [NoiseStyle, NoiseStyle, NoiseStyle, NoiseStyle] = [
   { periodX: 5, periodY: 5, octaves: 4, seed: 23 },
   // High: streaky cirrus.
   { periodX: 16, periodY: 3, octaves: 3, seed: 37 },
-  // Convective towers (currently disabled).
+  // Reserved for a future weather-driven convective layer.
   { periodX: 7, periodY: 7, octaves: 2, seed: 53 }
 ]
+
+// Shared synoptic envelope. Each rendered texture tile spans roughly a
+// thousand kilometres (VolumetricClouds lowers localWeatherRepeat), so these
+// two-to-three broad lobes become mesoscale systems rather than another row
+// of individual cloud puffs.
+const SYSTEM_STYLE: NoiseStyle = {
+  periodX: 2,
+  periodY: 2,
+  octaves: 4,
+  seed: 79,
+  persistence: 0.46
+}
+
+/** How strongly each layer follows the shared weather system. */
+const SYSTEM_WEIGHTS = [0.72, 0.68, 0.38, 0.78] as const
 
 /** Rank-transforms values to a uniform distribution over [0, 1). */
 function toUniform(values: Float32Array): Float32Array {
@@ -88,7 +103,7 @@ function toUniform(values: Float32Array): Float32Array {
   return out
 }
 
-function fbmChannel(style: NoiseStyle): Float32Array {
+function fbmValues(style: NoiseStyle): Float32Array {
   const values = new Float32Array(SIZE * SIZE)
   for (let y = 0; y < SIZE; ++y) {
     for (let x = 0; x < SIZE; ++x) {
@@ -102,6 +117,17 @@ function fbmChannel(style: NoiseStyle): Float32Array {
       values[y * SIZE + x] = sum
     }
   }
+  return values
+}
+
+function fbmChannel(style: NoiseStyle, system: Float32Array, systemWeight: number): Float32Array {
+  const detail = fbmValues(style)
+  const values = new Float32Array(detail.length)
+  for (let i = 0; i < values.length; ++i) {
+    values[i] = system[i]! * systemWeight + detail[i]! * (1 - systemWeight)
+  }
+  // Preserve the coverage contract after correlating the layers: a requested
+  // cover of c still occupies exactly c of a sufficiently large region.
   return toUniform(values)
 }
 
@@ -109,7 +135,8 @@ export class CoverageTexture {
   readonly texture: DataTexture
 
   constructor() {
-    const channels = STYLES.map(fbmChannel)
+    const system = fbmValues(SYSTEM_STYLE)
+    const channels = STYLES.map((style, i) => fbmChannel(style, system, SYSTEM_WEIGHTS[i]!))
     const data = new Uint8Array(SIZE * SIZE * 4)
     for (let channel = 0; channel < 4; ++channel) {
       const u = channels[channel]!

@@ -72,11 +72,11 @@ export const Welcome: FC<{ open: boolean; onClose: () => void }> = ({ open, onCl
         </ol>
         <div className='welcome-controls'>
           {touch ? (
-            <span>Drag to look around · pinch to zoom · two-finger drag to tilt</span>
+            <span>Drag to move · pinch to zoom · two-finger drag to orbit and tilt</span>
           ) : (
             <span>
-              Drag to rotate · scroll to zoom · <kbd>F</kbd> follow · <kbd>W</kbd> window seat ·{' '}
-              <kbd>S</kbd> switch side · <kbd>Esc</kbd> back
+              Drag to move · right-drag or shift-drag to orbit · scroll to zoom · <kbd>F</kbd>{' '}
+              follow · <kbd>W</kbd> window seat · <kbd>S</kbd> switch side · <kbd>Esc</kbd> back
             </span>
           )}
         </div>

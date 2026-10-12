@@ -1,5 +1,7 @@
 import { createStore } from './createStore'
 
+export type WeatherPrototype = 'live' | 'clear' | 'fair' | 'overcast'
+
 export interface Settings {
   /**
    * Offset added to the real clock to get the simulated time that drives the
@@ -17,15 +19,32 @@ export interface Settings {
   cloudSource: 'weather' | 'manual'
   /** Manual cloud coverage, 0 (clear) … 1 (overcast). */
   cloudCoverage: number
+  /** Dev visual lab; `live` delegates to the regular Weather control. */
+  weatherPrototype: WeatherPrototype
+  /** Browser-friendly precipitation: forecast-driven, forced for visual QA, or off. */
+  precipitation: 'auto' | 'force' | 'off'
   showDevPanel: boolean
 }
 
 const params = new URLSearchParams(window.location.search)
+const WEATHER_PROTOTYPE_KEY = 'window-seat.weather-prototype'
 
 /** `?t=<hours>` starts with a time offset, e.g. `?t=-6`. */
 function initialTimeOffsetMs(): number {
   const hours = Number(params.get('t') ?? 0)
   return Number.isFinite(hours) ? hours * 3_600_000 : 0
+}
+
+/** `?weather=clear|fair|overcast` opens a repeatable development scene. */
+function initialWeatherPrototype(): Settings['weatherPrototype'] {
+  const value = params.get('weather')
+  if (value === 'clear' || value === 'fair' || value === 'overcast') return value
+  try {
+    const stored = window.sessionStorage.getItem(WEATHER_PROTOTYPE_KEY)
+    return stored === 'clear' || stored === 'fair' || stored === 'overcast' ? stored : 'live'
+  } catch {
+    return 'live'
+  }
 }
 
 export const settingsStore = createStore<Settings>({
@@ -34,8 +53,20 @@ export const settingsStore = createStore<Settings>({
   interpolationDelayMs: 12_000,
   cloudSource: 'weather',
   cloudCoverage: 0.35,
+  weatherPrototype: initialWeatherPrototype(),
+  precipitation: 'auto',
   showDevPanel: import.meta.env.DEV
 })
+
+/** Keeps the visual-lab selection across shader-triggered page reloads. */
+export function setWeatherPrototype(value: Settings['weatherPrototype']): void {
+  settingsStore.set({ weatherPrototype: value })
+  try {
+    window.sessionStorage.setItem(WEATHER_PROTOTYPE_KEY, value)
+  } catch {
+    // Session storage can be unavailable in private browsing.
+  }
+}
 
 /** Simulated "now" used for sun/moon position. */
 export function getSimulatedDate(): Date {

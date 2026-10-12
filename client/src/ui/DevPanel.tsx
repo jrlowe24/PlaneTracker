@@ -5,8 +5,15 @@ import { flightStatusStore } from '../data/flightConnection'
 import { cloudCoverStore } from '../clouds/cloudCoverStore'
 import { weatherStore } from '../data/weather'
 import { tileStatusStore } from '../globe/tileStatus'
+import { nightEmission } from '../nightLights/nightLightsStore'
+import { nightState } from '../scene/nightLighting'
 import { useStore } from '../state/createStore'
-import { getSimulatedDate, settingsStore } from '../state/settings'
+import {
+  getSimulatedDate,
+  settingsStore,
+  setWeatherPrototype,
+  type WeatherPrototype
+} from '../state/settings'
 
 const HOUR = 3_600_000
 
@@ -34,6 +41,8 @@ export const DevPanel: FC = () => {
   const delayMs = useStore(settingsStore, s => s.interpolationDelayMs)
   const coverage = useStore(settingsStore, s => s.cloudCoverage)
   const cloudSource = useStore(settingsStore, s => s.cloudSource)
+  const weatherPrototype = useStore(settingsStore, s => s.weatherPrototype)
+  const precipitation = useStore(settingsStore, s => s.precipitation)
   const weather = useStore(weatherStore, s => s.sample)
   const cover = useStore(cloudCoverStore, s => s)
   const aircraftCount = useStore(flightStatusStore, s => s.aircraftCount)
@@ -127,17 +136,59 @@ export const DevPanel: FC = () => {
         />
       </label>
 
-      <label className='dev-row dev-inline'>
-        <span>Clouds from live weather</span>
-        <input
-          type='checkbox'
-          checked={cloudSource === 'weather'}
+      {weatherPrototype === 'live' && (
+        <label className='dev-row dev-inline'>
+          <span>Clouds from live weather</span>
+          <input
+            type='checkbox'
+            checked={cloudSource === 'weather'}
+            onChange={e => {
+              settingsStore.set({ cloudSource: e.target.checked ? 'weather' : 'manual' })
+            }}
+          />
+        </label>
+      )}
+      <label className='dev-row'>
+        <span>Weather laboratory</span>
+        <select
+          value={weatherPrototype}
           onChange={e => {
-            settingsStore.set({ cloudSource: e.target.checked ? 'weather' : 'manual' })
+            setWeatherPrototype(e.target.value as WeatherPrototype)
           }}
-        />
+        >
+          <option value='live'>Regular weather settings</option>
+          <option value='clear'>Clear</option>
+          <option value='fair'>Fair</option>
+          <option value='overcast'>Overcast</option>
+        </select>
       </label>
-      {cloudSource === 'weather' ? (
+      {weatherPrototype !== 'live' && (
+        <div className='dev-row muted'>
+          Generated lab scene is controlling every cloud layer. The regular Weather setting is
+          temporarily ignored.
+        </div>
+      )}
+      <label className='dev-row'>
+        <span>Rain laboratory</span>
+        <select
+          value={precipitation}
+          onChange={e => {
+            settingsStore.set({
+              precipitation: e.target.value as 'auto' | 'force' | 'off'
+            })
+          }}
+        >
+          <option value='auto'>Live forecast</option>
+          <option value='force'>Force rain here</option>
+          <option value='off'>Off</option>
+        </select>
+      </label>
+      {weatherPrototype !== 'live' ? (
+        <div className='dev-row muted'>
+          Generated cover: low {Math.round(cover.low * 100)}% · mid{' '}
+          {Math.round(cover.mid * 100)}% · high {Math.round(cover.high * 100)}%
+        </div>
+      ) : cloudSource === 'weather' ? (
         <div className='dev-row muted'>
           {weather == null
             ? 'Waiting for weather…'
@@ -169,6 +220,14 @@ export const DevPanel: FC = () => {
         {config.tilesDisabled
           ? 'disabled (ellipsoid)'
           : `Google, root sessions this page: ${rootLoads}`}
+      </div>
+      <div className='dev-row muted'>
+        Night lights:{' '}
+        {nightEmission.baseMap == null
+          ? 'loading / unavailable'
+          : nightEmission.enabled
+            ? `active (night ${Math.round(nightState.night * 100)}%)`
+            : `loaded, inactive (night ${Math.round(nightState.night * 100)}%)`}
       </div>
     </div>
   )

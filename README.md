@@ -50,6 +50,7 @@ Use replay (or synth) while developing so we don't hammer adsb.lol.
 | `REPLAY=1`, `REPLAY_FILE=fixtures/x.ndjson.gz` (server env) | Replay a recorded fixture in real time, looping.     |
 | `SYNTH=<count>` (server env)            | Synthetic worldwide traffic for stress tests.                                            |
 | `PORT` (server env)                     | Server port (default 8787).                                                              |
+| `ALLOWED_ORIGINS` (server env)           | Comma-separated browser origins allowed to use HTTP/WebSocket APIs; set this in production. |
 
 `client/.env` is gitignored. Never commit keys; only `.env.example` is
 tracked.
@@ -80,7 +81,9 @@ tracked.
   to orbit, scroll/pinch to zoom.
 - **Window seat** (<kbd>W</kbd>): sit by a window over the wing; drag for
   limited head movement; <kbd>S</kbd> switches the left/right side.
-- <kbd>Esc</kbd> flies back out to the globe (or clears the selection).
+- <kbd>Esc</kbd> flies back out to the globe (or clears the selection). In
+  free look, drag to move across the globe, right-drag or shift-drag to orbit
+  and tilt, and use the wheel to zoom. On touch, use two fingers to orbit.
 
 ### Dev controls and URL parameters
 
@@ -90,6 +93,8 @@ the **interpolation delay**, the flight source/aircraft count and the number
 of Google root sessions this page created.
 
 - `?t=-6`: start with a time offset in hours.
+- `?weather=clear|fair|overcast`: open a repeatable rendering preset
+  (also selectable in Dev controls).
 - `?view=lat,lon,heading,pitch,distance[,height]`: initial camera (degrees /
   meters; `height` = target height above the ellipsoid, e.g. ~100 at SEA),
   e.g. `?view=40,-100,0,-90,1.6e7` for a whole-Earth view.
@@ -154,7 +159,8 @@ clients ──viewport──▶ Hub ──merged regions──▶ FlightSource �
 `server/src/search.ts`. Upstream lookups share the existing rate-limited
 slots instead of adding traffic: adsb.fi callsign/registration/hex
 lookups go first in the follow feed's 1.1 s slot, and adsb.lol type
-lookups take the region poller's next slot. Results also include a
+lookups share the region poller's slots without taking two consecutive
+requests while a live region is due. Results also include a
 substring match over everything the server already tracks, are cached for
 20 s per query, and found aircraft are fed into the cache so they show up
 immediately when the camera arrives.

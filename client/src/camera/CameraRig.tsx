@@ -25,10 +25,10 @@ const EXIT_DURATION_S = 2.2
 const TURN_SPEEDUP = 1.6
 const MIN_DISTANCE = 12
 const MAX_DISTANCE = 60_000
-/** Where the camera ends up when leaving follow mode. */
 /**
  * Free look after following: pull back to the top-down map view over the
- * aircraft (the free camera looks straight down; see Scene.tsx).
+ * aircraft. GlobeControls takes over there and can orbit into an oblique
+ * view without a discontinuity.
  */
 const EXIT_ORBIT: Orbit = { yaw: 0, pitch: 89.9, distance: 15_000 }
 

@@ -35,6 +35,17 @@ describe('cloud shader contracts', () => {
       expect(patchNightClouds(march)).toBe(true)
       expect(patchFarClouds(march)).toBe(true)
       expect(patchCloudsResolve(resolve)).toBe(true)
+
+      // An already-patched material may outlive its React controller during
+      // Fast Refresh or context recovery. Idempotence must also rebind the
+      // replacement controller's live uniforms, not merely skip the rewrite.
+      const replacement = new RegionalCoverageController()
+      try {
+        expect(replacement.patch(march)).toBe(true)
+        expect(march.uniforms.coverageFallback).toBe(replacement.uniforms.coverageFallback)
+      } finally {
+        replacement.dispose()
+      }
     } finally {
       regional.dispose()
       effect.cloudsPass.dispose()

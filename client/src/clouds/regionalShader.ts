@@ -1,5 +1,5 @@
 import { ecefToGeodetic, type WeatherGridCell } from '@windowseat/shared'
-import type { Vector3} from 'three';
+import type { Vector3 } from 'three'
 import { Uniform, Vector4, type ShaderMaterial, type Texture } from 'three'
 
 import { COVERAGE_THRESHOLD } from './coverageTexture'
@@ -99,7 +99,13 @@ export function createRegionalUniforms(regional: RegionalCoverage): RegionalUnif
 
 /** Patches a clouds/shadow material once; false if takram's shader changed. */
 export function patchCloudsMaterial(material: ShaderMaterial, uniforms: RegionalUniforms): boolean {
-  if (material.fragmentShader.includes(MARKER) && material.fragmentShader.includes(LOCAL_MORPH_MARKER)) return true
+  if (material.fragmentShader.includes(MARKER) && material.fragmentShader.includes(LOCAL_MORPH_MARKER)) {
+    // Fast Refresh, context restoration, and quality changes can preserve an
+    // already-patched material while recreating its controller. Rebind the
+    // current Uniform objects even when no source rewrite is needed.
+    Object.assign(material.uniforms, uniforms)
+    return true
+  }
   const signature =
     'WeatherSample sampleWeather(const vec2 uv, const float height, const float mipLevel) {'
   const apply = '  #ifdef SHADOW\n  localWeather *= shadowLayerMask;'
