@@ -1,5 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { SMAA, ToneMapping } from '@react-three/postprocessing'
+import { WGS84_A } from '@windowseat/shared'
 import type { AerialPerspectiveEffect, LightingMaskPass } from '@takram/three-atmosphere'
 import {
   AerialPerspective,
@@ -13,7 +14,7 @@ import {
   type EffectComposer as EffectComposerImpl
 } from 'postprocessing'
 import { useContext, useEffect, useMemo, useRef, useState, type FC } from 'react'
-import { Uniform, Vector3 } from 'three'
+import { Quaternion, Uniform, Vector3 } from 'three'
 
 import { AIRCRAFT_LAYER } from '../aircraft/layers'
 import { NavGlowEffect } from '../aircraft/NavGlowEffect'
@@ -232,6 +233,11 @@ function patchLightingMask(pass: LightingMaskPass): void {
 
 const up = new Vector3()
 
+function smoothstep01(value: number, low: number, high: number): number {
+  const t = Math.min(1, Math.max(0, (value - low) / (high - low)))
+  return t * t * (3 - 2 * t)
+}
+
 export const PostEffects: FC = () => {
   const camera = useThree(({ camera }) => camera)
   const { transientStates } = useContext(AtmosphereContext)
@@ -243,6 +249,9 @@ export const PostEffects: FC = () => {
   const navGlow = useMemo(() => new NavGlowEffect(camera), [camera])
   const cityAtmosphere = useMemo(() => new CityAtmosphereEffect(camera), [camera])
   const sharpen = useMemo(() => isMobileDevice() ? null : new SharpenEffect(), [])
+  const previousCameraPosition = useRef(new Vector3().copy(camera.position))
+  const previousCameraQuaternion = useRef(new Quaternion().copy(camera.quaternion))
+  const cameraMotion = useRef(0)
   useEffect(() => {
     sharpen?.setAmount(sharpenAmount)
   }, [sharpen, sharpenAmount])
@@ -284,6 +293,27 @@ export const PostEffects: FC = () => {
   // GlobeControls changes near/far every frame; effects reconstructing
   // positions from depth must use the same values.
   useFrame(({ gl }, delta) => {
+    if (sharpen != null) {
+      const previousPosition = previousCameraPosition.current
+      const previousQuaternion = previousCameraQuaternion.current
+      const frameSeconds = Math.min(0.1, Math.max(1 / 240, delta))
+      const quaternionDot = Math.min(1, Math.abs(previousQuaternion.dot(camera.quaternion)))
+      const angularSpeed = (2 * Math.acos(quaternionDot)) / frameSeconds
+      const travel = previousPosition.distanceTo(camera.position)
+      // Relative dolly speed works across a close city view and high-altitude
+      // views. Rotation handles orbit/pan independently of distance.
+      const heightScale = Math.max(250, camera.position.length() - WGS84_A)
+      const relativeSpeed = travel / heightScale / frameSeconds
+      const targetMotion = Math.max(
+        smoothstep01(angularSpeed, 0.008, 0.06),
+        smoothstep01(relativeSpeed, 0.008, 0.08)
+      )
+      const timeConstant = targetMotion > cameraMotion.current ? 0.025 : 0.18
+      cameraMotion.current += (targetMotion - cameraMotion.current) * (1 - Math.exp(-frameSeconds / timeConstant))
+      sharpen.setCameraMotion(cameraMotion.current)
+      previousPosition.copy(camera.position)
+      previousQuaternion.copy(camera.quaternion)
+    }
     const aerial = aerialRef.current
     if (aerial != null) {
       // Our own uniforms, added by patchNightLight.
