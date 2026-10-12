@@ -1,4 +1,5 @@
 import type { AerialPerspectiveEffect } from '@takram/three-atmosphere'
+import { ecefToGeodetic, geoidHeight } from '@windowseat/shared'
 import {
   Uniform,
   Vector3,
@@ -17,10 +18,15 @@ import {
 const MARKER = '/* window-seat semantic water */'
 const STRIDE = MAX_WINDOW * MAX_WINDOW
 let reportedEnabled = false
+const seaLevelAnchor = new Vector3()
+let seaLevelInitialized = false
 
 const uniforms = {
   waterMaterialEnabled: new Uniform(0),
   waterTime: new Uniform(0),
+  /** Mean sea level above WGS84, in Takram atmosphere kilometres. */
+  waterSeaLevel: new Uniform(0),
+  waterNightAmbient: new Uniform(new Vector3()),
   waterTileMap: new Uniform<DataArrayTexture | null>(null),
   waterTileEnabled: new Uniform(new Float32Array(ROAD_LEVELS)),
   waterTileAnchor: new Uniform(
@@ -47,6 +53,8 @@ const CHUNK = /* glsl */ `
 ${MARKER}
 uniform float waterMaterialEnabled;
 uniform float waterTime;
+uniform float waterSeaLevel;
+uniform vec3 waterNightAmbient;
 uniform sampler2DArray waterTileMap;
 uniform float waterTileEnabled[${ROAD_LEVELS}];
 uniform vec3 waterTileAnchor[${ROAD_LEVELS}];
@@ -81,22 +89,63 @@ float waterTileLayer(const int level, const ivec2 cell) {
   return waterTileLayers[level * WATER_TILE_STRIDE + cell.y * window + cell.x];
 }
 
+/** First camera-ray intersection with the local mean-sea-level ellipsoid. */
+bool flatWaterSurface(out vec3 positionECEF, out vec3 normalECEF) {
+  vec3 radii = sqrt(vEllipsoidRadiiSquared) + vec3(waterSeaLevel);
+  vec3 inverseRadiiSquared = 1.0 / (radii * radii);
+  vec3 direction = normalize(vRayDirection);
+  float a = dot(direction * direction, inverseRadiiSquared);
+  float b = 2.0 * dot(vCameraPosition * direction, inverseRadiiSquared);
+  float c = dot(vCameraPosition * vCameraPosition, inverseRadiiSquared) - 1.0;
+  float discriminant = b * b - 4.0 * a * c;
+  if (discriminant < 0.0) return false;
+  float root = sqrt(discriminant);
+  float nearDistance = (-b - root) / (2.0 * a);
+  float farDistance = (-b + root) / (2.0 * a);
+  float distance = nearDistance > 0.0 ? nearDistance : farDistance;
+  if (distance <= 0.0) return false;
+  positionECEF = vCameraPosition + direction * distance;
+  normalECEF = normalize(positionECEF * inverseRadiiSquared);
+  return true;
+}
+
+/**
+ * Preserve real structures over mapped water while flattening blue/neutral
+ * photogrammetry tears. The color test is safe here because semantic map
+ * data has already limited it to a water polygon.
+ */
+float photographedWaterShare(
+  const vec3 actualPosition,
+  const vec3 flatPosition,
+  const vec3 flatNormal,
+  const vec3 albedo
+) {
+  float aboveMeters = dot(actualPosition - flatPosition, flatNormal)
+    / METER_TO_LENGTH_UNIT;
+  float luminance = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+  float chroma = max(albedo.r, max(albedo.g, albedo.b))
+    - min(albedo.r, min(albedo.g, albedo.b));
+  float blueWater = smoothstep(-0.015, 0.055, albedo.b - max(albedo.r, albedo.g));
+  float neutralWater = (1.0 - smoothstep(0.2, 0.55, luminance))
+    * (1.0 - smoothstep(0.04, 0.2, chroma));
+  float looksLikeWater = max(blueWater, neutralWater);
+  float raisedStructure = smoothstep(1.5, 7.0, aboveMeters)
+    * (1.0 - looksLikeWater);
+  return 1.0 - raisedStructure;
+}
+
 /**
  * Samples actual OSM water polygons/ways. A loaded fine tile owns its area
  * even when it says "land", so a coarser shoreline cannot leak through it.
  */
 float semanticWaterCoverage(
   const vec3 positionECEF,
-  const vec3 normalECEF,
   const vec2 screenUv
 ) {
   if (waterMaterialEnabled < 0.5) return 0.0;
   #ifdef HAS_LIGHTING_MASK
   if (texture(lightingMaskBuffer, screenUv).LIGHTING_MASK_CHANNEL_ < 0.5) return 0.0;
   #endif
-  float upness = abs(dot(normalize(normalECEF), normalize(positionECEF)));
-  if (upness < 0.78) return 0.0;
-
   // Takram's atmosphere coordinates are kilometres; the tile windows are
   // built in Three/geospatial world metres (the same space as road lights).
   vec3 offset = (positionECEF - vCameraPosition) / METER_TO_LENGTH_UNIT;
@@ -117,7 +166,7 @@ float semanticWaterCoverage(
     result += texture(waterTileMap, vec3(fract(local), layer)).r * take;
     ownership += take;
   }
-  return smoothstep(0.12, 0.88, result) * smoothstep(0.78, 0.96, upness);
+  return smoothstep(0.12, 0.88, result);
 }
 
 /** Small animated waves in a globe-local tangent frame. */
@@ -167,6 +216,7 @@ vec3 waterSurfaceRadiance(
     700.0
   );
   radiance += sunIrradiance * glint * sunUp * (0.4 + fresnel * 2.4);
+  radiance += deepWater * albedoScale * RECIPROCAL_PI * waterNightAmbient;
   return radiance;
 }
 `
@@ -187,20 +237,36 @@ export function patchWaterSurface(effect: AerialPerspectiveEffect): boolean {
   }
   const lighting =
     'radiance = getSunSkyIrradiance(positionECEF, normalECEF, inputColor.rgb, sunTransmittance);'
-  if (!source.includes('void mainImage(') || !source.includes(lighting)) return false
+  const skyComposite =
+    '    #ifdef HAS_OVERLAY\n    outputColor.rgb = outputColor.rgb * (1.0 - overlay.a) + overlay.rgb;\n    #endif // HAS_OVERLAY\n    return;\n  }\n  depth = reverseLogDepth(depth, cameraNear, cameraFar);'
+  if (
+    !source.includes('void mainImage(') ||
+    !source.includes(lighting) ||
+    !source.includes(skyComposite)
+  ) return false
   let shader = source
     .replace('void mainImage(', `${CHUNK}\nvoid mainImage(`)
+    // A missing/torn photogrammetry surface reports sky depth. Fill it from
+    // the same sea-level reconstruction before clouds are composited.
+    .replace(
+      skyComposite,
+      `    vec3 skyWaterPosition;\n    vec3 skyWaterNormal;\n    if (flatWaterSurface(skyWaterPosition, skyWaterNormal)) {\n      float skyWater = semanticWaterCoverage(skyWaterPosition, uv);\n      if (skyWater > 0.0) {\n        vec3 skyWaterRadiance = waterSurfaceRadiance(\n          skyWaterPosition,\n          waterWaveNormal(skyWaterPosition),\n          1.0\n        );\n        #if defined(TRANSMITTANCE) || defined(INSCATTER)\n        applyTransmittanceInscatter(skyWaterPosition, shadowLength, skyWaterRadiance);\n        #endif\n        if (!any(isnan(skyWaterRadiance)) && !any(isinf(skyWaterRadiance))) {\n          outputColor.rgb = mix(outputColor.rgb, skyWaterRadiance, skyWater);\n        }\n      }\n    }\n\n${skyComposite}`
+    )
     .replace(
       lighting,
-      `${lighting}\n    float semanticWater = semanticWaterCoverage(positionECEF, normalECEF, uv);\n    if (semanticWater > 0.0) {\n      vec3 waterRadiance = waterSurfaceRadiance(positionECEF, waterWaveNormal(positionECEF), sunTransmittance);\n      if (!any(isnan(waterRadiance)) && !any(isinf(waterRadiance))) {\n        radiance = mix(radiance, waterRadiance, semanticWater);\n      }\n    }`
+      `${lighting}\n    vec3 flatWaterPosition;\n    vec3 flatWaterNormal;\n    float semanticWater = 0.0;\n    if (flatWaterSurface(flatWaterPosition, flatWaterNormal)) {\n      semanticWater = semanticWaterCoverage(flatWaterPosition, uv)\n        * photographedWaterShare(\n          positionECEF,\n          flatWaterPosition,\n          flatWaterNormal,\n          inputColor.rgb\n        );\n      if (semanticWater > 0.0) {\n        vec3 waterRadiance = waterSurfaceRadiance(\n          flatWaterPosition,\n          waterWaveNormal(flatWaterPosition),\n          sunTransmittance\n        );\n        if (!any(isnan(waterRadiance)) && !any(isinf(waterRadiance))) {\n          radiance = mix(radiance, waterRadiance, semanticWater);\n          // Atmospheric distance and haze now end at the flat water plane,\n          // not at the torn photogrammetry triangle that happened to win depth.\n          positionECEF = mix(positionECEF, flatWaterPosition, semanticWater);\n        }\n      }\n    }`
     )
   // patchNightLight runs first. Keep its ambient term, but do not reintroduce
   // the photographed tile color after semantic water replaced the surface.
   shader = shader.replace(
     'radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient;',
-    'radiance += mix(inputColor.rgb, vec3(0.006, 0.018, 0.026), semanticWater) * albedoScale * RECIPROCAL_PI * nightAmbient;'
+    'radiance += inputColor.rgb * albedoScale * RECIPROCAL_PI * nightAmbient * (1.0 - semanticWater);'
   )
-  if (!shader.includes('float semanticWater =') || !shader.includes('waterSurfaceRadiance(')) {
+  if (
+    !shader.includes('float semanticWater =') ||
+    !shader.includes('flatWaterSurface(') ||
+    !shader.includes('skyWaterRadiance')
+  ) {
     return false
   }
   installUniforms(effect)
@@ -232,9 +298,18 @@ function updateLevels(levels: readonly RoadLevelUniforms[]): void {
 export function updateWaterSurface(
   roads: RoadLightTiles | null,
   enabled: boolean,
-  delta: number
+  delta: number,
+  cameraPosition: Vector3,
+  nightAmbient: Vector3
 ): void {
   uniforms.waterTime.value += Math.min(delta, 0.1)
+  if (!seaLevelInitialized || seaLevelAnchor.distanceToSquared(cameraPosition) > 50_000 ** 2) {
+    seaLevelInitialized = true
+    seaLevelAnchor.copy(cameraPosition)
+    const geodetic = ecefToGeodetic(cameraPosition.x, cameraPosition.y, cameraPosition.z)
+    uniforms.waterSeaLevel.value = geoidHeight(geodetic.lat, geodetic.lon) / 1000
+  }
+  uniforms.waterNightAmbient.value.copy(nightAmbient)
   uniforms.waterTileMap.value = roads?.water ?? null
   uniforms.waterMaterialEnabled.value = enabled && roads?.available === true ? 1 : 0
   if (roads == null) updateLevels([])

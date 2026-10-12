@@ -300,7 +300,9 @@ export const PostEffects: FC = () => {
     updateWaterSurface(
       nightEmission.roads,
       settingsStore.get().waterMaterial && !config.tilesDisabled,
-      delta
+      delta,
+      camera.position,
+      nightState.ambient
     )
     // Eye adaptation: the exposure setting is the daylight value.
     gl.toneMappingExposure = settingsStore.get().exposure * nightState.exposureGain
