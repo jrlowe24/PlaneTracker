@@ -16,6 +16,7 @@ import {
 
 const MARKER = '/* window-seat semantic water */'
 const STRIDE = MAX_WINDOW * MAX_WINDOW
+let reportedEnabled = false
 
 const uniforms = {
   waterMaterialEnabled: new Uniform(0),
@@ -96,7 +97,9 @@ float semanticWaterCoverage(
   float upness = abs(dot(normalize(normalECEF), normalize(positionECEF)));
   if (upness < 0.78) return 0.0;
 
-  vec3 offset = positionECEF - vCameraPosition;
+  // Takram's atmosphere coordinates are kilometres; the tile windows are
+  // built in Three/geospatial world metres (the same space as road lights).
+  vec3 offset = (positionECEF - vCameraPosition) / METER_TO_LENGTH_UNIT;
   float result = 0.0;
   float ownership = 0.0;
   for (int level = 0; level < ${ROAD_LEVELS}; ++level) {
@@ -126,7 +129,8 @@ vec3 waterWaveNormal(const vec3 positionECEF) {
   vec3 north = normalize(cross(up, east));
   float latitude = asin(clamp(up.z, -1.0, 1.0));
   float longitude = atan(up.y, up.x);
-  vec2 p = vec2(longitude * cos(latitude), latitude) * bottomRadius;
+  vec2 p = vec2(longitude * cos(latitude), latitude)
+    * (bottomRadius / METER_TO_LENGTH_UNIT);
 
   vec2 d0 = normalize(vec2(1.0, 0.31));
   vec2 d1 = normalize(vec2(-0.24, 1.0));
@@ -236,6 +240,10 @@ export function updateWaterSurface(
   if (roads == null) updateLevels([])
   else updateLevels(roads.levels.map(level => level.uniforms))
   if (import.meta.env.DEV) {
+    if (uniforms.waterMaterialEnabled.value === 1 && !reportedEnabled) {
+      reportedEnabled = true
+      console.info('[water] semantic material enabled on atmosphere pass')
+    }
     ;(window as unknown as { __windowSeatWater?: unknown }).__windowSeatWater = {
       enabled: uniforms.waterMaterialEnabled.value === 1,
       available: roads?.available ?? false,

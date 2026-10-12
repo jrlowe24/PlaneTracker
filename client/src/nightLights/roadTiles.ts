@@ -280,6 +280,7 @@ export class RoadLightTiles {
   private readonly buildingData: Uint8Array
   private readonly waterData: Uint8Array
   private reportedWater = false
+  private reportedWetWater = false
 
   constructor(distance: LightDistance = 'far') {
     const specs = LIGHT_DISTANCE_LEVELS[distance]
@@ -466,6 +467,16 @@ export class RoadLightTiles {
     if (import.meta.env.DEV && !this.reportedWater) {
       this.reportedWater = true
       console.info('[water] first semantic OpenFreeMap tile loaded')
+    }
+    if (import.meta.env.DEV && !this.reportedWetWater) {
+      let wet = 0
+      for (const value of response.water) if (value > 0) ++wet
+      if (wet > 0) {
+        this.reportedWetWater = true
+        console.info(
+          `[water] nonempty semantic tile ${key}: ${Math.round((wet / response.water.length) * 1000) / 10}% wet pixels`
+        )
+      }
     }
     if (layer < this.buildingLayers) {
       const offset = layer * SIZE * SIZE * 2
