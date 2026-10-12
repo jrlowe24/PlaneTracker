@@ -54,6 +54,18 @@ class NightLightsController {
     nightEmission.texture = this.effect.texture
     nightEmission.enabled = this.ready && this.effect.enabled
     nightEmission.roads = this.roads
+    const quality = qualityStore.get().settings
+    // The same OpenFreeMap windows also carry the semantic water mask, so
+    // keep them current during daylight even while the night-light pass is
+    // asleep (or if the optional Black Marble assets are unavailable).
+    if (quality.lightDistance !== this.distance) {
+      this.distance = quality.lightDistance
+      this.roads?.dispose()
+      this.roads = new RoadLightTiles(this.distance)
+      this.runways = this.roads.runways
+      nightEmission.roads = this.roads
+    }
+    this.roads?.update(camera)
     if (!this.ready) return
     const { effect, tiles } = this
     effect.mainCamera = camera
@@ -90,15 +102,6 @@ class NightLightsController {
     }
 
     const altitude = camera.position.length() - WGS84_A
-    const quality = qualityStore.get().settings
-    // Light distance sizes the street textures: new street tiles (the pass
-    // stays; the composer builds its passes once).
-    if (quality.lightDistance !== this.distance) {
-      this.distance = quality.lightDistance
-      this.roads?.dispose()
-      this.roads = new RoadLightTiles(this.distance)
-      this.runways = this.roads.runways
-    }
     const detail = altitude < DETAIL_MAX_ALTITUDE && quality.cityLightDetail
     effect.setWindows(quality.buildingWindows)
     if (detail) {
@@ -109,7 +112,6 @@ class NightLightsController {
     tiles.tick(Math.min(delta, 0.1))
     effect.setDetail(detail, tiles.origin, tiles.loaded, m.detail.tileDegrees, m.detail.columns)
     if (this.roads != null) {
-      this.roads.update(camera)
       effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.buildings, this.roads.levels.map(l => l.uniforms))
     }
     this.runways.update(camera.position)

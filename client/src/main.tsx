@@ -6,7 +6,12 @@ import { exposeStores } from './dev/exposeStores'
 
 import './styles.css'
 
-if (import.meta.env.DEV) exposeStores()
+if (import.meta.env.DEV) {
+  exposeStores()
+  void import('./dev/clientDiagnostics').then(({ startClientDiagnostics }) => {
+    startClientDiagnostics()
+  })
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -43,6 +43,7 @@ export const DevPanel: FC = () => {
   const cloudSource = useStore(settingsStore, s => s.cloudSource)
   const weatherPrototype = useStore(settingsStore, s => s.weatherPrototype)
   const precipitation = useStore(settingsStore, s => s.precipitation)
+  const waterMaterial = useStore(settingsStore, s => s.waterMaterial)
   const weather = useStore(weatherStore, s => s.sample)
   const cover = useStore(cloudCoverStore, s => s)
   const aircraftCount = useStore(flightStatusStore, s => s.aircraftCount)
@@ -182,6 +183,16 @@ export const DevPanel: FC = () => {
           <option value='force'>Force rain here</option>
           <option value='off'>Off</option>
         </select>
+      </label>
+      <label className='dev-row dev-inline'>
+        <span>Semantic procedural water</span>
+        <input
+          type='checkbox'
+          checked={waterMaterial}
+          onChange={event => {
+            settingsStore.set({ waterMaterial: event.target.checked })
+          }}
+        />
       </label>
       {weatherPrototype !== 'live' ? (
         <div className='dev-row muted'>

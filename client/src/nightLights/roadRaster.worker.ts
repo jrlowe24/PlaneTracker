@@ -42,6 +42,8 @@ export interface RoadRasterResponse {
    * Null where the tile has no building data.
    */
   buildings?: Uint8Array | null
+  /** Semantic OSM water coverage, 0 = land and 255 = water. */
+  water?: Uint8Array | null
   /** Whole runways near the tile, for exact runway lighting (runwayLights.ts). */
   runways?: RunwayRecord[]
   error?: string
@@ -224,7 +226,13 @@ function fillRings(ctx: Ctx, rings: Point[][], style: string): void {
 async function render(
   request: RoadRasterRequest,
   data: ArrayBuffer
-): Promise<{ pixels: Uint8ClampedArray; lamps: Uint8Array; buildings: Uint8Array | null; runways: RunwayRecord[] }> {
+): Promise<{
+  pixels: Uint8ClampedArray
+  lamps: Uint8Array
+  buildings: Uint8Array | null
+  water: Uint8Array
+  runways: RunwayRecord[]
+}> {
   const { size, metersPerPixel: mpp } = request
   lampSize = size
   poolsEnabled = mpp < 8
@@ -243,6 +251,56 @@ async function render(
     const k = size / feature.extent
     return feature.loadGeometry().map(ring => ring.map(p => ({ x: p.x * k, y: p.y * k })))
   }
+
+  // A semantic surface mask, independent of the photographed tile color.
+  // OpenFreeMap's `water` layer includes ocean, lakes, reservoirs and wide
+  // rivers as polygons. `waterway` supplies narrow rivers/canals that would
+  // otherwise disappear at close zooms.
+  const waterCanvas = new OffscreenCanvas(size, size)
+  const waterCtx = waterCanvas.getContext('2d')!
+  waterCtx.fillStyle = 'black'
+  waterCtx.fillRect(0, 0, size, size)
+  waterCtx.lineCap = 'round'
+  waterCtx.lineJoin = 'round'
+  const waterPolygons = tile.layers.water
+  for (let i = 0; i < (waterPolygons?.length ?? 0); ++i) {
+    const feature = waterPolygons!.feature(i)
+    if (feature.type !== 3 || feature.properties.brunnel === 'tunnel') continue
+    fillRings(waterCtx, geometry(feature), 'white')
+  }
+  const waterwayWidth: Record<string, number> = {
+    river: 18,
+    canal: 10,
+    stream: 3,
+    ditch: 1.5,
+    drain: 1.5
+  }
+  const waterways = tile.layers.waterway
+  for (let i = 0; i < (waterways?.length ?? 0); ++i) {
+    const feature = waterways!.feature(i)
+    if (feature.type !== 2 || feature.properties.brunnel === 'tunnel') continue
+    const width = waterwayWidth[String(feature.properties.class)]
+    if (width == null) continue
+    for (const line of geometry(feature)) {
+      if (line.length >= 2) strokeLine(waterCtx, line, Math.max(0.75, width / mpp), 'white')
+    }
+  }
+  // Roads and rail lines explicitly tagged as bridges remain solid surfaces
+  // over the water. This also prevents the shader replacing bridge decks.
+  const bridges = tile.layers.transportation
+  for (let i = 0; i < (bridges?.length ?? 0); ++i) {
+    const feature = bridges!.feature(i)
+    if (feature.type !== 2 || feature.properties.brunnel !== 'bridge') continue
+    const width = ROADS[String(feature.properties.class)]?.width ?? 8
+    for (const line of geometry(feature)) {
+      if (line.length >= 2) {
+        strokeLine(waterCtx, line, Math.max(1, (width * 1.25) / mpp), 'black')
+      }
+    }
+  }
+  const waterRgba = waterCtx.getImageData(0, 0, size, size).data
+  const water = new Uint8Array(size * size)
+  for (let i = 0; i < water.length; ++i) water[i] = waterRgba[i * 4]!
   // District (~600 m) a pixel position falls in, world-fixed.
   const cells = 2 ** request.z / 2 ** 14 // tiles per z14 tile
   const district = (x: number, y: number, salt: number): number => {
@@ -375,6 +433,9 @@ async function render(
     const inside = mctx.getImageData(0, 0, size, size).data
     for (let i = 0; i < size * size; ++i) {
       if (inside[i * 4]! < 128) continue
+      // A mapped building wins over a water polygon (piers, ferry terminals,
+      // boathouses): never turn its roof or facade into procedural water.
+      water[i] = 0
       lampCells[i * 4 + 3] = 0
       lampCells[i * 4 + 2] = 0
       lampEnergy[i] = 0
@@ -391,7 +452,7 @@ async function render(
 
   const pixels = ctx.getImageData(0, 0, size, size).data
   for (let i = 0; i < size * size; ++i) pixels[i * 4 + 3] = Math.min(255, Math.round(lampEnergy[i]! * 255))
-  return { pixels, lamps: lampCells, buildings: buildingMap, runways: index?.runways ?? [] }
+  return { pixels, lamps: lampCells, buildings: buildingMap, water, runways: index?.runways ?? [] }
 }
 
 /** Lamps on a jittered grid inside polygons (clipped to them). */
@@ -688,9 +749,9 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
   try {
     const response = await fetch(request.url)
     if (!response.ok) throw new Error(`tile ${response.status}`)
-    const { pixels, lamps, buildings, runways } = await render(request, await response.arrayBuffer())
-    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, runways }
-    const transfer = [pixels.buffer, lamps.buffer]
+    const { pixels, lamps, buildings, water, runways } = await render(request, await response.arrayBuffer())
+    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, water, runways }
+    const transfer = [pixels.buffer, lamps.buffer, water.buffer]
     if (buildings != null) transfer.push(buildings.buffer)
     ;(self as unknown as Worker).postMessage(message, transfer)
   } catch (error) {

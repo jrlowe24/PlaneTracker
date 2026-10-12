@@ -4,6 +4,7 @@ import {
   LinearFilter,
   NearestFilter,
   NoColorSpace,
+  RedFormat,
   RGBAFormat,
   RGFormat,
   UnsignedByteType,
@@ -257,6 +258,8 @@ export class RoadLightTiles {
    * windows.
    */
   readonly buildings: DataArrayTexture
+  /** Semantic OpenStreetMap water coverage for every streamed tile. */
+  readonly water: DataArrayTexture
   readonly levels: Level[]
   private readonly specs: readonly LevelSpec[]
   private readonly layerCount: number
@@ -275,6 +278,8 @@ export class RoadLightTiles {
   private readonly data: Uint8Array
   private readonly lampData: Uint8Array
   private readonly buildingData: Uint8Array
+  private readonly waterData: Uint8Array
+  private reportedWater = false
 
   constructor(distance: LightDistance = 'far') {
     const specs = LIGHT_DISTANCE_LEVELS[distance]
@@ -322,6 +327,18 @@ export class RoadLightTiles {
     buildings.generateMipmaps = false
     buildings.needsUpdate = true
     this.buildings = buildings
+    this.waterData = new Uint8Array(SIZE * SIZE * layerCount)
+    const water = new DataArrayTexture(this.waterData, SIZE, SIZE, layerCount)
+    water.format = RedFormat
+    water.type = UnsignedByteType
+    water.colorSpace = NoColorSpace
+    // Linear filtering anti-aliases coastlines and keeps the procedural
+    // material stable as the photogrammetry surface moves under a pixel.
+    water.minFilter = LinearFilter
+    water.magFilter = LinearFilter
+    water.generateMipmaps = false
+    water.needsUpdate = true
+    this.water = water
     void this.init()
   }
 
@@ -342,6 +359,9 @@ export class RoadLightTiles {
       })
       worker.onmessage = (event: MessageEvent<RoadRasterResponse>) => {
         this.receive(event.data)
+      }
+      worker.onerror = event => {
+        console.error('[surface tiles] worker failed', event.message)
       }
       this.workers.push(worker)
     }
@@ -426,7 +446,7 @@ export class RoadLightTiles {
     if (response.runways != null) this.runways.add(response.runways)
     const { level, slot, key } = entry
     const s = level.slots[slot]!
-    if (response.pixels == null || response.lamps == null) {
+    if (response.pixels == null || response.lamps == null || response.water == null) {
       // Retry later; keep the slot empty.
       this.failed.set(key, performance.now() + 30_000)
       if (s.key === key) s.key = ''
@@ -440,6 +460,13 @@ export class RoadLightTiles {
     this.lampData.set(response.lamps, layer * SIZE * SIZE * 4)
     this.lamps.addLayerUpdate(layer)
     this.lamps.needsUpdate = true
+    this.waterData.set(response.water, layer * SIZE * SIZE)
+    this.water.addLayerUpdate(layer)
+    this.water.needsUpdate = true
+    if (import.meta.env.DEV && !this.reportedWater) {
+      this.reportedWater = true
+      console.info('[water] first semantic OpenFreeMap tile loaded')
+    }
     if (layer < this.buildingLayers) {
       const offset = layer * SIZE * SIZE * 2
       if (response.buildings != null) this.buildingData.set(response.buildings, offset)
@@ -500,5 +527,6 @@ export class RoadLightTiles {
     this.texture.dispose()
     this.lamps.dispose()
     this.buildings.dispose()
+    this.water.dispose()
   }
 }

@@ -89,8 +89,11 @@ tracked.
 
 In dev builds a panel (toggle with <kbd>`</kbd>) offers a **time offset**
 slider (±12 h from the real UTC clock) for testing day and night, exposure,
-the **interpolation delay**, the flight source/aircraft count and the number
-of Google root sessions this page created.
+the **interpolation delay**, repeatable cloud/rain scenes, semantic procedural
+water, the flight source/aircraft count and the number of Google root sessions
+this page created. The water mask is rasterized in workers from OpenFreeMap's
+OpenStreetMap `water` and `waterway` layers; photographed color is never used
+to decide what is water.
 
 - `?t=-6`: start with a time offset in hours.
 - `?weather=clear|fair|overcast`: open a repeatable rendering preset

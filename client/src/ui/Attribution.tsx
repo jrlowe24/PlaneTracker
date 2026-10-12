@@ -84,6 +84,21 @@ const NightLightsCredit: FC = () => {
   )
 }
 
+/** OpenStreetMap/OpenFreeMap while their semantic water mask is active. */
+const WaterCredit: FC = () => {
+  const enabled = useStore(settingsStore, s => s.waterMaterial)
+  if (!enabled || config.tilesDisabled) return null
+  return (
+    <div className='attribution-flight'>
+      Water ©{' '}
+      <a href='https://www.openstreetmap.org/copyright' target='_blank' rel='noreferrer'>
+        OpenStreetMap contributors
+      </a>{' '}
+      (<a href='https://openfreemap.org' target='_blank' rel='noreferrer'>OpenFreeMap</a>)
+    </div>
+  )
+}
+
 /** Open-Meteo (CC BY 4.0) while live weather drives the clouds. */
 const WeatherCredit: FC = () => {
   const attribution = useStore(weatherStore, s => s.attribution)
@@ -179,6 +194,7 @@ export const Attribution: FC = () => {
       }}
     >
       <FlightDataAttribution />
+      <WaterCredit />
       {config.tilesDisabled ? (
         <div className='attribution-note'>
           Google 3D tiles disabled ({config.tilesDisabledReason})

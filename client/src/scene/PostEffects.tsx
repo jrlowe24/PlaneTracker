@@ -19,6 +19,7 @@ import { AIRCRAFT_LAYER } from '../aircraft/layers'
 import { NavGlowEffect } from '../aircraft/NavGlowEffect'
 import { cloudDepth } from '../clouds/cloudDepth'
 import { VolumetricClouds } from '../clouds/VolumetricClouds'
+import { config } from '../config'
 import { NightLights } from '../nightLights/NightLights'
 import { nightEmission } from '../nightLights/nightLightsStore'
 import { useStore } from '../state/createStore'
@@ -26,6 +27,7 @@ import { qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { EffectComposer } from './EffectComposer'
 import { nightState, updateNightLighting } from './nightLighting'
+import { patchWaterSurface, updateWaterSurface } from './waterSurface'
 
 /**
  * Clouds render at reduced resolution and are upsampled, so cloud behind an
@@ -295,6 +297,11 @@ export const PostEffects: FC = () => {
         Math.min(delta, 0.1)
       )
     }
+    updateWaterSurface(
+      nightEmission.roads,
+      settingsStore.get().waterMaterial && !config.tilesDisabled,
+      delta
+    )
     // Eye adaptation: the exposure setting is the daylight value.
     gl.toneMappingExposure = settingsStore.get().exposure * nightState.exposureGain
     const composer = composerRef.current
@@ -337,7 +344,12 @@ export const PostEffects: FC = () => {
       <AerialPerspective
         ref={effect => {
           aerialRef.current = effect
-          if (effect != null) patchNightLight(effect)
+          if (effect != null) {
+            patchNightLight(effect)
+            if (!patchWaterSurface(effect)) {
+              console.warn('[water] atmosphere shader patch did not apply')
+            }
+          }
         }}
         sky={cloudsEnabled && sunUp}
         sunLight

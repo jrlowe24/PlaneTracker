@@ -23,6 +23,8 @@ export interface Settings {
   weatherPrototype: WeatherPrototype
   /** Browser-friendly precipitation: forecast-driven, forced for visual QA, or off. */
   precipitation: 'auto' | 'force' | 'off'
+  /** Replace mapped OSM water surfaces with the procedural water material. */
+  waterMaterial: boolean
   showDevPanel: boolean
 }
 
@@ -55,6 +57,7 @@ export const settingsStore = createStore<Settings>({
   cloudCoverage: 0.35,
   weatherPrototype: initialWeatherPrototype(),
   precipitation: 'auto',
+  waterMaterial: true,
   showDevPanel: import.meta.env.DEV
 })
 
