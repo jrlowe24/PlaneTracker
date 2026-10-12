@@ -7,6 +7,10 @@ import { weatherStore } from '../data/weather'
 import { tileStatusStore } from '../globe/tileStatus'
 import { nightEmission } from '../nightLights/nightLightsStore'
 import { nightState } from '../scene/nightLighting'
+import type { BenchResult } from '../dev/DevBench'
+import { setViewSolarHours } from '../state/skyTime'
+import { resolutionStore } from '../state/resolution'
+import { qualityStore, setQualityElement } from '../state/quality'
 import { useStore } from '../state/createStore'
 import {
   getSimulatedDate,
@@ -35,6 +39,9 @@ function useTicker(): void {
 }
 
 export const DevPanel: FC = () => {
+  const [bench, setBench] = useState<BenchResult | 'running' | null>(null)
+  const resolution = useStore(resolutionStore, s => s)
+  const hazeQuality = useStore(qualityStore, s => s.elements.cityAtmosphere)
   const visible = useStore(settingsStore, s => s.showDevPanel)
   const offset = useStore(settingsStore, s => s.timeOffsetMs)
   const exposure = useStore(settingsStore, s => s.exposure)
@@ -72,6 +79,48 @@ export const DevPanel: FC = () => {
       <div className='dev-panel-title'>
         Dev controls <span className='muted'>(` to toggle)</span>
       </div>
+      {import.meta.env.DEV && <div className='dev-row'>
+        <label>Lighting test view
+          <select aria-label='Lighting test view' defaultValue='' onChange={e => {
+            const views: Record<string, number[]> = {
+              reference: [47.606, -122.335, 35, -18, 5200],
+              close: [47.606, -122.335, 35, -20, 2400],
+              far: [47.606, -122.335, 35, -20, 14000],
+              airport: [47.449, -122.309, 20, -25, 3500],
+              rural: [47.75, -121.9, 20, -20, 8000],
+              orbit: [47.606, -122.335, 0, -90, 2e7]
+            }
+            const v = views[e.target.value]
+            const w = window as Window & { __windowSeatView?: (...args: number[]) => void }
+            if (v != null) w.__windowSeatView?.(...v)
+          }}>
+            <option value=''>Choose view</option>
+            <option value='reference'>Seattle reference</option>
+            <option value='close'>Seattle close</option>
+            <option value='far'>Seattle distant</option>
+            <option value='airport'>SeaTac airport</option>
+            <option value='rural'>Rural foothills</option>
+            <option value='orbit'>Whole Earth</option>
+          </select>
+        </label>
+        <div className='dev-inline'>
+          {[12.5, 21, 3].map(hour => <button key={hour} onClick={() => setViewSolarHours(hour)}>{hour === 12.5 ? 'Test day' : hour === 21 ? 'Test evening' : 'Test late night'}</button>)}
+        </div>
+        <label>City haze test
+          <select aria-label='City haze test' value={hazeQuality} onChange={e => setQualityElement('cityAtmosphere', e.target.value as 'off' | 'low' | 'high')}>
+            <option value='off'>Off</option><option value='low'>Low</option><option value='high'>High</option>
+          </select>
+        </label>
+        <label><input type='checkbox' checked={resolution.locked} onChange={e => resolutionStore.set({ locked: e.target.checked })} /> Hold render resolution</label>
+        <span>{Math.round(resolution.scale * 100)}% render scale · {resolution.tileFactor.toFixed(2)} terrain factor</span>
+        <button disabled={bench === 'running'} onClick={async () => {
+          const w = window as Window & { __windowSeatBench?: (frames: number) => Promise<BenchResult> }
+          if (w.__windowSeatBench == null) return
+          setBench('running')
+          try { setBench(await w.__windowSeatBench(60)) } catch { setBench(null) }
+        }}>Benchmark 60 frames</button>
+        <output>{bench === 'running' ? 'Benchmark running' : bench == null ? '' : `${bench.meanMs} ms mean · ${bench.p95Ms} ms p95 · ${bench.fps} fps`}</output>
+      </div>}
 
       <label className='dev-row'>
         <span>

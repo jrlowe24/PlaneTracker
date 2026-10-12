@@ -61,7 +61,7 @@ type Rgb = readonly [number, number, number]
 // Linear light colors (relative), roughly by lamp type.
 const SODIUM: Rgb = [1.0, 0.56, 0.22]
 const WARM_LED: Rgb = [1.0, 0.68, 0.36]
-const NEUTRAL_LED: Rgb = [0.82, 0.72, 0.58]
+const NEUTRAL_LED: Rgb = [0.78, 0.86, 1.0]
 const WHITE: Rgb = [0.92, 0.94, 1.0]
 const GREEN: Rgb = [0.15, 1.0, 0.35]
 const BLUE: Rgb = [0.2, 0.35, 1.0]
@@ -98,17 +98,17 @@ interface RoadStyle {
 const QUIET_FLAG = 16
 
 const ROADS: Record<string, RoadStyle> = {
-  motorway: { spacing: 70, bothSides: false, width: 34, pool: 0.32, lamp: 1.0, colors: [0.55, [SODIUM, NEUTRAL_LED]] },
-  trunk: { spacing: 60, bothSides: false, width: 28, pool: 0.32, lamp: 1.0, colors: [0.5, [SODIUM, NEUTRAL_LED]] },
-  primary: { spacing: 50, bothSides: true, width: 24, pool: 0.36, lamp: 1.0, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
-  secondary: { spacing: 50, bothSides: true, width: 20, pool: 0.32, lamp: 1.0, colors: [0.35, [SODIUM, NEUTRAL_LED]] },
-  tertiary: { spacing: 55, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.45, [SODIUM, WARM_LED]] },
+  motorway: { spacing: 70, bothSides: false, width: 34, pool: 0.32, lamp: 1.0, colors: [0.68, [SODIUM, NEUTRAL_LED]] },
+  trunk: { spacing: 60, bothSides: false, width: 28, pool: 0.32, lamp: 1.0, colors: [0.62, [SODIUM, NEUTRAL_LED]] },
+  primary: { spacing: 48, bothSides: true, width: 24, pool: 0.4, lamp: 1.0, colors: [0.62, [SODIUM, NEUTRAL_LED]] },
+  secondary: { spacing: 48, bothSides: true, width: 20, pool: 0.36, lamp: 1.0, colors: [0.58, [SODIUM, NEUTRAL_LED]] },
+  tertiary: { spacing: 55, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.58, [SODIUM, WARM_LED]] },
   busway: { spacing: 50, bothSides: false, width: 16, pool: 0.26, lamp: 0.9, colors: [0.3, [SODIUM, NEUTRAL_LED]] },
-  // Residential streets: a lamp every ~90 m, some streets' poles bare
+  // Residential streets: a lamp every ~75 m, some streets' poles bare
   // (US suburbs often light mainly intersections).
-  minor: { spacing: 90, bothSides: false, width: 12, pool: 0.2, lamp: 0.8, colors: [0.5, [SODIUM, WARM_LED]], off: 0.15, quiet: true },
+  minor: { spacing: 75, bothSides: false, width: 12, pool: 0.24, lamp: 0.8, colors: [0.55, [SODIUM, WARM_LED]], off: 0.1, quiet: true },
   // Driveways, alleys, parking aisles: few and dim.
-  service: { spacing: 110, bothSides: false, width: 7, pool: 0.06, lamp: 0.4, colors: [0.5, [SODIUM, WARM_LED]], off: 0.4, quiet: true }
+  service: { spacing: 100, bothSides: false, width: 7, pool: 0.07, lamp: 0.4, colors: [0.55, [SODIUM, WARM_LED]], off: 0.35, quiet: true }
 }
 
 /** Diffuse glow of whole areas (parking lots, yards, signage, porch lights). */

@@ -3,6 +3,8 @@ import {
   BufferGeometry,
   Matrix4,
   Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
   Vector3,
   type InterleavedBufferAttribute,
   type Object3D,
@@ -13,6 +15,7 @@ import type {
   CreasedNormalsRequest,
   CreasedNormalsResponse
 } from './creasedNormals.worker'
+import { patchExperimentalWater } from './experimentalWater'
 
 /** Small round-robin pool of module workers computing creased normals. */
 class NormalsWorkerPool {
@@ -186,6 +189,9 @@ export class TileNormalsPlugin {
     for (const material of materials) {
       const map = (material as { map?: Texture | null }).map
       if (map == null) continue
+      if (material instanceof MeshBasicMaterial || material instanceof MeshStandardMaterial) {
+        patchExperimentalWater(material)
+      }
       if (this.anisotropy > 1) map.anisotropy = this.anisotropy
       releaseAfterUpload(map)
     }

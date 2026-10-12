@@ -15,6 +15,8 @@ export type QualityChoice = QualityLevel | 'auto' | 'custom'
 export interface QualityElements {
   /** Render resolution (pixel ratio cap; see RESOLUTION). */
   resolution: 'low' | 'medium' | 'high' | 'ultra'
+  /** Final contrast-adaptive image sharpening, independent of pixel count. */
+  sharpening: 'off' | 'low' | 'high'
   /** Terrain detail: 3D Tiles error target (see TERRAIN). */
   terrain: 'low' | 'medium' | 'high' | 'ultra'
   clouds: 'off' | 'low' | 'medium' | 'high'
@@ -24,6 +26,8 @@ export interface QualityElements {
    * its ~600 m detail too; high, lit windows on buildings as well.
    */
   cityLights: 'low' | 'medium' | 'high'
+  /** Atmospheric scattering from cities; ray samples, separate from clouds. */
+  cityAtmosphere: 'off' | 'low' | 'high'
   /** How far out street lights are drawn lamp by lamp (memory; roadTiles.ts). */
   lightDistance: LightDistance
   /** How many aircraft near the camera get full models. */
@@ -45,8 +49,12 @@ export interface QualitySettings {
   lensFlare: boolean
   /** 3D Tiles screen-space error target in pixels (higher = coarser, faster). */
   tileErrorTarget: number
+  /** Close night-city terrain multiplier (lower is finer). */
+  closeNightTileFactor: number
   /** Device-pixel-ratio cap (resolution scale). */
   maxDpr: number
+  /** Final contrast-adaptive sharpening strength. */
+  sharpenAmount: number
   /**
    * The cap at night: the terrain is barely visible then (coarser tiles,
    * coarser clouds) and the lights are sized in pixels, so they read just
@@ -63,6 +71,7 @@ export interface QualitySettings {
   cityLightDetail: boolean
   /** Lit windows on buildings. */
   buildingWindows: boolean
+  cityAtmosphereSamples: number
   /** Most aircraft drawn with full models at once. */
   maxDetailedAircraft: number
   /** Landing and taxi lights, with their beams on the ground at night. */
@@ -85,6 +94,13 @@ const RESOLUTION: Record<QualityElements['resolution'], [number, number, number]
   ultra: [2, 2, 2]
 }
 
+/** Image treatment is independent of the number of pixels being rendered. */
+const SHARPNESS: Record<QualityElements['sharpening'], number> = {
+  off: 0,
+  low: 0.45,
+  high: 0.9
+}
+
 /**
  * Terrain error targets (pixels). Each step finer costs a lot of main-
  * thread time walking and streaming tiles, every frame (6 → 9: ~35% less
@@ -92,6 +108,16 @@ const RESOLUTION: Record<QualityElements['resolution'], [number, number, number]
  * city), for detail mostly visible only when looking for it.
  */
 const TERRAIN: Record<QualityElements['terrain'], number> = { low: 20, medium: 12, high: 9, ultra: 6 }
+
+const CLOSE_NIGHT_TERRAIN: Record<QualityElements['terrain'], number> = {
+  // Night lighting carries most of the visible structure. Keep close-city
+  // geometry above the old blanket 2x night reduction at the top presets,
+  // but do not turn Ultra into a several-times-heavier photogrammetry mode.
+  low: 2.5,
+  medium: 2,
+  high: 1.75,
+  ultra: 1.5
+}
 
 /**
  * Tile cache (upper bound) by terrain detail. A full cache can't load what
@@ -120,40 +146,48 @@ const DETAILED_AIRCRAFT: Record<QualityElements['aircraft'], number> = { low: 3,
 export const PRESETS: Record<QualityLevel, QualityElements> = {
   low: {
     resolution: 'low',
+    sharpening: 'off',
     terrain: 'low',
     clouds: 'low',
     cloudShadows: false,
     cityLights: 'low',
+    cityAtmosphere: 'low',
     lightDistance: 'near',
     aircraft: 'low',
     lensFlare: true
   },
   medium: {
     resolution: 'medium',
+    sharpening: 'low',
     terrain: 'medium',
     clouds: 'medium',
     cloudShadows: true,
     cityLights: 'medium',
+    cityAtmosphere: 'low',
     lightDistance: 'medium',
     aircraft: 'medium',
     lensFlare: true
   },
   high: {
     resolution: 'high',
+    sharpening: 'high',
     terrain: 'high',
     clouds: 'high',
     cloudShadows: true,
     cityLights: 'high',
+    cityAtmosphere: 'high',
     lightDistance: 'far',
     aircraft: 'high',
     lensFlare: true
   },
   ultra: {
     resolution: 'ultra',
+    sharpening: 'high',
     terrain: 'ultra',
     clouds: 'high',
     cloudShadows: true,
     cityLights: 'high',
+    cityAtmosphere: 'high',
     lightDistance: 'far',
     aircraft: 'high',
     lensFlare: true
@@ -162,6 +196,7 @@ export const PRESETS: Record<QualityLevel, QualityElements> = {
 
 export function resolveQuality(e: QualityElements): QualitySettings {
   const [maxDpr, nightMaxDpr, closeNightMaxDpr] = RESOLUTION[e.resolution]
+  const mobile = isMobileDevice()
   return {
     clouds: e.clouds === 'off' ? false : e.clouds,
     cloudShadows: e.cloudShadows,
@@ -171,11 +206,14 @@ export function resolveQuality(e: QualityElements): QualitySettings {
     lightShafts: false,
     lensFlare: e.lensFlare,
     tileErrorTarget: TERRAIN[e.terrain],
+    closeNightTileFactor: mobile ? Math.max(1, CLOSE_NIGHT_TERRAIN[e.terrain]) : CLOSE_NIGHT_TERRAIN[e.terrain],
     maxDpr,
+    sharpenAmount: mobile ? 0 : SHARPNESS[e.sharpening],
     nightMaxDpr,
     closeNightMaxDpr,
     cityLightDetail: e.cityLights !== 'low',
     buildingWindows: e.cityLights === 'high',
+    cityAtmosphereSamples: e.cityAtmosphere === 'off' ? 0 : e.cityAtmosphere === 'low' ? 5 : 10,
     maxDetailedAircraft: DETAILED_AIRCRAFT[e.aircraft],
     landingLights: e.aircraft !== 'low',
     lightDistance: isMobileDevice() && e.lightDistance === 'far' ? 'medium' : e.lightDistance,

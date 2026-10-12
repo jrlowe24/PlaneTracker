@@ -25,6 +25,8 @@ export interface Settings {
   precipitation: 'auto' | 'force' | 'off'
   /** Replace mapped OSM water surfaces with the procedural water material. */
   waterMaterial: boolean
+  /** Experimental color/roughness heuristic for likely water in 3D tiles. */
+  experimentalWater: boolean
   showDevPanel: boolean
 }
 
@@ -58,7 +60,9 @@ export const settingsStore = createStore<Settings>({
   weatherPrototype: initialWeatherPrototype(),
   precipitation: 'auto',
   waterMaterial: false,
-  showDevPanel: import.meta.env.DEV
+  experimentalWater: params.get('water') === '1',
+  // Keep the diagnostic panel hidden by default; press ` to show it when needed.
+  showDevPanel: false
 })
 
 /** Keeps the visual-lab selection across shader-triggered page reloads. */

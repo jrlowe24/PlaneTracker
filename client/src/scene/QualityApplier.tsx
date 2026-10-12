@@ -17,11 +17,11 @@ const TARGET_MS = 1000 / 60
  * 50-55 fps aren't worth a visibly softer image.
  */
 const SLOW_MS = TARGET_MS * 1.25
+/** Every preset may trade resolution for a stable frame rate. */
 const MIN_SCALE = 0.6
 const STEP_DOWN = 0.9
 const STEP_UP = 1.08
-/** Below this scale, coarser terrain is traded in before more resolution. */
-const TILE_TRADE_SCALE = 0.7
+/** Preserve crisp pixels first: geometry is cheaper to trade at night. */
 const MAX_TILE_FACTOR = 1.5
 const TILE_STEP = 1.25
 /** Daytime tile cross-fade (see googleTiles.ts). */
@@ -80,10 +80,10 @@ class ResolutionGovernor {
     const mean = this.sum / this.count
     let changed = false
     if (this.elapsed >= WINDOW_DOWN_S && mean > SLOW_MS) {
-      // Resolution first; once it's fairly low, coarser terrain too
-      // (draw calls and triangles cost CPU and vertex time resolution
-      // can't win back).
-      if (this.scale <= TILE_TRADE_SCALE && this.tileFactor < MAX_TILE_FACTOR) {
+      // Close-city photogrammetry is often the dominant cost. Trade some
+      // geometry first so one-pixel windows and lamps stay crisp; only then
+      // lower the full-screen render resolution.
+      if (this.tileFactor < MAX_TILE_FACTOR) {
         this.tileFactor = Math.min(MAX_TILE_FACTOR, this.tileFactor * TILE_STEP)
         changed = true
       } else if (this.scale > MIN_SCALE) {
@@ -188,13 +188,15 @@ export const QualityApplier: FC = () => {
     if (quality.choice === 'auto' && quality.level !== 'low' && governor.takeDowngrade()) stepDownAuto()
   })
 
-
   useEffect(() => {
     if (config.tilesDisabled) return
     const tiles = getGoogleTiles({ apiKey: config.googleMapsApiKey })
-    tiles.errorTarget = preset.tileErrorTarget * tileFactor * (dark ? NIGHT_TILE_FACTOR : 1)
+    // Lit facades make close city geometry visible at night. Preserve their
+    // shape while retaining the cheaper terrain target beyond the close view.
+    const nightFactor = dark ? (close ? preset.closeNightTileFactor : NIGHT_TILE_FACTOR) : 1
+    tiles.errorTarget = preset.tileErrorTarget * tileFactor * nightFactor
     // ...except around airports, where the night is spent looking.
-    setAirportDetailBoost(dark ? NIGHT_TILE_FACTOR : 1)
+    setAirportDetailBoost(nightFactor)
     setTileCacheBytes(tiles, preset.tileCacheBytes)
     // Distant terrain gets coarser tiles than the target: it's small, in
     // haze, and away from where you look, and it's where most tiles go in
@@ -207,7 +209,7 @@ export const QualityApplier: FC = () => {
     // tiles swap at once; the lights fade in on their own.
     const fade = tiles.getPluginByName('FADE_TILES_PLUGIN') as { fadeDuration: number } | null
     if (fade != null) fade.fadeDuration = dark ? 1 : TILE_FADE_MS
-  }, [preset.tileErrorTarget, preset.tileCacheBytes, tileFactor, dark])
+  }, [preset.tileErrorTarget, preset.tileCacheBytes, preset.closeNightTileFactor, tileFactor, dark, close])
 
   return null
 }

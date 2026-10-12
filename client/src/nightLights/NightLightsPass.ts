@@ -63,6 +63,7 @@ uniform float pixelAngle;
 // Street / airport light rasters (RoadLightTiles), one window per level.
 uniform sampler2DArray roadLights;
 uniform highp sampler2DArray roadLamps;
+uniform sampler2DArray waterMap;
 uniform float lampGain;
 uniform float roadTexelMeters[${ROAD_LEVELS}];
 uniform vec2 roadOrigin[${ROAD_LEVELS}];
@@ -96,7 +97,7 @@ const int ROAD_STRIDE = ${MAX_WINDOW * MAX_WINDOW};
 const int TILE = ${ROAD_TILE_SIZE};
 // Same table as LAMP_COLORS in roadRaster.worker.ts.
 const vec3 LAMP_COLORS[9] = vec3[9](
-  vec3(0.0), vec3(1.0, 0.42, 0.1), vec3(1.0, 0.68, 0.36), vec3(0.95, 0.85, 0.7),
+  vec3(0.0), vec3(1.0, 0.56, 0.22), vec3(1.0, 0.68, 0.36), vec3(0.78, 0.86, 1.0),
   vec3(0.92, 0.94, 1.0), vec3(0.15, 1.0, 0.35), vec3(0.2, 0.35, 1.0), vec3(1.0, 0.08, 0.05),
   vec3(1.0, 0.96, 0.86));
 /** Palette entries from here on are airfield lights. */
@@ -157,6 +158,19 @@ float roadLayer(const int level, const ivec2 cell) {
   return roadLayers[level * ROAD_STRIDE + cell.y * w + cell.x];
 }
 
+// Prefer mapped shorelines over the daytime photograph's color. The coarse
+// scatter otherwise places lamps on dark photographed water and port shadows.
+float mappedLand(const vec3 offset, const vec3 albedo) {
+  for (int level = 0; level < ${ROAD_LEVELS}; ++level) {
+    if (roadEnabled[level] < 0.5) continue;
+    vec2 local = roadLocal(level, offset);
+    float layer = roadLayer(level, ivec2(floor(local)));
+    if (layer < 0.0) continue;
+    return 1.0 - smoothstep(0.15, 0.85, texture(waterMap, vec3(fract(local), layer)).r);
+  }
+  return 1.0 - waterScore(albedo);
+}
+
 /**
  * Brightness of a lamp drawn bigger than it is, share = its true size
  * over its drawn size. Slower than its true share (share²) so lamps stay
@@ -165,7 +179,7 @@ float roadLayer(const int level, const ivec2 cell) {
  * and the slow falloff turned streets into a glowing map.
  */
 float distantFade(const float share) {
-  return min(1.0, pow(share, 0.6) * pow(min(1.0, share / 0.1), 0.7));
+  return min(1.0, pow(share, 0.5) * pow(min(1.0, share / 0.1), 0.55));
 }
 
 /**
@@ -182,15 +196,35 @@ float airfieldBoost(const float share) {
 }
 
 /**
- * A lamp is ~0.7 m. Farther away it's drawn at least about a pixel wide,
- * and dimmed as it grows, a little slower than its true share of the pixel
- * so distant cities still read as fields of lights (as they do to the eye,
- * through glare) rather than a lattice of full-brightness dots.
- * (Steeper far away: see distantFade.)
+ * Share of a lamp's drawn light that glows: all of it within a few km,
+ * falling quickly once the fixture is sub-pixel.  The core stays visible at
+ * distance, but feeding the enlarged reconstruction into bloom turned rows
+ * of individual lights into soft ropes.
  */
-/** Share of a lamp's drawn light that glows: all of it within a few km. */
 float glowShare(const float share) {
-  return pow(min(1.0, share / 0.15), 1.4);
+  return pow(min(1.0, share / 0.15), 1.9);
+}
+
+/**
+ * A lamp's pool is local illumination on the pavement, not part of the
+ * emitter itself. Once several metres fit in a screen pixel, retaining the
+ * whole pool fills the dark gaps between distant fixtures and makes the city
+ * read as a soft painted map. Keep pools intact nearby, then leave only a
+ * small corridor signal at distance; city-scale haze is handled separately
+ * by CityAtmosphereEffect.
+ */
+float poolShare(const float footprint) {
+  float local = 1.0 - smoothstep(1.25, 5.5, footprint);
+  return mix(0.09, 1.0, local);
+}
+
+/**
+ * Distant reconstructed points need a slightly stronger peak to retain the
+ * same apparent contrast after tone mapping. This affects the unblurred core
+ * only; it deliberately does not add energy to bloom or ground spill.
+ */
+float pointContrast(const float footprint) {
+  return mix(1.0, 1.5, smoothstep(1.25, 5.5, footprint));
 }
 
 uvec2 pcg2d(uvec2 v);
@@ -206,7 +240,8 @@ float lampFade(const float radius) {
 /**
  * Lamps near this pixel drawn exactly: each texel cell holds at most one
  * lamp's precise position, so they're sharp points of a physical size
- * (~0.7 m, at least ~1.5 px) at any zoom, with a faint glow around them.
+ * (~0.7 m, reconstructed into a tight one-pixel core) at any zoom, with a
+ * faint glow around them.
  */
 vec3 nearLamps(const int level, const vec2 local, const float footprint, const vec3 dX, const vec3 dY, out vec3 field) {
   field = vec3(0.0);
@@ -222,9 +257,10 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
     m.z * dot(dY, roadEast[level]), -m.w * dot(dY, roadNorth[level]));
   if (abs(determinant(toTexel)) < 1e-8) return vec3(0.0);
   mat2 toPixel = inverse(toTexel);
-  // Fixture ~0.7 m; drawn at least ~1 px, dimmed as that outgrows it.
+  // Fixture ~0.7 m; a 0.55 px Gaussian radius keeps most distant fixtures
+  // in one pixel while retaining enough sub-pixel coverage not to shimmer.
   float physical = 0.35 / max(footprint, 1e-3);
-  float core = max(0.8, physical);
+  float core = max(0.55, physical);
   float fade = distantFade(physical / 0.8);
   // The 3x3 cell search reaches about a texel from this pixel in every
   // direction: radii (pixels) beyond that would be clipped into dashes
@@ -249,7 +285,8 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
         if (float(h.x & 0xffffu) / 65535.0 < quietness * 0.6) continue;
       }
       vec2 position = vec2(c) + lamp.rg * (255.0 / 256.0) + 0.5 / 256.0;
-      float d = length(toPixel * (position - texel));
+      vec2 pixelDelta = toPixel * (position - texel);
+      float d = length(pixelDelta);
       // Airfield lights are high-intensity, focused toward approaching
       // aircraft: much brighter, with a few pixels of glare, and they carry
       // farther.
@@ -260,7 +297,12 @@ vec3 nearLamps(const int level, const vec2 local, const float footprint, const v
       // slower than streets, so they read from farther off (airfieldK).
       float k = airfield ? airfieldK(physical / 0.8) : fade;
       float spot = exp(-d * d / (r * r));
-      float light = spot * (airfield ? airfieldBoost(physical / 0.8) : 1.0) + exp(-d * d / (glare * glare)) * (airfield ? 0.08 : 0.06);
+      // Preserve the old 0.8 px kernel's integrated energy as the street
+      // core narrows. Fewer pixels light up, but their peaks get brighter:
+      // the high-contrast pinpoint response seen in the reference.
+      float reconstructionBoost = clamp(0.64 / (core * core), 1.0, 2.1);
+      float coreBoost = airfield ? airfieldBoost(physical / 0.8) : reconstructionBoost;
+      float light = spot * coreBoost + exp(-d * d / (glare * glare)) * (airfield ? 0.08 : 0.008);
       vec3 contribution = LAMP_COLORS[index] * lamp.a * k * light;
       if (airfield) field += contribution;
       else sum += contribution;
@@ -295,7 +337,9 @@ vec3 carpet(const int level, const vec2 local, const float footprint, const floa
   vec2 texel = local * float(TILE);
   ivec2 base = ivec2(floor(texel));
   ivec2 origin = ivec2(roadOrigin[level]) * TILE;
-  float radius = max(0.35, 0.6 * footprint);
+  // Keep the procedural infill as pinpoints too. In screen space this is a
+  // 0.44 px Gaussian radius instead of a broad 0.6 px bead.
+  float radius = max(0.35, 0.44 * footprint);
   float fade = lampFade(radius);
   vec3 sum = vec3(0.0);
   for (int dy = -1; dy <= 1; ++dy) {
@@ -305,7 +349,8 @@ vec3 carpet(const int level, const vec2 local, const float footprint, const floa
       vec2 r = vec2(h & 0xffffu) / 65535.0;
       if (r.x >= density) continue;
       vec2 position = vec2(c) + 0.15 + 0.7 * vec2(fract(r.y * 7.13), fract(r.y * 13.7));
-      float d = length(texel - position) * meters;
+      vec2 meterDelta = (position - texel) * meters;
+      float d = length(meterDelta);
       float i = 0.7 + 0.8 * fract(r.y * 31.1);
       vec3 color = fract(r.y * 3.7) < 0.55 ? LAMP_COLORS[1] : LAMP_COLORS[2];
       sum += color * i * fade * exp(-d * d / (radius * radius));
@@ -529,6 +574,7 @@ float overlap(const float a0, const float a1, const float b0, const float b1) {
 
 /** Building traits for its windows (set per pixel by buildingWindows). */
 bool wOffice;
+bool wAccent;
 float wShare;
 uvec2 wBuilding;
 uint wSide;
@@ -547,12 +593,18 @@ vec3 homeColor(const float r) {
 
 vec3 officeColor(const float r) {
   // Offices vary by installation and era: amber sodium/tungsten, warm and
-  // neutral LED, cool fluorescent, and a small greenish fluorescent tail.
-  return r < 0.18 ? vec3(1.0, 0.34, 0.08)
-    : r < 0.5 ? vec3(0.96, 0.58, 0.27)
-    : r < 0.76 ? vec3(0.72, 0.75, 0.65)
-    : r < 0.94 ? vec3(0.44, 0.62, 1.0) * 0.8
-    : vec3(0.36, 1.0, 0.66) * 0.52;
+  // neutral LED and cool fluorescent. A minority of towers get saturated
+  // architectural color; keeping it correlated per building makes a skyline
+  // read as distinct landmarks instead of confetti-colored windows.
+  return r < 0.14 ? vec3(1.0, 0.3, 0.055)
+    : r < 0.43 ? vec3(1.0, 0.54, 0.2)
+    : r < 0.68 ? vec3(1.0, 0.82, 0.58)
+    : r < 0.81 ? vec3(0.62, 0.78, 1.0) * 0.9
+    : r < 0.87 ? vec3(0.12, 0.78, 1.0) * 0.82
+    : r < 0.91 ? vec3(0.12, 0.34, 1.0) * 0.72
+    : r < 0.95 ? vec3(0.18, 1.0, 0.48) * 0.64
+    : r < 0.98 ? vec3(1.0, 0.12, 0.055) * 0.72
+    : vec3(0.88, 0.16, 1.0) * 0.64;
 }
 
 /** Width (columns) of a lit cluster: an office suite, an apartment. */
@@ -595,7 +647,8 @@ vec4 cluster(const ivec2 cell) {
     // A building shares fixtures and glazing, while tenants introduce a
     // smaller floor-to-floor difference. Fully random per-window color reads
     // like Christmas lights; no correlation reads like the old beige grid.
-    return vec4(officeColor(clamp(wTint + (tenantTint - 0.5) * 0.16, 0.0, 0.999)), 1.0);
+    float colorKey = wAccent ? wTint : clamp(wTint + (tenantTint - 0.5) * 0.12, 0.0, 0.809);
+    return vec4(officeColor(colorKey), 1.0);
   }
   uvec2 h = pcg2d(uvec2(uint(block + 65536) + wSide * 131071u, uint(cell.y + 65536)) ^ building);
   if (float(h.x & 0xffffu) / 65535.0 >= wShare) return vec4(0.0);
@@ -605,7 +658,7 @@ vec4 cluster(const ivec2 cell) {
 
 /** Share of a lit cluster's windows that are lit (rooms, desks left dark). */
 float clusterFill() {
-  return wOffice ? 0.9 : 0.7;
+  return wOffice ? 0.94 : 0.78;
 }
 
 /**
@@ -617,7 +670,7 @@ float clusterFill() {
  * points stay put. Groups wider than a cluster are lit by chance.
  */
 vec3 windowPoints(const vec2 cellF, const vec2 w, const float k, const float area) {
-  const float RADIUS = 0.7;
+  const float RADIUS = 0.52;
   float clusters = max(1.0, k / wCluster) * k;
   float anyLit = k > wCluster ? 1.0 - pow(1.0 - wShare, clusters) : 1.0;
   if (anyLit <= 0.001) return vec3(0.0);
@@ -722,11 +775,13 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
   float r1 = float(hb.x >> 16u) / 65535.0;
   float r2 = float(hb.y & 0xffffu) / 65535.0;
   float r3 = float(hb.y >> 16u) / 65535.0;
+  float r4 = hash1(bid ^ uvec2(3917u, 9277u));
+  float r5 = hash1(bid ^ uvec2(12043u, 6151u));
   bool office = r0 < smoothstep(20.0, 90.0, height) * 0.75;
   float floorHeight = office ? mix(3.7, 4.3, r1) : mix(2.9, 3.4, r1);
   float columnWidth = office ? mix(1.6, 3.2, r2) : mix(2.6, 4.0, r2);
   // How busy this building is; a few stand dark (vacant, closed, parking).
-  float busy = r3 < 0.08 ? 0.0 : mix(0.35, 1.5, fract(r3 * 13.7));
+  float busy = r3 < 0.05 ? 0.0 : mix(0.55, 1.6, fract(r3 * 13.7));
   float share = clamp((office ? windowShares.y : windowShares.x) * busy, 0.0, 0.95);
 
   // Wall coordinates: altitude, and along the wall (the anchor's east or
@@ -747,35 +802,39 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
 
   // Window opening within its cell: offices nearly continuous glass,
   // homes punched windows.
-  vec2 x01 = office ? vec2(0.1, 0.9) : vec2(0.2, 0.8);
-  vec2 y01 = office ? vec2(0.25, 0.88) : vec2(0.32, 0.86);
+  vec2 x01 = office ? vec2(0.07, 0.93) : vec2(0.17, 0.83);
+  vec2 y01 = office ? vec2(0.18, 0.92) : vec2(0.27, 0.9);
 
   wOffice = office;
+  wAccent = office && r4 < smoothstep(35.0, 120.0, height) * 0.18;
   wShare = share;
   wBuilding = bid;
   wSide = side;
-  wTint = r1;
+  // Architectural colors belong to a few taller buildings and remain
+  // coherent across their tenants. Ordinary offices stay in the amber-to-
+  // cool-white part of the palette.
+  wTint = wAccent ? 0.81 + r5 * 0.189 : r1 * 0.81;
   // Suites of 4-10 windows; homes of 2-3.
   // Office suites span much of a floor (6-14 windows); homes 2-3.
   wCluster = office ? floor(mix(6.0, 14.99, fract(r2 * 7.31))) : floor(mix(2.0, 3.99, fract(r2 * 7.31)));
   wSpan = floor(mix(2.0, 5.99, fract(r1 * 5.71)));
 
   // Up close, an exact box filter: the share of this pixel (in cell
-  // units, w wide) each window opening covers, over the up to 2x2 cells
+  // units, w wide) each window opening covers, over the up to 3x3 cells
   // it touches, so windows fade in and out smoothly as the view moves.
   float area = (x01.y - x01.x) * (y01.y - y01.x);
   float size = max(w.x, w.y);
   vec3 windows = vec3(0.0);
-  if (size < 0.9) {
+  if (size < 1.8) {
     vec2 halfW = max(w, vec2(1e-4)) * 0.5;
     vec2 lo = cellF - halfW;
     vec2 hi = cellF + halfW;
     ivec2 first = ivec2(floor(lo));
-    for (int j = 0; j < 2; ++j) {
+    for (int j = 0; j < 3; ++j) {
       int y = first.y + j;
       float oy = overlap(lo.y, hi.y, float(y) + y01.x, float(y) + y01.y) / (2.0 * halfW.y);
       if (oy <= 0.0) continue;
-      for (int i = 0; i < 2; ++i) {
+      for (int i = 0; i < 3; ++i) {
         int x = first.x + i;
         float ox = overlap(lo.x, hi.x, float(x) + x01.x, float(x) + x01.y) / (2.0 * halfW.x);
         if (ox > 0.0) windows += windowAt(ivec2(x, y)) * ox * oy;
@@ -784,12 +843,12 @@ vec3 buildingWindows(const vec3 offset, const vec3 surfaceNormal, const vec3 dX,
   }
   // Farther: points of light for groups of windows (k a power of two,
   // groups at least ~1.5 px; blended across the steps).
-  if (size > 0.6) {
+  if (size > 1.2) {
     float level = log2(max(size * 1.5, 1.0));
     float k = exp2(floor(level));
     float t = fract(level);
     vec3 points = mix(windowPoints(cellF, w, k, area), windowPoints(cellF, w, 2.0 * k, area), t);
-    windows = mix(windows, points, smoothstep(0.6, 0.9, size));
+    windows = mix(windows, points, smoothstep(1.2, 1.8, size));
   }
   return windows * fade;
 }
@@ -876,7 +935,7 @@ void main() {
     float nLength = length(n);
     float upDay = nLength > 1e-12 ? abs(dot(n, up)) / nLength : 0.0;
     vec3 dirDay = normalize(offset);
-    vec3 runway = runwayLights(offset, footprintDay, dXDay, dYDay, dirDay, dFdx(dirDay), dFdy(dirDay)) * lampGain * smoothstep(0.35, 0.85, upDay) * fieldOn;
+    vec3 runway = runwayLights(offset, footprintDay, dXDay, dYDay, dirDay, dFdx(dirDay), dFdy(dirDay)) * lampGain * 0.8 * smoothstep(0.35, 0.85, upDay) * fieldOn;
     if (any(isnan(runway)) || any(isinf(runway))) runway = vec3(0.0);
     outColor = vec4(runway, lightLuminance(runway) * glowShare(0.35 / max(footprintDay, 1e-3) / 0.8));
     return;
@@ -932,12 +991,15 @@ void main() {
   // the hue; the ground contributes primarily luminance and texture.
   float greenExcess = max(0.0, albedo.g - max(albedo.r, albedo.b));
   vec3 nightAlbedo = albedo.rgb - vec3(0.0, greenExcess * 0.4, 0.0);
-  vec3 lit = pools * roadGain * nightAlbedo + lamps * lampGain;
+  float groundShare = poolShare(footprint);
+  float coreContrast = pointContrast(footprint);
+  vec3 groundLight = pools * roadGain * nightAlbedo * groundShare;
+  vec3 lit = groundLight + lamps * lampGain * coreContrast;
   // What feeds the glow (alpha, below): lamps drawn bigger and brighter
   // than their true share of a pixel far away would make a distant
   // airport's or city's glow grow as it shrinks on screen. Beyond a few
   // km, scale the glow down towards the lamps' true energy.
-  vec3 glowing = pools * roadGain * nightAlbedo + lamps * lampGain * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
+  vec3 glowing = groundLight + lamps * lampGain * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
 
   // Residential carpet where only the coarse level's main roads are drawn,
   // and beyond the street tiles (not loaded yet, or past the windows): the
@@ -947,13 +1009,14 @@ void main() {
   // (very high up).
   // Sparser where NASA's map is dimmer: suburbs thin out to the dark edges.
   float density = pow(smoothstep(0.12, 0.8, value), 1.5) * 0.3;
-  float land = 1.0 - waterScore(albedo.rgb);
+  float land = mappedLand(offset, albedo.rgb);
   bool coarseGrid = roadEnabled[${ROAD_LEVELS - 1}] > 0.5;
   float carpetShare = coarse + (coarseGrid ? remaining : 0.0);
   if (carpetShare > 0.0) {
     vec3 c = carpet(${ROAD_LEVELS - 1}, roadLocal(${ROAD_LEVELS - 1}, offset), footprint, density) * lampGain * carpetShare * land;
+    c *= coreContrast;
     lit += c;
-    glowing += c * glowShare(0.5 / max(0.35, 0.6 * footprint));
+    glowing += c / coreContrast * glowShare(0.5 / max(0.35, 0.44 * footprint));
   }
   if (!coarseGrid) {
     vec3 average = vec3(1.0, 0.6, 0.25) * density * 0.04 * lampGain * remaining * land;
@@ -966,9 +1029,10 @@ void main() {
   float cores = mix(0.7, 1.5, smoothstep(0.35, 0.95, value));
   float facing = smoothstep(0.35, 0.85, upness) * night;
   float gain = urban * cores * facing;
-  vec3 field = fieldLamps * lampGain * smoothstep(0.35, 0.85, upness) * fieldOn;
-  vec3 light = lit * gain + field;
-  float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
+  // Keep airfield intensity independent of the stronger urban fixture cores.
+  vec3 field = fieldLamps * lampGain * 0.8 * smoothstep(0.35, 0.85, upness) * fieldOn;
+  vec3 light = lit * gain * land + field;
+  float glow = lightLuminance(glowing) * gain * land + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
   // Landing and taxi lights on the runway, taxiway or apron ahead.
   if (beamCount > 0 && normalLength > 1e-12) {
     vec3 beams = albedo.rgb * lightBeams(offset, normal / normalLength) * night;
@@ -986,10 +1050,21 @@ void main() {
     }
     float wall = wallLength > 1e-12 ? 1.0 - smoothstep(0.3, 0.55, abs(dot(wallNormal, up)) / wallLength) : 0.0;
     if (wall > 0.0) {
+      // Street and district bounce reveal the building mass between windows.
+      // It follows the local pool and satellite density, keeping rural walls dark.
+      light += nightAlbedo * (pools * roadGain * groundShare * 0.18 + vec3(1.0, 0.75, 0.48) * 0.001 * urban * cores) * wall * night;
       vec3 windows = buildingWindows(offset, wallNormal, dX, dY) * windowGain * wall * night;
       light += windows;
-      glow += lightLuminance(windows) * 0.25;
+      glow += lightLuminance(windows) * 0.35;
     }
+  }
+  // Preserve the color separation and highlight sparkle of emissive sources
+  // after the strong night exposure and AgX shoulder. This grades only the
+  // generated light buffer; terrain, water and the night sky stay untouched.
+  float emittedLuma = lightLuminance(light);
+  if (emittedLuma > 0.0) {
+    light = max(vec3(0.0), mix(vec3(emittedLuma), light, 1.82));
+    light *= mix(1.0, 1.68, smoothstep(0.035, 0.11, emittedLuma));
   }
   // Never NaN or infinite: one such pixel turns the whole glow (and with it
   // every light on screen) black.
@@ -1008,8 +1083,8 @@ void main() {
  * and nearly dark before dawn; offices lit as people leave, then patches
  * here and there (cleaning, late work) through the night.
  */
-const HOME_LIT = [0.12, 0.05, 0.035, 0.08, 0.18, 0.12, 0.1, 0.1, 0.15, 0.27, 0.3, 0.22]
-const OFFICE_LIT = [0.05, 0.035, 0.035, 0.06, 0.22, 0.4, 0.4, 0.4, 0.4, 0.25, 0.14, 0.08]
+const HOME_LIT = [0.16, 0.08, 0.045, 0.09, 0.2, 0.14, 0.12, 0.12, 0.19, 0.32, 0.38, 0.32]
+const OFFICE_LIT = [0.1, 0.06, 0.045, 0.08, 0.24, 0.45, 0.48, 0.5, 0.52, 0.5, 0.48, 0.34]
 
 function litShare(table: readonly number[], hour: number): number {
   const h = ((((hour % 24) + 24) % 24) / 2)
@@ -1019,12 +1094,12 @@ function litShare(table: readonly number[], hour: number): number {
 }
 
 /** Lit windows' brightness (relative to the street lamps' lampGain). */
-// Keep the brightest windows below AGX's shoulder. The previous gain clipped
-// different color temperatures to the same cream-white after night exposure.
-const WINDOW_GAIN = 0.008
+// Deliberately high enough for occupied floors to reach AgX's highlight range;
+// the emission-only color shaping above preserves their fixture separation.
+const WINDOW_GAIN = 0.05
 
 /** Glow around night lights (blurred light added to them). */
-const NIGHT_GLOW = 0.45
+const NIGHT_GLOW = 0.34
 
 /**
  * Adds the lights' glow, and writes the cloud underglow into alpha: seen
@@ -1143,12 +1218,13 @@ export class NightLightsPass extends Pass {
         cameraWorld: new Uniform(new Matrix4()),
         cameraPositionECEF: new Uniform(new Vector3()),
         sunDirection: new Uniform(new Vector3()),
-        roadGain: new Uniform(0.085),
+        roadGain: new Uniform(0.1),
         airfieldOn: new Uniform(0),
         pixelAngle: new Uniform(0.001),
         roadLights: new Uniform(null),
         roadLamps: new Uniform(null),
-        lampGain: new Uniform(0.095),
+        waterMap: new Uniform(null),
+        lampGain: new Uniform(0.125),
         buildingMap: new Uniform(null),
         windowGain: new Uniform(WINDOW_GAIN),
         windowShares: new Uniform(new Vector2(0.2, 0.2)),
@@ -1233,10 +1309,11 @@ export class NightLightsPass extends Pass {
     this.u<number>('tileDegrees').value = tileDegrees
   }
 
-  setRoads(texture: DataArrayTexture, lamps: DataArrayTexture, buildings: DataArrayTexture, levels: readonly RoadLevelUniforms[]): void {
+  setRoads(texture: DataArrayTexture, lamps: DataArrayTexture, buildings: DataArrayTexture, water: DataArrayTexture, levels: readonly RoadLevelUniforms[]): void {
     this.u<DataArrayTexture>('roadLights').value = texture
     this.u<DataArrayTexture>('roadLamps').value = lamps
     this.u<DataArrayTexture>('buildingMap').value = buildings
+    this.u<DataArrayTexture>('waterMap').value = water
     const enabled = this.u<Float32Array>('roadEnabled').value
     const layers = this.u<Float32Array>('roadLayers').value
     const fades = this.u<Float32Array>('roadFade').value
@@ -1320,6 +1397,7 @@ export class NightLightsPass extends Pass {
     renderer.setRenderTarget(this.target)
     this.fullscreenMaterial = this.material
     renderer.render(this.scene, this.camera)
+
     this.blur.render(renderer, this.target, null)
     this.combine.uniforms.glowBuffer!.value = this.blur.texture
     renderer.setRenderTarget(this.target)

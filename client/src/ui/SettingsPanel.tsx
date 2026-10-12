@@ -140,6 +140,7 @@ const QualitySection: FC = () => {
   const level = useStore(qualityStore, s => s.level)
   const scale = useStore(resolutionStore, s => s.scale)
   const tileFactor = useStore(resolutionStore, s => s.tileFactor)
+  const experimentalWater = useStore(settingsStore, s => s.experimentalWater)
   const adapted = scale < 0.999 || tileFactor > 1.001
   return (
     <section className='settings-group'>
@@ -159,9 +160,22 @@ const QualitySection: FC = () => {
         }}
       />
       <p className='settings-note'>
-        Resolution adapts automatically to keep it smooth. Low suits phones and saves battery.
+        Presets tune every effect together. Resolution and terrain adapt automatically to keep the view smooth.
       </p>
       <QualityDetails />
+      <label className='experimental-water-toggle'>
+        <input
+          type='checkbox'
+          checked={experimentalWater}
+          onChange={event => {
+            settingsStore.set({ experimentalWater: event.target.checked })
+          }}
+        />
+        <span>
+          Experimental water
+          <span className='settings-note'>Approximate mask from imagery, height and surface shape.</span>
+        </span>
+      </label>
     </section>
   )
 }

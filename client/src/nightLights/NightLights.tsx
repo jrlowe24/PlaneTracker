@@ -112,7 +112,7 @@ class NightLightsController {
     tiles.tick(Math.min(delta, 0.1))
     effect.setDetail(detail, tiles.origin, tiles.loaded, m.detail.tileDegrees, m.detail.columns)
     if (this.roads != null) {
-      effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.buildings, this.roads.levels.map(l => l.uniforms))
+      effect.setRoads(this.roads.texture, this.roads.lamps, this.roads.buildings, this.roads.water, this.roads.levels.map(l => l.uniforms))
     }
     this.runways.update(camera.position)
     effect.setRunways(this.runways.uniforms)

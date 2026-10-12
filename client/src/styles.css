@@ -871,6 +871,30 @@ kbd {
   color: var(--muted);
 }
 
+.experimental-water-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  cursor: pointer;
+}
+
+.experimental-water-toggle input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.experimental-water-toggle > span {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.experimental-water-toggle .settings-note {
+  display: block;
+  margin-top: 3px;
+  font-weight: 400;
+}
+
 /* Segmented control (iOS style). */
 .segmented {
   display: flex;

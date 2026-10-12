@@ -23,11 +23,13 @@ import { config } from '../config'
 import { NightLights } from '../nightLights/NightLights'
 import { nightEmission } from '../nightLights/nightLightsStore'
 import { useStore } from '../state/createStore'
-import { qualityStore } from '../state/quality'
+import { isMobileDevice, qualityStore } from '../state/quality'
 import { settingsStore } from '../state/settings'
 import { EffectComposer } from './EffectComposer'
 import { nightState, updateNightLighting } from './nightLighting'
 import { patchWaterSurface, updateWaterSurface } from './waterSurface'
+import { CityAtmosphereEffect } from './CityAtmosphereEffect'
+import { SharpenEffect } from './SharpenEffect'
 
 /**
  * Clouds render at reduced resolution and are upsampled, so cloud behind an
@@ -235,12 +237,22 @@ export const PostEffects: FC = () => {
   const { transientStates } = useContext(AtmosphereContext)
   const cloudsEnabled = useStore(qualityStore, s => s.settings.clouds !== false)
   const lensFlare = useStore(qualityStore, s => s.settings.lensFlare)
+  const cityHazeEnabled = useStore(qualityStore, s => s.settings.cityAtmosphereSamples > 0)
+  const sharpenAmount = useStore(qualityStore, s => s.settings.sharpenAmount)
+  const [cityHazeActive, setCityHazeActive] = useState(false)
   const navGlow = useMemo(() => new NavGlowEffect(camera), [camera])
+  const cityAtmosphere = useMemo(() => new CityAtmosphereEffect(camera), [camera])
+  const sharpen = useMemo(() => isMobileDevice() ? null : new SharpenEffect(), [])
+  useEffect(() => {
+    sharpen?.setAmount(sharpenAmount)
+  }, [sharpen, sharpenAmount])
   useEffect(
     () => () => {
       navGlow.dispose()
+      cityAtmosphere.dispose()
+      sharpen?.dispose()
     },
-    [navGlow]
+    [navGlow, cityAtmosphere, sharpen]
   )
   // With clouds, the sky is drawn in post while the sun is up so cloud light
   // shafts reach it; at night the scene Sky + Stars are kept (sky-in-post
@@ -290,12 +302,15 @@ export const PostEffects: FC = () => {
       if (emissionOn != null) emissionOn.value = nightEmission.enabled && nightEmission.texture != null ? 1 : 0
     }
     if (transientStates != null) {
+      cityAtmosphere.setSun(transientStates.sunDirection)
       updateNightLighting(
         camera.position,
         transientStates.sunDirection,
         transientStates.moonDirection,
         Math.min(delta, 0.1)
       )
+      const hazeActive = nightState.night > 0.01
+      if (hazeActive !== cityHazeActive) setCityHazeActive(hazeActive)
     }
     updateWaterSurface(
       nightEmission.roads,
@@ -359,6 +374,7 @@ export const PostEffects: FC = () => {
         correctGeometricError
         albedoScale={2 / Math.PI}
       />
+      <>{cityHazeEnabled && cityHazeActive ? <primitive object={cityAtmosphere} dispose={null} /> : null}</>
       {/* Glow halos around aircraft nav lights only. */}
       <primitive object={navGlow} dispose={null} />
       {/* Daytime only: at night there's no sun to flare, and its bloom of
@@ -370,7 +386,13 @@ export const PostEffects: FC = () => {
           full-screen pass); its ±½ LSB noise is far below SMAA's edge
           threshold. */}
       <Dithering />
-      <SMAA />
+      {/* Above 1.4 device pixels per CSS pixel the drawing buffer itself
+          supplies enough spatial antialiasing. SMAA then costs several passes
+          and visibly softens one-pixel windows and distant lamps. */}
+      <>{dpr < 1.4 ? <SMAA /> : null}</>
+      {/* Desktop reference rendering uses a final micro-contrast pass. Keep
+          it after SMAA so antialiasing does not soften the restored detail. */}
+      <>{sharpen != null && sharpenAmount > 0 ? <primitive object={sharpen} dispose={null} /> : null}</>
     </EffectComposer>
   )
 }

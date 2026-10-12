@@ -29,7 +29,13 @@ const ON_OFF = [
 ]
 
 const ROWS: Row[] = [
-  { key: 'resolution', label: 'Resolution', hint: 'Sharpness; the biggest cost on large screens', options: FOUR },
+  { key: 'resolution', label: 'Render resolution', hint: 'Internal pixel count; the biggest GPU cost', options: FOUR },
+  {
+    key: 'sharpening',
+    label: 'Sharpening',
+    hint: 'Edge clarity after rendering; lightweight',
+    options: [{ id: 'off', label: 'Off' }, { id: 'low', label: 'Low' }, { id: 'high', label: 'High' }]
+  },
   { key: 'terrain', label: 'Terrain detail', hint: 'Map detail in the distance; memory and loading', options: FOUR },
   {
     key: 'clouds',
@@ -39,6 +45,7 @@ const ROWS: Row[] = [
   },
   { key: 'cloudShadows', label: 'Cloud shadows', hint: 'Clouds shading the ground', options: ON_OFF },
   { key: 'cityLights', label: 'City lights', hint: 'Detailed night lights; High adds lit windows', options: THREE },
+  { key: 'cityAtmosphere', label: 'City haze', hint: 'Warm atmospheric glow above cities', options: [{ id: 'off', label: 'Off' }, { id: 'low', label: 'Low' }, { id: 'high', label: 'High' }] },
   {
     key: 'lightDistance',
     label: 'Light distance',
