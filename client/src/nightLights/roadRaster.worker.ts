@@ -8,7 +8,7 @@ import Pbf from 'pbf'
  * additively. Streets get a pool of light along them and lamps at real
  * spacing, colored by road type and district (sodium orange, warm or
  * neutral LED); commercial and industrial areas and airport aprons a
- * diffuse glow; runways and taxiways their lighting: white edge and
+ * diffuse glow plus sparse physical fixtures; runways and taxiways their lighting: white edge and
  * centerline lights, green thresholds, red ends, approach light rows, and
  * green/blue taxiway lights.
  */
@@ -428,8 +428,14 @@ async function render(
     const cls = String(feature.properties.class)
     if (cls === 'apron' && feature.type === 3) {
       const rings = geometry(feature)
-      if (poolsEnabled) fillRings(ctx, rings, rgba(NEUTRAL_LED, 0.05))
-      scatterLamps(ctx, rings, 70 / mpp, 0.9, NEUTRAL_LED, 1.0, 12 / mpp, request)
+      // Aprons used to be a uniformly glowing polygon. Real airfields are
+      // lit from tall perimeter masts: keep only a small base wash, then
+      // place a sparse, deterministic row of bright heads around the apron
+      // edge. At map scale the mast itself is sub-pixel, but the separate
+      // lamp layer preserves a sharp fixture while its pool lights pavement
+      // and nearby detailed aircraft.
+      if (poolsEnabled) fillRings(ctx, rings, rgba(NEUTRAL_LED, 0.014))
+      apronFloodlights(ctx, rings, mpp, request)
       continue
     }
     if (feature.type !== 2) continue
@@ -609,6 +615,28 @@ function scatterPools(
     }
   }
   ctx.restore()
+}
+
+/**
+ * High-mast apron floodlights. OSM gives us an apron polygon but not its
+ * lighting plan, so use the perimeter—where these masts normally sit—and a
+ * world-fixed phase so adjacent streamed tiles never make the lights crawl.
+ * Holes are included too: terminal/gate islands receive their own edge row.
+ */
+function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRasterRequest): void {
+  const spacing = 90 / mpp
+  const radius = 30 / mpp
+  for (let ringIndex = 0; ringIndex < rings.length; ++ringIndex) {
+    const ring = rings[ringIndex]!
+    if (ring.length < 2) continue
+    const phase = spacing * hash(tile.x * 4099 + ringIndex, tile.y * 8191 + ring.length, tile.z + 47)
+    along(ring, spacing, phase, (x, y) => {
+      // Avoid a perfectly regular stadium-like outline while retaining
+      // enough coverage for gates and ramp parking.
+      if (hash(Math.round(x * 8), Math.round(y * 8), 53) < 0.12) return
+      lamp(ctx, x, y, radius, RUNWAY, 1.15, true)
+    })
+  }
 }
 
 /**
