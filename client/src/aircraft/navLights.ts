@@ -62,7 +62,7 @@ const STROBE: [number, number, number] = [7, 7, 7.4]
  * perceptual night scale as moonlight (nightLighting.ts): by day they're
  * lost in sunlight, as they are in reality.
  */
-const SURFACE_CD = { nav: 40, tail: 20, beacon: 35, strobe: 200 }
+const SURFACE_CD = { nav: 120, tail: 60, beacon: 180, strobe: 900 }
 /** Renderer irradiance per lux at full night (FULL_MOON / 0.25 lux, toned down). */
 const NIGHT_LUX = 0.03
 /**
@@ -107,7 +107,7 @@ let beamCount = 0
 const byBeamDistance = (a: BeamCandidate, b: BeamCandidate): number => a.distance - b.distance
 
 /** Reach of a light on the model (m): steady lights only their own surroundings. */
-const SURFACE_RANGE = { nav: 4.5, tail: 5, beacon: 9, strobe: 18 }
+const SURFACE_RANGE = { nav: 7, tail: 8, beacon: 13, strobe: 24 }
 /** Only aircraft this close have their surfaces lit (detailed models anyway). */
 const SURFACE_MAX_DISTANCE = 3000
 
@@ -238,7 +238,10 @@ export class NavLights {
     surfaceCount = 0
     beamCount = 0
     const landingLights = qualityStore.get().settings.landingLights
-    const surfaceScale = NIGHT_LUX * nightState.night
+    // Emitters remain visible during the day, especially when the aircraft
+    // sits in a building shadow. Their surface spill must follow that same
+    // visibility instead of dropping to exactly zero until full night.
+    const surfaceScale = NIGHT_LUX * (0.12 + 0.88 * nightState.night)
     /** A light on a detailed model, lighting the model around it. */
     const lightSurface = (
       x: number,

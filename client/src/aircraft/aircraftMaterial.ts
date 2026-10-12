@@ -40,6 +40,10 @@ for (int i = 0; i < ${MAX_SURFACE_LIGHTS}; ++i) {
   navLight.color = navLightColor[i] * pow2(reach) / max(d2, 0.5);
   navLight.visible = true;
   RE_Direct(navLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+  // Real paint and nearby structure scatter a little of the intense lens
+  // light even when a facet faces away. This restrained local bounce makes
+  // the wingtip/tail visibly pick up the light without turning emissive.
+  reflectedLight.indirectDiffuse += material.diffuseColor * navLight.color * 0.12;
 }
 #endif
 #include <lights_fragment_end>`
