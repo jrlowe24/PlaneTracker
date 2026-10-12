@@ -18,10 +18,10 @@ const MAX_GLOWS = 48
  * flare wider: GlowLight.size). Small: a steady nav light is a bright
  * point with a little glare, not a ball of light.
  */
-const GLOW_RADIUS_M = 0.9
-const MIN_RADIUS_PX = 3
-const MAX_RADIUS_PX = 14
-const GLOW_GAIN = 0.45
+const GLOW_RADIUS_M = 0.65
+const MIN_RADIUS_PX = 2.5
+const MAX_RADIUS_PX = 11
+const GLOW_GAIN = 0.38
 
 const fragmentShader = /* glsl */ `
 uniform vec4 glows[${MAX_GLOWS}];

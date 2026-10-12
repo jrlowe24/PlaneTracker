@@ -46,6 +46,8 @@ export interface RoadRasterResponse {
   water?: Uint8Array | null
   /** Whole runways near the tile, for exact runway lighting (runwayLights.ts). */
   runways?: RunwayRecord[]
+  /** Sparse elevated apron-mast candidates: lon/lat degree pairs. */
+  floodlights?: Float32Array | null
   error?: string
 }
 
@@ -223,6 +225,69 @@ function fillRings(ctx: Ctx, rings: Point[][], style: string): void {
   ctx.fill('evenodd')
 }
 
+function insideRings(point: Point, rings: Point[][]): boolean {
+  let inside = false
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i]!
+      const b = ring[j]!
+      if (
+        (a.y > point.y) !== (b.y > point.y) &&
+        point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x
+      ) {
+        inside = !inside
+      }
+    }
+  }
+  return inside
+}
+
+/** Sparse, world-fixed high-mast positions inside a detailed apron polygon. */
+function apronFloodlights(
+  rings: Point[][],
+  request: RoadRasterRequest,
+  out: number[]
+): void {
+  if (request.z !== 14 || rings.length === 0 || out.length >= 64) return
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const ring of rings) {
+    for (const p of ring) {
+      minX = Math.min(minX, p.x)
+      minY = Math.min(minY, p.y)
+      maxX = Math.max(maxX, p.x)
+      maxY = Math.max(maxY, p.y)
+    }
+  }
+  const spacing = 140 / request.metersPerPixel
+  const worldX = request.x * request.size
+  const worldY = request.y * request.size
+  const firstX = Math.floor((worldX + minX) / spacing)
+  const lastX = Math.ceil((worldX + maxX) / spacing)
+  const firstY = Math.floor((worldY + minY) / spacing)
+  const lastY = Math.ceil((worldY + maxY) / spacing)
+  const n = 2 ** request.z
+  for (let gy = firstY; gy <= lastY && out.length < 64; ++gy) {
+    for (let gx = firstX; gx <= lastX && out.length < 64; ++gx) {
+      if (hash(gx, gy, 83) > 0.52) continue
+      const jitterX = (hash(gx, gy, 89) - 0.5) * spacing * 0.35
+      const jitterY = (hash(gx, gy, 97) - 0.5) * spacing * 0.35
+      const x = (gx + 0.5) * spacing + jitterX - worldX
+      const y = (gy + 0.5) * spacing + jitterY - worldY
+      const p = { x, y }
+      if (!insideRings(p, rings)) continue
+      const tileX = request.x + x / request.size
+      const tileY = request.y + y / request.size
+      const lon = (tileX / n) * 360 - 180
+      const mercator = Math.PI * (1 - (2 * tileY) / n)
+      const lat = (Math.atan(Math.sinh(mercator)) * 180) / Math.PI
+      out.push(lon, lat)
+    }
+  }
+}
+
 async function render(
   request: RoadRasterRequest,
   data: ArrayBuffer
@@ -232,6 +297,7 @@ async function render(
   buildings: Uint8Array | null
   water: Uint8Array
   runways: RunwayRecord[]
+  floodlights: Float32Array
 }> {
   const { size, metersPerPixel: mpp } = request
   lampSize = size
@@ -247,6 +313,7 @@ async function render(
   ctx.lineJoin = 'round'
 
   const tile = new VectorTile(new Pbf(new Uint8Array(data)))
+  const floodlights: number[] = []
   const geometry = (feature: VectorTileFeature): Point[][] => {
     const k = size / feature.extent
     return feature.loadGeometry().map(ring => ring.map(p => ({ x: p.x * k, y: p.y * k })))
@@ -377,10 +444,11 @@ async function render(
     const feature = aeroway!.feature(i)
     const cls = String(feature.properties.class)
     if (cls === 'apron' && feature.type === 3) {
-      // High-mast floodlights.
+      // Aprons no longer glow uniformly. Sparse elevated masts are handed
+      // to the 3D lighting paths instead, so walls and aircraft receive the
+      // light while the pavement between fixtures can stay dark.
       const rings = geometry(feature)
-      if (poolsEnabled) fillRings(ctx, rings, rgba(NEUTRAL_LED, 0.05))
-      scatterLamps(ctx, rings, 70 / mpp, 0.9, NEUTRAL_LED, 1.0, 12 / mpp, request)
+      apronFloodlights(rings, request, floodlights)
       continue
     }
     if (feature.type !== 2) continue
@@ -452,7 +520,14 @@ async function render(
 
   const pixels = ctx.getImageData(0, 0, size, size).data
   for (let i = 0; i < size * size; ++i) pixels[i * 4 + 3] = Math.min(255, Math.round(lampEnergy[i]! * 255))
-  return { pixels, lamps: lampCells, buildings: buildingMap, water, runways: index?.runways ?? [] }
+  return {
+    pixels,
+    lamps: lampCells,
+    buildings: buildingMap,
+    water,
+    runways: index?.runways ?? [],
+    floodlights: new Float32Array(floodlights)
+  }
 }
 
 /** Lamps on a jittered grid inside polygons (clipped to them). */
@@ -749,9 +824,9 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
   try {
     const response = await fetch(request.url)
     if (!response.ok) throw new Error(`tile ${response.status}`)
-    const { pixels, lamps, buildings, water, runways } = await render(request, await response.arrayBuffer())
-    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, water, runways }
-    const transfer = [pixels.buffer, lamps.buffer, water.buffer]
+    const { pixels, lamps, buildings, water, runways, floodlights } = await render(request, await response.arrayBuffer())
+    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, water, runways, floodlights }
+    const transfer = [pixels.buffer, lamps.buffer, water.buffer, floodlights.buffer]
     if (buildings != null) transfer.push(buildings.buffer)
     ;(self as unknown as Worker).postMessage(message, transfer)
   } catch (error) {
@@ -759,6 +834,7 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
       id: request.id,
       pixels: null,
       lamps: null,
+      floodlights: null,
       error: error instanceof Error ? error.message : String(error)
     }
     ;(self as unknown as Worker).postMessage(message)

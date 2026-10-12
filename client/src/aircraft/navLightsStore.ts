@@ -22,7 +22,7 @@ export const glowLights: GlowLight[] = []
 export const glowState = { count: 0 }
 
 /** Nav lights that light the detailed aircraft models around them. */
-export const MAX_SURFACE_LIGHTS = 10
+export const MAX_SURFACE_LIGHTS = 16
 
 /**
  * Shared by every detailed model's material (aircraftMaterial.ts):
@@ -31,7 +31,12 @@ export const MAX_SURFACE_LIGHTS = 10
  */
 export const surfaceLights = {
   position: Array.from({ length: MAX_SURFACE_LIGHTS }, () => new Vector4()),
-  color: Array.from({ length: MAX_SURFACE_LIGHTS }, () => new Vector3())
+  color: Array.from({ length: MAX_SURFACE_LIGHTS }, () => new Vector3()),
+  /** World-space emission direction; w < -1 means an omnidirectional light. */
+  direction: Array.from(
+    { length: MAX_SURFACE_LIGHTS },
+    () => new Vector4(0, 0, 0, -2)
+  )
 }
 
 /** Landing/taxi light beams that light the ground at night (nearest first). */

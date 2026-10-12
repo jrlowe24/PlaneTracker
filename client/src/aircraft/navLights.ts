@@ -62,7 +62,13 @@ const STROBE: [number, number, number] = [7, 7, 7.4]
  * perceptual night scale as moonlight (nightLighting.ts): by day they're
  * lost in sunlight, as they are in reality.
  */
-const SURFACE_CD = { nav: 120, tail: 60, beacon: 180, strobe: 900 }
+const SURFACE_CD = {
+  nav: 70,
+  tail: 35,
+  logo: 320,
+  beacon: 180,
+  strobe: 900
+}
 /** Renderer irradiance per lux at full night (FULL_MOON / 0.25 lux, toned down). */
 const NIGHT_LUX = 0.03
 /**
@@ -107,7 +113,13 @@ let beamCount = 0
 const byBeamDistance = (a: BeamCandidate, b: BeamCandidate): number => a.distance - b.distance
 
 /** Reach of a light on the model (m): steady lights only their own surroundings. */
-const SURFACE_RANGE = { nav: 7, tail: 8, beacon: 13, strobe: 24 }
+const SURFACE_RANGE = {
+  nav: 6,
+  tail: 6.5,
+  logo: 18,
+  beacon: 13,
+  strobe: 24
+}
 /** Only aircraft this close have their surfaces lit (detailed models anyway). */
 const SURFACE_MAX_DISTANCE = 3000
 
@@ -120,6 +132,10 @@ interface SurfaceLight {
   r: number
   g: number
   b: number
+  dx: number
+  dy: number
+  dz: number
+  cone: number
 }
 const surfacePool: SurfaceLight[] = []
 let surfaceCount = 0
@@ -250,10 +266,25 @@ export class NavLights {
       distance: number,
       color: readonly [number, number, number],
       candela: number,
-      range: number
+      range: number,
+      direction?: readonly [number, number, number],
+      cone = -2
     ): void => {
       if (candela <= 0 || surfaceScale <= 0) return
-      const s = (surfacePool[surfaceCount++] ??= { x: 0, y: 0, z: 0, distance: 0, range: 0, r: 0, g: 0, b: 0 })
+      const s = (surfacePool[surfaceCount++] ??= {
+        x: 0,
+        y: 0,
+        z: 0,
+        distance: 0,
+        range: 0,
+        r: 0,
+        g: 0,
+        b: 0,
+        dx: 0,
+        dy: 0,
+        dz: 0,
+        cone: -2
+      })
       // Hue of the light, normalized so candela sets the brightness.
       const k = (candela * surfaceScale) / Math.max(color[0], color[1], color[2])
       s.x = x
@@ -264,6 +295,10 @@ export class NavLights {
       s.r = color[0] * k
       s.g = color[1] * k
       s.b = color[2] * k
+      s.dx = direction?.[0] ?? 0
+      s.dy = direction?.[1] ?? 0
+      s.dz = direction?.[2] ?? 0
+      s.cone = cone
     }
 
     for (const aircraft of list) {
@@ -313,15 +348,39 @@ export class NavLights {
       const anchors = isDetailed ? modelLightAnchors.get(aircraft.hex) : undefined
       const tip = anchors?.wingtip
       const [lx, ly, lz] = tip != null ? at(tip.x, tip.y, tip.z) : at(halfSpan, wingY, tipZ)
-      put(lx, ly, lz, distance, RED, 1)
+      put(lx, ly, lz, distance, RED, 0.65, 0.7)
       if (lit) lightSurface(lx, ly, lz, distance, RED, SURFACE_CD.nav, SURFACE_RANGE.nav)
       const [rx, ry, rz] = tip != null ? at(-tip.x, tip.y, tip.z) : at(-halfSpan, wingY, tipZ)
-      put(rx, ry, rz, distance, GREEN, 1)
+      put(rx, ry, rz, distance, GREEN, 0.65, 0.7)
       if (lit) lightSurface(rx, ry, rz, distance, GREEN, SURFACE_CD.nav, SURFACE_RANGE.nav)
       const tailAt = anchors?.tail
       const [tx, ty, tz] = tailAt != null ? at(0, tailAt.y, tailAt.z) : at(0, r * 0.3, (-p.length / 2) * ls)
-      put(tx, ty, tz, distance, WHITE, 1)
+      put(tx, ty, tz, distance, WHITE, 0.5, 0.58)
       if (lit) lightSurface(tx, ty, tz, distance, WHITE, SURFACE_CD.tail, SURFACE_RANGE.tail)
+      // Airliner logo lights sit on the aft fuselage / horizontal tail and
+      // wash upward and aft over the vertical stabilizer. They illuminate
+      // paint only; there is no extra visible bulb sprite.
+      if (lit && p.wingSpan >= 20 && p.finHeight >= 3) {
+        const [logoX, logoY, logoZ] = at(
+          0,
+          r * 0.72,
+          -p.length * ls * 0.27
+        )
+        const aimX = up.x * 0.72 - forward.x * 0.69
+        const aimY = up.y * 0.72 - forward.y * 0.69
+        const aimZ = up.z * 0.72 - forward.z * 0.69
+        lightSurface(
+          logoX,
+          logoY,
+          logoZ,
+          distance,
+          WHITE,
+          SURFACE_CD.logo,
+          SURFACE_RANGE.logo,
+          [aimX, aimY, aimZ],
+          Math.cos(34 * DEG_RAD)
+        )
+      }
       const topAt = anchors?.top
       const [bx, by, bz] = topAt != null ? at(0, topAt.y + 0.15, topAt.z) : at(0, r * 1.02, 0)
       put(bx, by, bz, distance, RED, beacon * 1.6, 1.5)
@@ -411,6 +470,7 @@ export class NavLights {
       }
       surfaceLights.position[i]!.set(s.x, s.y, s.z, s.range)
       surfaceLights.color[i]!.set(s.r, s.g, s.b)
+      surfaceLights.direction[i]!.set(s.dx, s.dy, s.dz, s.cone)
     }
     this.mesh.instanceMatrix.needsUpdate = true
     this.mesh.instanceColor!.needsUpdate = true

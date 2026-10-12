@@ -22,6 +22,10 @@ import {
 import { WINDOW_TILES } from './nightLightTiles'
 import { MAX_WINDOW, ROAD_LEVELS, ROAD_TILE_SIZE, type RoadLevelUniforms } from './roadTiles'
 import { MAX_RUNWAYS, type RunwayUniforms } from './runwayLights'
+import {
+  airportFloodLights,
+  MAX_AIRPORT_FLOOD_LIGHTS
+} from './AirportFloodLights'
 import { lightBeams, MAX_LIGHT_BEAMS } from '../aircraft/navLightsStore'
 
 const drawingBuffer = new Vector2()
@@ -90,6 +94,9 @@ uniform vec4 runwayApproach[${MAX_RUNWAYS}];
 uniform int beamCount;
 uniform vec4 beamPosition[${MAX_LIGHT_BEAMS}];
 uniform vec4 beamDirection[${MAX_LIGHT_BEAMS}];
+uniform int airportFloodLightCount;
+uniform vec4 airportFloodLightPosition[${MAX_AIRPORT_FLOOD_LIGHTS}];
+uniform vec3 airportFloodLightColor[${MAX_AIRPORT_FLOOD_LIGHTS}];
 
 const float DETAIL_WINDOW = ${WINDOW_TILES.toFixed(1)};
 const int ROAD_STRIDE = ${MAX_WINDOW * MAX_WINDOW};
@@ -836,6 +843,25 @@ vec3 lightBeams(const vec3 offset, const vec3 normal) {
   return sum;
 }
 
+/** Elevated high-mast apron lights, evaluated against the actual surface. */
+vec3 airportFloodLightIrradiance(const vec3 offset, const vec3 normal) {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < ${MAX_AIRPORT_FLOOD_LIGHTS}; ++i) {
+    if (i >= airportFloodLightCount) break;
+    vec4 light = airportFloodLightPosition[i];
+    vec3 toLight = light.xyz - offset;
+    float d2 = max(dot(toLight, toLight), 25.0);
+    float reach = clamp(1.0 - d2 / (light.w * light.w), 0.0, 1.0);
+    if (reach <= 0.0) continue;
+    vec3 direction = toLight * inversesqrt(d2);
+    // Photogrammetry triangles can have either winding. The light still
+    // reaches vertical gate walls, roofs and the apron beneath the mast.
+    float incidence = max(0.08, abs(dot(normal, direction)));
+    sum += airportFloodLightColor[i] * reach * reach * incidence / d2;
+  }
+  return sum;
+}
+
 /**
  * Surface normal from the depth over two pixels each way, from the side
  * of each axis that doesn't cross a depth edge. The one-pixel derivatives
@@ -877,6 +903,9 @@ void main() {
     float upDay = nLength > 1e-12 ? abs(dot(n, up)) / nLength : 0.0;
     vec3 dirDay = normalize(offset);
     vec3 runway = runwayLights(offset, footprintDay, dXDay, dYDay, dirDay, dFdx(dirDay), dFdy(dirDay)) * lampGain * smoothstep(0.35, 0.85, upDay) * fieldOn;
+    if (nLength > 1e-12) {
+      runway += airportFloodLightIrradiance(offset, n / nLength);
+    }
     if (any(isnan(runway)) || any(isinf(runway))) runway = vec3(0.0);
     outColor = vec4(runway, lightLuminance(runway) * glowShare(0.35 / max(footprintDay, 1e-3) / 0.8));
     return;
@@ -964,6 +993,9 @@ void main() {
   float facing = smoothstep(0.35, 0.85, upness) * night;
   float gain = urban * cores * facing;
   vec3 field = fieldLamps * lampGain * smoothstep(0.35, 0.85, upness) * fieldOn;
+  if (normalLength > 1e-12) {
+    field += airportFloodLightIrradiance(offset, normal / normalLength);
+  }
   vec3 light = lit * gain + field;
   float glow = lightLuminance(glowing) * gain + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
   // Landing and taxi lights on the runway, taxiway or apron ahead.
@@ -1167,7 +1199,10 @@ export class NightLightsPass extends Pass {
         runwayApproach: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         beamCount: new Uniform(0),
         beamPosition: new Uniform(lightBeams.position),
-        beamDirection: new Uniform(lightBeams.direction)
+        beamDirection: new Uniform(lightBeams.direction),
+        airportFloodLightCount: airportFloodLights.count,
+        airportFloodLightPosition: new Uniform(airportFloodLights.position),
+        airportFloodLightColor: new Uniform(airportFloodLights.color)
       }
     })
     const u = this.material.uniforms
