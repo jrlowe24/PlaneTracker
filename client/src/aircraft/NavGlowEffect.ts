@@ -52,6 +52,7 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
 
 const relative = new Vector3()
 const projected = new Vector3()
+const cameraForward = new Vector3()
 const drawingBuffer = new Vector2()
 
 /**
@@ -61,6 +62,9 @@ const drawingBuffer = new Vector2()
  * bloom pass bloomed the whole scene).
  */
 export class NavGlowEffect extends Effect {
+  /** Nearest lights, retained between frames to keep the post path allocation-free. */
+  private readonly nearest: typeof glowLights = []
+
   constructor(private camera: Camera) {
     super('NavGlowEffect', fragmentShader, {
       blendFunction: BlendFunction.NORMAL,
@@ -88,7 +92,22 @@ export class NavGlowEffect extends Effect {
     }
     const height = renderer.getDrawingBufferSize(drawingBuffer).y
     const pixelAngle = (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, height)
-    const nearest = glowLights.slice(0, count).sort((a, b) => a.distance - b.distance)
+    // Most frames only need a handful of halos. Keep the nearest MAX_GLOWS
+    // with an insertion sort instead of copying and sorting every active
+    // light (which could create thousands of short-lived objects in a busy
+    // airspace view).
+    const nearest = this.nearest
+    nearest.length = 0
+    for (let i = 0; i < count; ++i) {
+      const light = glowLights[i]!
+      let insert = nearest.length
+      while (insert > 0 && nearest[insert - 1]!.distance > light.distance) --insert
+      if (insert < MAX_GLOWS) {
+        nearest.splice(insert, 0, light)
+        if (nearest.length > MAX_GLOWS) nearest.pop()
+      }
+    }
+    camera.getWorldDirection(cameraForward)
     let n = 0
     for (const light of nearest) {
       if (n >= MAX_GLOWS) break
@@ -99,7 +118,7 @@ export class NavGlowEffect extends Effect {
         light.size *
         Math.min(MAX_RADIUS_PX, Math.max(MIN_RADIUS_PX, GLOW_RADIUS_M / (light.distance * pixelAngle)))
       // View-space distance along the camera axis, comparable to getViewZ.
-      const viewZ = relative.dot(camera.getWorldDirection(projected.clone()))
+      const viewZ = relative.dot(cameraForward)
       glows[n]!.set(projected.x * 0.5 + 0.5, projected.y * 0.5 + 0.5, viewZ, radius)
       colors[n]!.set(light.r, light.g, light.b)
       ++n
