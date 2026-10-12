@@ -57,7 +57,7 @@ export const settingsStore = createStore<Settings>({
   cloudCoverage: 0.35,
   weatherPrototype: initialWeatherPrototype(),
   precipitation: 'auto',
-  waterMaterial: true,
+  waterMaterial: false,
   showDevPanel: import.meta.env.DEV
 })
 
