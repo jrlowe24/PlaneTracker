@@ -76,6 +76,7 @@ const OVERVIEW_MOTION = { ...defaultMotionOptions, maxExtrapolation: 20 * 60 }
  */
 const FOLLOWED_FADE_AFTER_SECONDS = 150
 const FOLLOWED_MOTION = { ...defaultMotionOptions, maxExtrapolation: 120 }
+const FOLLOWED_LOW_MOTION = { ...defaultMotionOptions, maxExtrapolation: 8, maxVerticalExtrapolation: 3 }
 /** Time constant over which a data correction is blended in. */
 const ERROR_TIME_CONSTANT = 1.2
 /** Corrections smaller than this (m) beyond the predicted motion are ignored. */
@@ -122,11 +123,13 @@ export function computePose(
   followed = false
 ): Pose {
   const overview = aircraft.state.overview === true
+  const low = aircraft.state.onGround ||
+    (aircraft.state.altGeom ?? aircraft.state.altBaro ?? Infinity) < 3000
   const k = evaluateMotion(
     aircraft.motion,
     renderTime,
     kinematic,
-    overview ? OVERVIEW_MOTION : followed ? FOLLOWED_MOTION : undefined
+    overview ? OVERVIEW_MOTION : followed ? (low ? FOLLOWED_LOW_MOTION : FOLLOWED_MOTION) : undefined
   )
   const attitude = aircraft.attitude
   if (k == null) {
@@ -194,7 +197,9 @@ export function computePose(
   const holding = k.onGround && speed < 3
   const overdue =
     k.extrapolation - (overview ? OVERVIEW_FADE_AFTER_SECONDS : followed ? FOLLOWED_FADE_AFTER_SECONDS : FADE_AFTER_SECONDS)
-  out.opacity = holding || overdue <= 0 ? 1 : Math.max(0, 1 - overdue / FADE_SECONDS)
+  // Followed aircraft hold through feed gaps, but are still removed by the
+  // server's finite stale timeout (including its followed-aircraft grace).
+  out.opacity = holding || followed || overdue <= 0 ? 1 : Math.max(0, 1 - overdue / FADE_SECONDS)
   out.speed = speed
   out.onGround = k.onGround
   // Ground heights are the surface; lift the fuselage axis onto its gear,
@@ -209,6 +214,10 @@ export function computePose(
     attitude.glide = 0
   }
   let height = k.height + clearance * attitude.ground
+  if (k.onGround && aircraft.groundHeight != null) {
+    height = aircraft.groundHeight + clearance
+    attitude.ground = 1
+  }
   // Never below the terrain (late data on short final, baro errors).
   if (aircraft.groundHeight != null) {
     height = Math.max(height, aircraft.groundHeight + clearance)

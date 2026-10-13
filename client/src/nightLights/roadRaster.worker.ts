@@ -663,9 +663,9 @@ function apronFloodBeam(
   // High masts throw much farther than the old small pools. The source is
   // deliberately not a white pin: overlapping, low-gradient wedges give
   // the stand a broad, elevated illumination instead.
-  gradient.addColorStop(0, rgbaAlpha(RUNWAY, 0.62, 0.3))
-  gradient.addColorStop(0.22, rgbaAlpha(RUNWAY, 0.54, 0.25))
-  gradient.addColorStop(0.7, rgbaAlpha(RUNWAY, 0.34, 0.13))
+  gradient.addColorStop(0, rgbaAlpha(RUNWAY, 0.62, 0.23))
+  gradient.addColorStop(0.22, rgbaAlpha(RUNWAY, 0.54, 0.19))
+  gradient.addColorStop(0.7, rgbaAlpha(RUNWAY, 0.34, 0.10))
   gradient.addColorStop(1, rgbaAlpha(RUNWAY, 0.08, 0))
   ctx.fillStyle = gradient
   // A raised fixture already covers a wide footprint at the near end.
@@ -707,7 +707,7 @@ function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRas
   // Reflected light from the overlapping mast bank keeps concave stand
   // areas from falling to black between cones. This is a restrained floor,
   // below the directional illumination, confined to mapped pavement.
-  if (poolsEnabled) fillRings(ctx, rings, rgba(RUNWAY, 0.045))
+  if (poolsEnabled) fillRings(ctx, rings, rgba(RUNWAY, 0.03))
   for (let ringIndex = 0; ringIndex < rings.length; ++ringIndex) {
     const ring = rings[ringIndex]!
     if (ring.length < 2) continue

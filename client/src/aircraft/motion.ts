@@ -186,7 +186,10 @@ export function hermite(
   out.vn = (d10 * dt * a.vn + d01 * n1 + d11 * dt * b.vn) / dt
   out.ve = (d10 * dt * a.ve + d01 * e1 + d11 * dt * b.ve) / dt
   out.vu = (d10 * dt * a.vu + d01 * u1 + d11 * dt * b.vu) / dt
-  out.onGround = s < 0.5 ? a.onGround : b.onGround
+  // A discrete surface report becomes true only at its timestamp. Switching
+  // halfway through a descent labelled the still-interpolated aircraft as
+  // grounded tens of metres above the runway.
+  out.onGround = s < 1 ? a.onGround : b.onGround
   out.extrapolation = 0
   return out
 }

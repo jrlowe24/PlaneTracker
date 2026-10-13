@@ -7,6 +7,7 @@ import { config } from '../config'
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { flightConnection } from '../data/flightConnection'
 import { getGoogleTiles } from '../globe/googleTiles'
+import { cameraModeStore } from '../state/cameraMode'
 
 /** Only aircraft this close to the camera are clamped (beyond, icons hide errors). */
 const CLAMP_DISTANCE = 40_000
@@ -62,9 +63,18 @@ class GroundClampController {
   update(ground: Object3D | null): void {
     const now = performance.now()
     let budget = RAYCASTS_PER_FRAME
-    for (const aircraft of flightConnection.registry.list) {
+    const registry = flightConnection.registry
+    const camera = cameraModeStore.get()
+    const followed = camera.mode === 'globe' || camera.targetHex == null ? undefined : registry.byHex.get(camera.targetHex)
+    // Reserve the first cast for the followed plane. It used to wait behind
+    // every nearby parked aircraft when the tiles refined during touchdown.
+    for (let i = -1; i < registry.list.length; ++i) {
+      const aircraft = i === -1 ? followed : registry.list[i]
+      if (aircraft == null || (i >= 0 && aircraft === followed)) continue
       if (budget === 0) break
       const state = aircraft.state
+      const lat = aircraft.pose?.lat ?? state.lat
+      const lon = aircraft.pose?.lon ?? state.lon
       // On-ground aircraft, and low aircraft (approach/departure) so that
       // late data can't push them through the terrain.
       const low = !state.onGround && (state.altGeom ?? state.altBaro ?? Infinity) < LOW_ALTITUDE_FT
@@ -73,12 +83,12 @@ class GroundClampController {
       if (record != null) {
         const moved =
           Math.hypot(
-            (state.lat - record.lat) * 111_000,
-            (state.lon - record.lon) * 111_000 * Math.cos(state.lat * DEG)
+            (lat - record.lat) * 111_000,
+            (lon - record.lon) * 111_000 * Math.cos(lat * DEG)
           ) > RECHECK_METERS
-        if (!moved && now - record.at < RECHECK_MS) continue
+        if (!moved && now - record.at < (aircraft === followed ? 250 : RECHECK_MS)) continue
       }
-      this.records.set(aircraft, { lat: state.lat, lon: state.lon, at: now })
+      this.records.set(aircraft, { lat, lon, at: now })
       --budget
 
       if (ground == null) {
@@ -86,21 +96,21 @@ class GroundClampController {
         flightConnection.registry.setGroundHeight(aircraft.hex, 0)
         continue
       }
-      const guess = aircraft.groundHeight ?? geoidHeight(state.lat, state.lon)
+      const guess = aircraft.groundHeight ?? geoidHeight(lat, lon)
       // Low aircraft: start above the aircraft (terrain may be higher than a
       // stale guess in hilly areas).
       const top = low ? Math.max(guess + RAY_START_HEIGHT, (state.altGeom ?? 0) * 0.3048 + 50) : guess + RAY_START_HEIGHT
-      const start = geodeticToEcef(state.lat, state.lon, top)
+      const start = geodeticToEcef(lat, lon, top)
       origin.set(start.x, start.y, start.z)
-      geodeticUp(state.lat, state.lon, direction).negate()
+      geodeticUp(lat, lon, direction).negate()
       this.raycaster.set(origin, direction)
       this.raycaster.far = top - guess + RAY_START_HEIGHT * 3
       const hit = this.raycaster.intersectObject(ground, true)[0]
       if (hit != null) {
-        const height = heightAlongNormal(hit.point, state.lat)
+        const height = heightAlongNormal(hit.point, lat)
         // Rays can slip through a crack between tiles and hit something far
         // below; ignore hits well below sea level (Dead Sea shore ≈ −430 m).
-        if (height > geoidHeight(state.lat, state.lon) - 450) {
+        if (height > geoidHeight(lat, lon) - 450) {
           flightConnection.registry.setGroundHeight(aircraft.hex, height)
         }
       }

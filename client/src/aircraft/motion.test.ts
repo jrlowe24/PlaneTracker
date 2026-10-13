@@ -15,7 +15,9 @@ import {
   type KinematicState,
   type MotionSample
 } from './motion'
-import { createPose, writePose } from './pose'
+import { computePose, createPose, writePose } from './pose'
+import { AircraftRegistry } from '../data/aircraftRegistry'
+import { AIRFRAMES } from './airframes'
 
 function out(): KinematicState {
   return { lat: 0, lon: 0, height: 0, vn: 0, ve: 0, vu: 0, onGround: false, extrapolation: 0 }
@@ -29,6 +31,17 @@ function eastbound(t: number, lon: number, speed = 200): MotionSample {
 const metersPerDegreeEquator = metersPerRadian(0).east * (Math.PI / 180)
 
 describe('Hermite interpolation', () => {
+  it('does not mark a descent grounded before the surface sample is due', () => {
+    const a = { ...eastbound(0, 0, 70), height: 60, vu: -4 }
+    const b = { ...eastbound(10_000, 700 / metersPerDegreeEquator, 70), height: 0, onGround: true }
+    const k = out()
+    hermite(a, b, 6000, k)
+    expect(k.height).toBeGreaterThan(0)
+    expect(k.onGround).toBe(false)
+    hermite(a, b, 10_000, k)
+    expect(k.height).toBe(0)
+    expect(k.onGround).toBe(true)
+  })
   it('passes through samples and reproduces constant velocity exactly', () => {
     const a = eastbound(0, 0)
     const b = eastbound(10_000, (200 * 10) / metersPerDegreeEquator)
@@ -188,6 +201,17 @@ describe('altitude datum', () => {
     const ground = { ...state, onGround: true, altBaro: null, altGeom: null }
     expect(stateEllipsoidHeight(ground, { groundHeight: () => 110 })).toBe(110)
     expect(stateEllipsoidHeight(ground)).toBeCloseTo(geoidHeight(47.45, -122.31), 9)
+  })
+
+  it('keeps a grounded pose on the measured pavement despite an older height sample', () => {
+    const registry = new AircraftRegistry()
+    const aircraft = registry.upsert({ ...state, onGround: true }, 0)
+    aircraft.groundHeight = 110
+    // Reproduce a stale surface sample while new terrain has refined.
+    aircraft.motion[0]!.height = 165
+    const pose = computePose(aircraft, 0, 1 / 60, true, createPose(), true)
+    expect(pose.onGround).toBe(true)
+    expect(pose.height).toBeCloseTo(110 + aircraft.scale.length * AIRFRAMES[aircraft.cls].groundClearance, 8)
   })
 
   it('converts a state into an SI sample with track-based velocity', () => {

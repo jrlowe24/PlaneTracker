@@ -27,7 +27,7 @@ const FULL_WITHIN = 4000
 /** Lined up: heading within this of the runway (degrees). */
 const MAX_HEADING_OFF = 20
 /** Lateral tolerance at the threshold (m), widening with distance. */
-const CROSS_TOLERANCE = 150
+const CROSS_TOLERANCE = 45
 const CROSS_WIDENING = 0.1
 /** Reported height this far off the path (m) means not landing here. */
 const MAX_DEVIATION = 120
@@ -94,7 +94,9 @@ export function glidePath(
     if (deviation > MAX_DEVIATION) continue
     const weight =
       (1 - smoothstep(FULL_WITHIN, APPROACH_FROM, -along)) *
-      (1 - smoothstep(MAX_DEVIATION * 0.5, MAX_DEVIATION, deviation))
+      (1 - smoothstep(MAX_DEVIATION * 0.5, MAX_DEVIATION, deviation)) *
+      (1 - smoothstep(20 + Math.max(0, -along) * CROSS_WIDENING,
+        CROSS_TOLERANCE + Math.max(0, -along) * CROSS_WIDENING, cross))
     if (best == null || weight > best.weight) {
       result.height = target
       result.verticalSpeed = -speed * slope

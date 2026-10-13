@@ -83,7 +83,7 @@ const TAXI: [number, number, number] = [4.2, 4.0, 3.6]
 const FACING_POWER = 10
 const SIDE_GLOW = 0.06
 const LANDING_LIGHTS_AGL = 3000
-const TAKEOFF_ROLL_SPEED = 25
+const TAKEOFF_ROLL_SPEED = 40
 const TAXI_SPEED = 2.5
 /**
  * Beams on the ground (night lights pass): renderer irradiance at 1 m on
@@ -91,8 +91,8 @@ const TAXI_SPEED = 2.5
  * Only aircraft near the ground and the camera throw a visible beam.
  */
 const BEAM = {
-  landing: { intensity: 420, aim: 4, cos: Math.cos(12 * DEG_RAD) },
-  taxi: { intensity: 160, aim: 9, cos: Math.cos(26 * DEG_RAD) }
+  landing: { intensity: 420, aim: 7, cos: Math.cos(5 * DEG_RAD) },
+  taxi: { intensity: 160, aim: 12, cos: Math.cos(8 * DEG_RAD) }
 }
 const BEAM_MAX_AGL = 250
 const BEAM_MAX_DISTANCE = 6000
@@ -412,6 +412,22 @@ export class NavLights {
             put(ax, ay, az, distance, LANDING, lobe, 2.4)
             put(bx2, by2, bz2, distance, LANDING, lobe, 2.4)
           }
+          // Fuselage-mounted wing/engine inspection lights illuminate the
+          // aircraft rather than projecting a landing beam from the engines.
+          // Positions are class-based fallbacks; the feed has no switch data.
+          if (lit && p.engines.stations.some(s => s > 0) && !p.engines.rearMounted) {
+            for (const side of [-1, 1]) {
+              const [sx, sy, sz] = at(side * r * 0.96, 0, p.wingRootZ * ls + 4 * ls)
+              const station = p.engines.stations.find(s => s > 0)!
+              const [ex, ey, ez] = at(side * station * aircraft.scale.span, -r * 0.4, p.wingRootZ * ls)
+              const vx = ex - sx
+              const vy = ey - sy
+              const vz = ez - sz
+              const length = Math.hypot(vx, vy, vz) || 1
+              lightSurface(sx, sy, sz, distance, WHITE, 180, 18 * ls,
+                [vx / length, vy / length, vz / length], Math.cos(42 * DEG_RAD))
+            }
+          }
           const [nx, ny, nz] = at(0, -r * 1.35, (p.length / 2) * ls * 0.8)
           put(nx, ny, nz, distance, TAXI, lobe * (landing ? 1 : 0.8), 1.8)
           if (distance < BEAM_MAX_DISTANCE && (pose.onGround || agl < BEAM_MAX_AGL)) {
@@ -429,18 +445,31 @@ export class NavLights {
             hx /= hl
             hy /= hl
             hz /= hl
-            const ca = Math.cos(beam.aim * DEG_RAD)
-            const sa = Math.sin(beam.aim * DEG_RAD)
-            const c = (beamPool[beamCount++] ??= { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, intensity: 0, cos: 0, distance: 0 })
-            c.x = nx
-            c.y = ny
-            c.z = nz
-            c.dx = hx * ca - ux * sa
-            c.dy = hy * ca - uy * sa
-            c.dz = hz * ca - uz * sa
-            c.intensity = beam.intensity * pose.opacity
-            c.cos = beam.cos
-            c.distance = distance
+            const aim = landing && !pose.onGround ? 7 : beam.aim
+            const ca = Math.cos(aim * DEG_RAD)
+            const sa = Math.sin(aim * DEG_RAD)
+            // Separate origins for paired wing-root landing lights; taxi
+            // and turnoff beams come from the nose-gear area.
+            const count = landing ? 2 : 3
+            for (let i = 0; i < count; ++i) {
+              const yaw = landing || i === 0 ? 0 : (i === 1 ? -28 : 28) * DEG_RAD
+              const cy = Math.cos(yaw)
+              const sy = Math.sin(yaw)
+              const tx = hx * cy + (uy * hz - uz * hy) * sy
+              const ty = hy * cy + (uz * hx - ux * hz) * sy
+              const tz = hz * cy + (ux * hy - uy * hx) * sy
+              const c = (beamPool[beamCount++] ??= { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, intensity: 0, cos: 0, distance: 0 })
+              const source = landing ? at((i === 0 ? 1 : -1) * r * 1.9, -r * 0.25, p.wingRootZ * ls + r * 0.6) : [nx, ny, nz]
+              c.x = source[0]!
+              c.y = source[1]!
+              c.z = source[2]!
+              c.dx = tx * ca - ux * sa
+              c.dy = ty * ca - uy * sa
+              c.dz = tz * ca - uz * sa
+              c.intensity = beam.intensity * pose.opacity * (landing ? 0.5 : i === 0 ? 1 : 0.35)
+              c.cos = beam.cos
+              c.distance = distance
+            }
           }
         }
       }

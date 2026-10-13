@@ -31,8 +31,10 @@ const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
  * Reported altitude is above sea level (an airport at 433 ft reads 450 ft on
  * the runway), so near the ground the height above the terrain is shown too.
  */
-function formatAltitude(state: AircraftState, aboveGroundM: number | null): string {
-  if (state.onGround) return 'On ground'
+function formatAltitude(state: AircraftState, aboveGroundM: number | null, onGround = state.onGround): string {
+  if (onGround) return 'On ground'
+  if (state.onGround) return aboveGroundM == null ? 'Touchdown reported' :
+    `${fmt.format(Math.max(0, aboveGroundM / 0.3048))} ft above ground · touchdown reported`
   const parts: string[] = []
   if (state.altBaro != null) parts.push(`${fmt.format(state.altBaro)} ft`)
   else if (state.altGeom != null) parts.push(`GNSS ${fmt.format(state.altGeom)} ft`)
@@ -103,7 +105,7 @@ export const AircraftPanel: FC = () => {
           <div className='aircraft-summary muted'>
             {[
               route?.short,
-              state.onGround ? 'On ground' : state.altBaro != null ? `${fmt.format(state.altBaro)} ft` : null,
+              (tracked.pose?.onGround ?? state.onGround) ? 'On ground' : state.onGround ? 'Touchdown update' : state.altBaro != null ? `${fmt.format(state.altBaro)} ft` : null,
               state.groundSpeed != null ? `${fmt.format(state.groundSpeed)} kt` : null
             ]
               .filter(v => v != null)
@@ -132,7 +134,8 @@ export const AircraftPanel: FC = () => {
             state,
             tracked.pose != null && tracked.groundHeight != null
               ? tracked.pose.height - tracked.groundHeight
-              : null
+              : null,
+            tracked.pose?.onGround ?? state.onGround
           )}
         </dd>
         <dt>Ground speed</dt>
