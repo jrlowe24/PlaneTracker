@@ -13,6 +13,7 @@ import { selectionStore } from '../state/selection'
 import { AircraftLayer } from './AircraftLayer'
 import { DetailedAircraft } from './DetailedAircraft'
 import { GroundClamp } from './GroundClamp'
+import { InspectionLights } from './InspectionLights'
 import { lightAnchor } from './lightAnchor'
 import { pickAircraft } from './picking'
 
@@ -169,6 +170,7 @@ export const AircraftSystem: FC = () => {
       <AircraftLayer />
       <DetailedAircraft />
       <GroundClamp />
+      <InspectionLights />
     </>
   )
 }

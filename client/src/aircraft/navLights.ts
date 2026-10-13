@@ -16,6 +16,8 @@ import { nightState } from '../scene/nightLighting'
 import { AIRFRAMES } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
+import { cameraModeStore } from '../state/cameraMode'
+import { selectionStore } from '../state/selection'
 import {
   glowLights,
   glowState,
@@ -91,13 +93,14 @@ const TAXI_SPEED = 2.5
  * Only aircraft near the ground and the camera throw a visible beam.
  */
 const BEAM = {
-  landing: { intensity: 420, aim: 7, cos: Math.cos(5 * DEG_RAD) },
-  taxi: { intensity: 160, aim: 12, cos: Math.cos(8 * DEG_RAD) }
+  landing: { intensity: 120, aim: 17, cos: Math.cos(15 * DEG_RAD) },
+  taxi: { intensity: 45, aim: 22, cos: Math.cos(20 * DEG_RAD) }
 }
 const BEAM_MAX_AGL = 250
 const BEAM_MAX_DISTANCE = 6000
 
 interface BeamCandidate {
+  owner: string
   x: number
   y: number
   z: number
@@ -110,7 +113,9 @@ interface BeamCandidate {
 }
 const beamPool: BeamCandidate[] = []
 let beamCount = 0
-const byBeamDistance = (a: BeamCandidate, b: BeamCandidate): number => a.distance - b.distance
+let priorityBeamHex: string | null = null
+const byBeamDistance = (a: BeamCandidate, b: BeamCandidate): number =>
+  Number(b.owner === priorityBeamHex) - Number(a.owner === priorityBeamHex) || a.distance - b.distance
 
 /** Reach of a light on the model (m): steady lights only their own surroundings. */
 const SURFACE_RANGE = {
@@ -321,7 +326,7 @@ export class NavLights {
       const halfSpan = (p.wingSpan > 0 ? p.wingSpan / 2 : p.fuselageRadius * 1.2) * aircraft.scale.span
       const sweep = Math.tan((p.wingSweep * Math.PI) / 180) * Math.max(0, halfSpan - p.fuselageRadius * ls)
       const wingY = p.wingMount * p.fuselageRadius * 0.85 * ls + Math.tan((p.wingDihedral * Math.PI) / 180) * halfSpan
-      const tipZ = p.wingRootZ * ls - sweep - p.wingTipChord * ls * 0.5
+      const tipZ = p.wingRootZ * ls - sweep + p.wingTipChord * ls * 0.5
       const r = p.fuselageRadius * ls
       const { left, up, forward } = pose
       // Simplified (non-detailed) models rest on their bellies on the ground
@@ -345,51 +350,47 @@ export class NavLights {
 
       // A glTF model's own light positions when it's drawn; else the class
       // placeholder's proportions.
-      const anchors = isDetailed ? modelLightAnchors.get(aircraft.hex) : undefined
+      const modelTransform = isDetailed ? undefined : aircraft.renderLights
+      const anchors = isDetailed ? modelLightAnchors.get(aircraft.hex) : modelTransform?.anchors
+      const anchorAt = (v: { x: number; y: number; z: number }): [number, number, number] =>
+        modelTransform == null ? at(v.x, v.y, v.z) :
+          at(v.x * modelTransform.span, v.y * modelTransform.length + modelTransform.lift + sink, v.z * modelTransform.length)
       const tip = anchors?.wingtip
-      const [lx, ly, lz] = tip != null ? at(tip.x, tip.y, tip.z) : at(halfSpan, wingY, tipZ)
+      const [lx, ly, lz] = tip != null ? anchorAt(tip) : at(halfSpan, wingY, tipZ)
       put(lx, ly, lz, distance, RED, 0.65, 0.7)
-      if (lit) lightSurface(lx, ly, lz, distance, RED, SURFACE_CD.nav, SURFACE_RANGE.nav)
-      const [rx, ry, rz] = tip != null ? at(-tip.x, tip.y, tip.z) : at(-halfSpan, wingY, tipZ)
+      // Navigation lenses are shielded at the leading edge. Their sprite
+      // and glare stay visible, but they do not flood the wing behind them.
+      const [rx, ry, rz] = tip != null ? anchorAt({ x: -tip.x, y: tip.y, z: tip.z }) : at(-halfSpan, wingY, tipZ)
       put(rx, ry, rz, distance, GREEN, 0.65, 0.7)
-      if (lit) lightSurface(rx, ry, rz, distance, GREEN, SURFACE_CD.nav, SURFACE_RANGE.nav)
       const tailAt = anchors?.tail
-      const [tx, ty, tz] = tailAt != null ? at(0, tailAt.y, tailAt.z) : at(0, r * 0.3, (-p.length / 2) * ls)
-      put(tx, ty, tz, distance, WHITE, 0.5, 0.58)
-      if (lit) lightSurface(tx, ty, tz, distance, WHITE, SURFACE_CD.tail, SURFACE_RANGE.tail)
+      const [tx, ty, tz] = tailAt != null ? anchorAt({ x: 0, y: tailAt.y, z: tailAt.z }) : at(0, r * 0.3, (-p.length / 2) * ls)
+      put(tx, ty, tz, distance, WHITE, 0.22, 0.4)
       // Airliner logo lights sit on the aft fuselage / horizontal tail and
       // wash upward and aft over the vertical stabilizer. They illuminate
       // paint only; there is no extra visible bulb sprite.
       if (lit && p.wingSpan >= 20 && p.finHeight >= 3) {
-        const [logoX, logoY, logoZ] = at(
-          0,
-          r * 0.72,
-          -p.length * ls * 0.27
-        )
-        const aimX = up.x * 0.72 - forward.x * 0.69
-        const aimY = up.y * 0.72 - forward.y * 0.69
-        const aimZ = up.z * 0.72 - forward.z * 0.69
-        lightSurface(
-          logoX,
-          logoY,
-          logoZ,
-          distance,
-          WHITE,
-          SURFACE_CD.logo,
-          SURFACE_RANGE.logo,
-          [aimX, aimY, aimZ],
-          Math.cos(34 * DEG_RAD)
-        )
+        for (const side of [-1, 1]) {
+          const base = anchors?.finBase
+          const tailZ = base == null ? -p.length * ls * 0.34 : base.z * (modelTransform?.length ?? 1)
+          const baseY = base == null ? r * 0.15 : base.y * (modelTransform?.length ?? 1) + (modelTransform == null ? 0 : modelTransform.lift + sink)
+          const [logoX, logoY, logoZ] = at(side * r * 1.6, baseY - 0.25, tailZ)
+          const aimX = -side * left.x * 0.75 + up.x * 0.65 - forward.x * 0.22
+          const aimY = -side * left.y * 0.75 + up.y * 0.65 - forward.y * 0.22
+          const aimZ = -side * left.z * 0.75 + up.z * 0.65 - forward.z * 0.22
+          const aimLength = Math.hypot(aimX, aimY, aimZ)
+          lightSurface(logoX, logoY, logoZ, distance, WHITE, 24, SURFACE_RANGE.logo,
+            [aimX / aimLength, aimY / aimLength, aimZ / aimLength], Math.cos(58 * DEG_RAD))
+        }
       }
       const topAt = anchors?.top
-      const [bx, by, bz] = topAt != null ? at(0, topAt.y + 0.15, topAt.z) : at(0, r * 1.02, 0)
+      const [bx, by, bz] = topAt != null ? anchorAt({ x: 0, y: topAt.y + 0.15, z: topAt.z }) : at(0, r * 1.02, 0)
       put(bx, by, bz, distance, RED, beacon * 1.6, 1.5)
       if (lit) lightSurface(bx, by, bz, distance, RED, beacon * SURFACE_CD.beacon, SURFACE_RANGE.beacon)
       // Belly beacon and strobes only when close enough to matter.
       if (isDetailed || distance < 20_000) {
         const bottomAt = anchors?.bottom
         const [ux, uy, uz] =
-          bottomAt != null ? at(0, bottomAt.y - 0.15, bottomAt.z) : at(0, -r * 1.02, -r)
+          bottomAt != null ? anchorAt({ x: 0, y: bottomAt.y - 0.15, z: bottomAt.z }) : at(0, -r * 1.02, -r)
         const belly = (t + 0.5) % 1 < 0.12 ? 1 : 0
         put(ux, uy, uz, distance, RED, belly * 1.6, 1.5)
         if (lit) lightSurface(ux, uy, uz, distance, RED, belly * SURFACE_CD.beacon, SURFACE_RANGE.beacon)
@@ -405,27 +406,35 @@ export class NavLights {
           // How directly the lights point at the camera (forward · toward camera).
           const facing = Math.max(0, -(forward.x * dx + forward.y * dy + forward.z * dz) / Math.max(distance, 1e-3))
           const lobe = SIDE_GLOW + (1 - SIDE_GLOW) * facing ** FACING_POWER
-          if (landing) {
-            const rootZ = p.wingRootZ * ls + r * 0.6
-            const [ax, ay, az] = at(r * 1.9, -r * 0.25, rootZ)
-            const [bx2, by2, bz2] = at(-r * 1.9, -r * 0.25, rootZ)
-            put(ax, ay, az, distance, LANDING, lobe, 2.4)
-            put(bx2, by2, bz2, distance, LANDING, lobe, 2.4)
+          const root = anchors?.wingRoot
+          const rootZ = root == null ? (p.wingRootZ + p.wingRootChord * 0.45) * ls : root.z * (modelTransform?.length ?? 1)
+          const rootY = root == null ? p.wingMount * r * 0.85 : root.y * (modelTransform?.length ?? 1) + (modelTransform == null ? 0 : modelTransform.lift + sink)
+          const rootX = root == null ? r * 1.12 : root.x * (modelTransform?.span ?? 1)
+          if (landing || taxi) {
+            const [ax, ay, az] = at(rootX, rootY, rootZ)
+            const [bx2, by2, bz2] = at(-rootX, rootY, rootZ)
+            put(ax, ay, az, distance, LANDING, lobe * (landing ? 0.75 : 0.35), 1.2)
+            put(bx2, by2, bz2, distance, LANDING, lobe * (landing ? 0.75 : 0.35), 1.2)
           }
           // Fuselage-mounted wing/engine inspection lights illuminate the
           // aircraft rather than projecting a landing beam from the engines.
           // Positions are class-based fallbacks; the feed has no switch data.
-          if (lit && p.engines.stations.some(s => s > 0) && !p.engines.rearMounted) {
+          const inspectionHex = cameraModeStore.get().mode === 'globe' ? selectionStore.get().selectedHex : cameraModeStore.get().targetHex
+          if (lit && aircraft.hex !== inspectionHex && p.engines.stations.some(s => s > 0) && !p.engines.rearMounted) {
             for (const side of [-1, 1]) {
-              const [sx, sy, sz] = at(side * r * 0.96, 0, p.wingRootZ * ls + 4 * ls)
+              const [sx, sy, sz] = at(side * rootX, rootY, rootZ + 0.15)
               const station = p.engines.stations.find(s => s > 0)!
-              const [ex, ey, ez] = at(side * station * aircraft.scale.span, -r * 0.4, p.wingRootZ * ls)
+              // Aim across the inboard intake rim, slightly ahead of the
+              // nacelle: the fixture shines forward/outward, not rearward
+              // across the entire top of the wing.
+              const [ex, ey, ez] = at(side * (station * aircraft.scale.span - p.engines.radius * ls * 0.65),
+                rootY - p.engines.radius * ls * 0.65, rootZ + p.engines.length * ls * 0.8)
               const vx = ex - sx
               const vy = ey - sy
               const vz = ez - sz
               const length = Math.hypot(vx, vy, vz) || 1
-              lightSurface(sx, sy, sz, distance, WHITE, 180, 18 * ls,
-                [vx / length, vy / length, vz / length], Math.cos(42 * DEG_RAD))
+              lightSurface(sx, sy, sz, distance, WHITE, 30, 14 * ls,
+                [vx / length, vy / length, vz / length], Math.cos(38 * DEG_RAD))
             }
           }
           const [nx, ny, nz] = at(0, -r * 1.35, (p.length / 2) * ls * 0.8)
@@ -445,28 +454,30 @@ export class NavLights {
             hx /= hl
             hy /= hl
             hz /= hl
-            const aim = landing && !pose.onGround ? 7 : beam.aim
+            const aim = beam.aim
             const ca = Math.cos(aim * DEG_RAD)
             const sa = Math.sin(aim * DEG_RAD)
             // Separate origins for paired wing-root landing lights; taxi
             // and turnoff beams come from the nose-gear area.
-            const count = landing ? 2 : 3
+            const count = landing ? 2 : 5
             for (let i = 0; i < count; ++i) {
-              const yaw = landing || i === 0 ? 0 : (i === 1 ? -28 : 28) * DEG_RAD
+              const rootBeam = landing || i < 2
+              const yaw = (landing ? (i === 0 ? 6 : -6) : i < 2 ? (i === 0 ? 36 : -36) : i === 2 ? 0 : i === 3 ? -28 : 28) * DEG_RAD
               const cy = Math.cos(yaw)
               const sy = Math.sin(yaw)
               const tx = hx * cy + (uy * hz - uz * hy) * sy
               const ty = hy * cy + (uz * hx - ux * hz) * sy
               const tz = hz * cy + (ux * hy - uy * hx) * sy
-              const c = (beamPool[beamCount++] ??= { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, intensity: 0, cos: 0, distance: 0 })
-              const source = landing ? at((i === 0 ? 1 : -1) * r * 1.9, -r * 0.25, p.wingRootZ * ls + r * 0.6) : [nx, ny, nz]
+              const c = (beamPool[beamCount++] ??= { owner: '', x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, intensity: 0, cos: 0, distance: 0 })
+              c.owner = aircraft.hex
+              const source = rootBeam ? at((i === 0 ? 1 : -1) * rootX, rootY, rootZ) : [nx, ny, nz]
               c.x = source[0]!
               c.y = source[1]!
               c.z = source[2]!
               c.dx = tx * ca - ux * sa
               c.dy = ty * ca - uy * sa
               c.dz = tz * ca - uz * sa
-              c.intensity = beam.intensity * pose.opacity * (landing ? 0.5 : i === 0 ? 1 : 0.35)
+              c.intensity = beam.intensity * pose.opacity * (landing ? 0.5 : i === 2 ? 1 : 0.35)
               c.cos = beam.cos
               c.distance = distance
             }
@@ -481,6 +492,8 @@ export class NavLights {
     this.mesh.count = n
 
     // The nearest beams light the ground (night lights pass).
+    const cameraMode = cameraModeStore.get()
+    priorityBeamHex = cameraMode.mode === 'globe' ? selectionStore.get().selectedHex : cameraMode.targetHex
     const beams = beamPool.slice(0, beamCount).sort(byBeamDistance)
     lightBeams.count = Math.min(MAX_LIGHT_BEAMS, beams.length)
     for (let i = 0; i < lightBeams.count; ++i) {

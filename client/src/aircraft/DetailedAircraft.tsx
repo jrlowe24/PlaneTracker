@@ -121,6 +121,8 @@ class DetailedAircraftController {
         const lifted = (v: Vector3): Vector3 => scaled(v).setY(scaled(v).y + entry.lift)
         modelLightAnchors.set(hex, {
           wingtip: lifted(anchors.wingtip),
+          wingRoot: anchors.wingRoot == null ? undefined : lifted(anchors.wingRoot),
+          finBase: anchors.finBase == null ? undefined : lifted(anchors.finBase),
           tail: lifted(anchors.tail),
           top: lifted(anchors.top),
           bottom: lifted(anchors.bottom),
@@ -196,7 +198,7 @@ class DetailedAircraftController {
       // During a fly-in the aircraft keeps the findable on-screen size its
       // marker had and shrinks smoothly to true size as the camera closes
       // in, instead of vanishing to a speck at the start.
-      if (flyIn && aircraft != null && pixelToWorld > 0) {
+      if (flyIn && !pose.onGround && aircraft != null && pixelToWorld > 0) {
         const length = AIRFRAMES[aircraft.cls].length * aircraft.scale.length
         const boost = Math.max(1, (FLY_IN_MIN_PIXELS * aircraft.cameraDistance * pixelToWorld) / length)
         object.scale.multiplyScalar(boost)
@@ -229,6 +231,8 @@ class DetailedAircraftController {
       }
       object.traverse(child => {
         if (child instanceof Mesh) {
+          child.castShadow = hex === (followedHex ?? selectedHex)
+          child.receiveShadow = true
           const materials: unknown[] = Array.isArray(child.material) ? child.material : [child.material]
           for (const material of materials) {
             shadingUniform(material)?.value.set(shading.x, shading.y, shading.z)

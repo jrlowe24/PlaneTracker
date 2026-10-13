@@ -52,7 +52,7 @@ for (int i = 0; i < ${MAX_SURFACE_LIGHTS}; ++i) {
   // Real paint and nearby structure scatter a little of the intense lens
   // light even when a facet faces away. This restrained local bounce makes
   // the wingtip/tail visibly pick up the light without turning emissive.
-  reflectedLight.indirectDiffuse += material.diffuseColor * navLight.color * 0.12;
+  if (emission.w < -1.0) reflectedLight.indirectDiffuse += material.diffuseColor * navLight.color * 0.12;
 }
 #endif
 #include <lights_fragment_end>`

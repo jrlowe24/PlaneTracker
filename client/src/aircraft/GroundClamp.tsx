@@ -107,7 +107,23 @@ class GroundClampController {
       this.raycaster.far = top - guess + RAY_START_HEIGHT * 3
       const hit = this.raycaster.intersectObject(ground, true)[0]
       if (hit != null) {
-        const height = heightAlongNormal(hit.point, lat)
+        let height = heightAlongNormal(hit.point, lat)
+        if (aircraft === followed && aircraft.pose != null && (state.onGround || aircraft.pose.onGround)) {
+          // A single ray under the fuselage may land in a tile crack or
+          // photogrammetry rut. Sample near both main-gear stations too and
+          // use the median, without exceeding the existing ray budget.
+          const samples = [height]
+          for (const side of [-1, 1]) {
+            if (budget === 0) break
+            --budget
+            origin.set(start.x, start.y, start.z).addScaledVector(aircraft.pose.left, side * 6)
+            this.raycaster.set(origin, direction)
+            const wheelHit = this.raycaster.intersectObject(ground, true)[0]
+            if (wheelHit != null) samples.push(heightAlongNormal(wheelHit.point, lat))
+          }
+          samples.sort((a, b) => a - b)
+          height = samples[Math.floor(samples.length / 2)]!
+        }
         // Rays can slip through a crack between tiles and hit something far
         // below; ignore hits well below sea level (Dead Sea shore ≈ −430 m).
         if (height > geoidHeight(lat, lon) - 450) {

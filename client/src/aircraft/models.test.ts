@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { airlineCode, findModelEntry, type ModelManifest } from './models'
+import { airlineCode, computeLightAnchors, findModelEntry, type ModelManifest } from './models'
+import { BufferGeometry, Float32BufferAttribute, Mesh } from 'three'
 
 const manifest: ModelManifest = {
   version: 1,
@@ -13,6 +14,23 @@ const manifest: ModelManifest = {
 }
 
 describe('model selection', () => {
+  it('anchors navigation lights at the outer wing leading edge, below an upturned winglet', () => {
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('position', new Float32BufferAttribute([
+      20, 4, -5, // widest point: upper winglet
+      19.5, 0, -4, // wingtip leading edge
+      19.5, 0, -6, // wingtip trailing edge
+      19, 0, -5,
+      0, 2, 5,
+      0, -2, -5
+    ], 3))
+    const mesh = new Mesh(geometry)
+    const anchors = computeLightAnchors(mesh)
+    expect(anchors.wingtip.y).toBe(0)
+    expect(anchors.wingtip.z).toBeCloseTo(-3.85)
+    expect(anchors.wingtip.x).toBe(19.5)
+    geometry.dispose()
+  })
   it('reads airline codes from airline callsigns only', () => {
     expect(airlineCode('DAL1234')).toBe('DAL')
     expect(airlineCode(' asa12 ')).toBe('ASA')

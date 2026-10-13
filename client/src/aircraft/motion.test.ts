@@ -15,7 +15,7 @@ import {
   type KinematicState,
   type MotionSample
 } from './motion'
-import { computePose, createPose, writePose } from './pose'
+import { computePose, createPose, WHEEL_CONTACT_LIFT, writePose } from './pose'
 import { AircraftRegistry } from '../data/aircraftRegistry'
 import { AIRFRAMES } from './airframes'
 
@@ -211,7 +211,7 @@ describe('altitude datum', () => {
     aircraft.motion[0]!.height = 165
     const pose = computePose(aircraft, 0, 1 / 60, true, createPose(), true)
     expect(pose.onGround).toBe(true)
-    expect(pose.height).toBeCloseTo(110 + aircraft.scale.length * AIRFRAMES[aircraft.cls].groundClearance, 8)
+    expect(pose.height).toBeCloseTo(110 + aircraft.scale.length * AIRFRAMES[aircraft.cls].groundClearance + WHEEL_CONTACT_LIFT, 8)
   })
 
   it('converts a state into an SI sample with track-based velocity', () => {

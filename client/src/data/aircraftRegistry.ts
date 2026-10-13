@@ -4,6 +4,7 @@ import { stateEllipsoidHeight, toSample, type MotionSample } from '../aircraft/m
 import type { AircraftClass } from '../aircraft/airframes'
 import { aircraftCategory, type AircraftCategory } from '../aircraft/categories'
 import type { Pose } from '../aircraft/pose'
+import type { LightAnchors } from '../aircraft/detailState'
 import { aircraftClass } from '../aircraft/typeClasses'
 import { airframeScale, type AirframeScale } from '../aircraft/typeDimensions'
 
@@ -56,6 +57,8 @@ export interface TrackedAircraft {
   attitude: Attitude
   /** Pose for the current frame (computed once per frame by the render loop). */
   pose: Pose | null
+  /** Actual instanced model transform, also used by its attached fixtures. */
+  renderLights?: { anchors: LightAnchors; span: number; length: number; lift: number }
   /** Distance from the camera last frame, meters. */
   cameraDistance: number
   /** Client wall time of the last update. */

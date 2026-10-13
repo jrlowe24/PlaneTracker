@@ -55,6 +55,9 @@ export function createPose(): Pose {
   }
 }
 
+/** Small fixed wheel offset for noise in streamed photogrammetry pavement. */
+export const WHEEL_CONTACT_LIFT = 0.25
+
 /**
  * Stale aircraft hold position (extrapolation stops at its limit) and only
  * fade out this long after their newest sample; the server drops aircraft
@@ -215,8 +218,12 @@ export function computePose(
   }
   let height = k.height + clearance * attitude.ground
   if (k.onGround && aircraft.groundHeight != null) {
-    height = aircraft.groundHeight + clearance
+    height = aircraft.groundHeight + clearance + WHEEL_CONTACT_LIFT
     attitude.ground = 1
+    // Residual airborne pitch/bank rotates the gear through the pavement
+    // even when the fuselage axis is at exactly the correct height.
+    attitude.pitch = 0
+    attitude.bank = 0
   }
   // Never below the terrain (late data on short final, baro errors).
   if (aircraft.groundHeight != null) {

@@ -23,7 +23,7 @@ import { aircraftRenderState } from './aircraftRenderState'
 import { AIRFRAMES, buildAirframe, type AircraftClass } from './airframes'
 import { findModelEntry, loadInstancedModel, loadManifest, type ModelEntry, type ModelManifest } from './models'
 import { typeDimensions } from './typeDimensions'
-import { detailedHexes } from './detailState'
+import { detailedHexes, type LightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
 import { lightAnchor } from './lightAnchor'
 import { adaptiveDelayMs, smoothingFactor } from './motion'
@@ -119,7 +119,7 @@ export function aircraftRenderTime(): number {
 
 interface ClassBatch {
   /** A livery/type model: its real [length, span] and wheels' depth. */
-  model?: { fit: [number, number] | null; lowest: number }
+  model?: { fit: [number, number] | null; lowest: number; anchors: LightAnchors }
   mesh: InstancedMesh
   geometry: BufferGeometry
   /** Instances written this frame. */
@@ -206,7 +206,7 @@ export class AircraftInstances {
         const mesh = createMesh(geometry, model.material, `aircraft-model-${entry.url}`)
         this.group.add(mesh)
         this.modelBatches.set(entry.url, {
-          model: { fit: entry.fit ?? null, lowest: model.lowest },
+          model: { fit: entry.fit ?? null, lowest: model.lowest, anchors: model.anchors },
           mesh,
           geometry,
           count: 0,
@@ -399,6 +399,15 @@ export class AircraftInstances {
       }
 
       const { batch, index } = this.slot(model ?? this.batches.get(aircraft.cls)!)
+      if (model?.model != null) {
+        const lights = aircraft.renderLights ??= { anchors: model.model.anchors, span: 1, length: 1, lift: 0 }
+        lights.anchors = model.model.anchors
+        lights.span = spanScale
+        lights.length = lengthScale
+        lights.lift = -drop
+      } else {
+        aircraft.renderLights = undefined
+      }
       const m = batch.matrices
       const { left, up, forward } = pose
       const px = x - up.x * drop

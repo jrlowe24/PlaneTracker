@@ -155,14 +155,51 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
   // ahead of it so the tip itself doesn't hide it from the side or the
   // cabin.
   const outer = wingtip.clone()
+  // The outermost vertex may be the TOP of a swept/upturned winglet.
+  // Locate the main wing's outer low band first, then its leading edge.
+  let wingBaseY = Infinity
   for (const p of points) {
-    if (outer.x - p.x < 0.6 && Math.abs(p.y - outer.y) < 0.6 && p.z > wingtip.z) wingtip.copy(p)
+    if (p.x > outer.x * 0.88) wingBaseY = Math.min(wingBaseY, p.y)
   }
+  let outerBaseX = 0
+  for (const p of points) {
+    if (p.x > outer.x * 0.88 && p.y < wingBaseY + 0.45) outerBaseX = Math.max(outerBaseX, p.x)
+  }
+  wingtip.set(outerBaseX, wingBaseY, -Infinity)
+  for (const p of points) {
+    if (p.x > outerBaseX - 0.45 && p.y < wingBaseY + 0.45 && p.z > wingtip.z) wingtip.copy(p)
+  }
+  if (!Number.isFinite(wingtip.z)) wingtip.copy(outer)
   wingtip.z += 0.15
   let lowest = Infinity
   for (const p of points) lowest = Math.min(lowest, p.y)
   const midZ = (minZ + maxZ) / 2
   const length = maxZ - minZ
+  let wingRoot: Vector3 | undefined
+  // Find the actual wing leading edge just outboard of the fuselage. Class
+  // dimensions alone can put a fixture on a model's fuselage or inside its
+  // wing. Restrict to the main-wing height/longitudinal band to exclude the
+  // nose, engine intakes, horizontal tail and upper winglets.
+  for (const p of points) {
+    if (p.x < outer.x * 0.13 || p.x > outer.x * 0.22 ||
+      Math.abs(p.y - wingBaseY) > 1.5 ||
+      p.z < minZ + length * 0.25 || p.z > minZ + length * 0.7) continue
+    if (wingRoot == null || p.z > wingRoot.z) wingRoot = p.clone()
+  }
+  if (wingRoot != null) wingRoot.z += 0.08
+  let finTip: Vector3 | undefined
+  for (const p of points) {
+    if (Math.abs(p.x) < 0.25 && p.z < midZ - length * 0.12 &&
+      (finTip == null || p.y > finTip.y)) finTip = p
+  }
+  let finBase: Vector3 | undefined
+  if (finTip != null) {
+    const z = finTip.z + length * 0.08
+    for (const p of points) {
+      if (Math.abs(p.x) < 0.3 || Math.abs(p.x) > 1.2 || Math.abs(p.z - z) > 0.8) continue
+      if (finBase == null || p.y > finBase.y) finBase = new Vector3(0, p.y, z)
+    }
+  }
   for (const p of points) {
     if (Math.abs(p.x) > 0.6) continue
     if (Math.abs(p.z - midZ) < length * 0.08) {
@@ -178,7 +215,7 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
   if (!Number.isFinite(top.y)) top.set(0, 1, 0)
   if (!Number.isFinite(bottom.y)) bottom.set(0, -1, 0)
   if (!Number.isFinite(tail.z)) tail.set(0, 0, minZ)
-  return { wingtip, tail, top, bottom, lowest: Number.isFinite(lowest) ? lowest : -1 }
+  return { wingtip, wingRoot, finBase, tail, top, bottom, lowest: Number.isFinite(lowest) ? lowest : -1 }
 }
 
 /** Phones: base color at most this size, other maps half of it. */
@@ -419,6 +456,7 @@ export interface InstancedModel {
   material: MeshStandardMaterial
   /** Lowest point (wheels), meters below the model origin (negative). */
   lowest: number
+  anchors: LightAnchors
 }
 
 /**
@@ -445,7 +483,7 @@ export function loadInstancedModel(entry: ModelEntry): Promise<InstancedModel | 
       material.metalness = Math.min(material.metalness, 0.15)
       material.color.multiplyScalar(PAINT_ALBEDO_SCALE)
       patchAircraftMaterial(material, true)
-      return { geometry, material, lowest: model.anchors.lowest }
+      return { geometry, material, lowest: model.anchors.lowest, anchors: model.anchors }
     })
     instancedCache.set(entry.url, promise)
   }

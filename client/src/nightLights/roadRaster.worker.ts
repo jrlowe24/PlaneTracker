@@ -429,6 +429,22 @@ async function render(
   }
   const lightingAt = (p: Point, near: number): RunwayLighting =>
     index == null ? 'instrument' : (index.lightingNear(toIndex(p), near) ?? 'basic')
+  const runwayAreas: Point[][][] = []
+  const runwayLines: Array<{ line: Point[]; halfWidth: number }> = []
+  for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
+    const f = aeroway!.feature(i)
+    if (String(f.properties.class) !== 'runway') continue
+    const g = geometry(f)
+    if (f.type === 3) runwayAreas.push(g)
+    if (f.type === 2) {
+      const width = Number(f.properties.width)
+      const halfWidth = ((Number.isFinite(width) && width > 0 ? width : 60) * 0.5 + 3) / mpp
+      for (const line of g) runwayLines.push({ line, halfWidth })
+    }
+  }
+  const onRunway = (x: number, y: number): boolean =>
+    runwayAreas.some(rings => insideRings(rings, x, y)) ||
+    runwayLines.some(r => distanceToLine({ x, y }, r.line) < r.halfWidth)
   for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
     const feature = aeroway!.feature(i)
     const cls = String(feature.properties.class)
@@ -445,7 +461,7 @@ async function render(
     if (feature.type !== 2) continue
     for (const line of geometry(feature)) {
       if (line.length < 2) continue
-      if (cls === 'taxiway') drawTaxiway(ctx, line, mpp, lightingAt(line[Math.floor(line.length / 2)]!, 2000))
+      if (cls === 'taxiway') drawTaxiway(ctx, line, mpp, lightingAt(line[Math.floor(line.length / 2)]!, 2000), onRunway)
     }
   }
 
@@ -663,9 +679,9 @@ function apronFloodBeam(
   // High masts throw much farther than the old small pools. The source is
   // deliberately not a white pin: overlapping, low-gradient wedges give
   // the stand a broad, elevated illumination instead.
-  gradient.addColorStop(0, rgbaAlpha(RUNWAY, 0.62, 0.23))
-  gradient.addColorStop(0.22, rgbaAlpha(RUNWAY, 0.54, 0.19))
-  gradient.addColorStop(0.7, rgbaAlpha(RUNWAY, 0.34, 0.10))
+  gradient.addColorStop(0, rgbaAlpha(RUNWAY, 0.62, 0.045))
+  gradient.addColorStop(0.22, rgbaAlpha(RUNWAY, 0.54, 0.038))
+  gradient.addColorStop(0.7, rgbaAlpha(RUNWAY, 0.34, 0.02))
   gradient.addColorStop(1, rgbaAlpha(RUNWAY, 0.08, 0))
   ctx.fillStyle = gradient
   // A raised fixture already covers a wide footprint at the near end.
@@ -707,7 +723,7 @@ function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRas
   // Reflected light from the overlapping mast bank keeps concave stand
   // areas from falling to black between cones. This is a restrained floor,
   // below the directional illumination, confined to mapped pavement.
-  if (poolsEnabled) fillRings(ctx, rings, rgba(RUNWAY, 0.03))
+  if (poolsEnabled) fillRings(ctx, rings, rgba(RUNWAY, 0.006))
   for (let ringIndex = 0; ringIndex < rings.length; ++ringIndex) {
     const ring = rings[ringIndex]!
     if (ring.length < 2) continue
@@ -734,17 +750,28 @@ function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRas
 }
 
 /**
- * Taxiways: a dim green centerline at airports with instrument runways.
- * Taxiways with centerline lights don't have edge lights, and
- * OpenStreetMap maps many parallel taxiways and taxilanes: blue edges on
- * every one turned the field into a mass of dots. Small fields: none (at
+ * Taxiways: dim green centerlines and restrained blue edges at airports
+ * with instrument runways, with edge fixtures excluded from runway pavement.
+ * Small fields: none (at
  * most their parallel taxiway has blue edge lights, but the tiles don't
  * tell it from the unlit taxilanes between hangar rows).
  */
-function drawTaxiway(ctx: Ctx, line: Point[], mpp: number, lighting: RunwayLighting): void {
+function drawTaxiway(ctx: Ctx, line: Point[], mpp: number, lighting: RunwayLighting, onRunway: (x: number, y: number) => boolean): void {
   if (lighting === 'unlit' || lighting === 'basic') return
   along(line, 30 / mpp, 15 / mpp, (x, y) => {
     lamp(ctx, x, y, 2 / mpp, GREEN, 0.2, false)
+  })
+  // Blue elevated edge fixtures supplement the green inset centreline.
+  // Width is a procedural estimate: the vector layer carries no pavement
+  // width for most airports. A 23 m taxiway is typical for transport jets.
+  along(line, 60 / mpp, 30 / mpp, (x, y, dx, dy) => {
+    const inset = 12.5 / mpp
+    const ax = x - dy * inset
+    const ay = y + dx * inset
+    const bx = x + dy * inset
+    const by = y - dx * inset
+    if (!onRunway(ax, ay)) lamp(ctx, ax, ay, 0, BLUE, 0.12, false)
+    if (!onRunway(bx, by)) lamp(ctx, bx, by, 0, BLUE, 0.12, false)
   })
 }
 

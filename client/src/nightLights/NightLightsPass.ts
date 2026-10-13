@@ -904,7 +904,21 @@ vec3 lightBeams(const vec3 offset, const vec3 normal) {
     float d2 = max(dot(toPoint, toPoint), 4.0);
     vec3 l = toPoint * inversesqrt(d2);
     float edge = beamDirection[i].w;
-    float cone = smoothstep(edge, mix(edge, 1.0, 0.6), dot(l, beamDirection[i].xyz));
+    // Ground lamps have a fan-shaped horizontal distribution. Project the
+    // direction onto the local ground plane so the footprint widens from
+    // its fixture instead of forming a sharply bounded circular oval.
+    vec3 up = normalize(cameraPositionECEF + offset);
+    vec3 axis = beamDirection[i].xyz;
+    vec3 horizontal = normalize(axis - up * dot(axis, up));
+    float along = dot(toPoint, horizontal);
+    float lateral = abs(dot(toPoint, cross(up, horizontal)));
+    float spread = sqrt(max(0.0, 1.0 - edge * edge)) / max(edge, 0.1);
+    float width = max(0.5, along * spread);
+    float fan = 1.0 - smoothstep(width * 0.2, width, lateral);
+    float range = 150.0;
+    float cone = fan * smoothstep(0.0, 3.0, along) * (1.0 - smoothstep(range * 0.55, range, along));
+    // Keep the fan on surfaces below the lens, not distant terminal walls.
+    cone *= 1.0 - smoothstep(-0.5, 0.5, dot(toPoint, up));
     float incidence = abs(dot(normal, l));
     sum += vec3(1.0, 0.96, 0.88) * beamPosition[i].w * cone * incidence / d2;
   }

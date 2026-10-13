@@ -10,6 +10,9 @@ export const detailedHexes = new Set<string>()
  */
 export interface LightAnchors {
   wingtip: Vector3
+  /** Left main-wing leading edge near the fuselage; mirrors for the right. */
+  wingRoot?: Vector3
+  finBase?: Vector3
   tail: Vector3
   top: Vector3
   bottom: Vector3

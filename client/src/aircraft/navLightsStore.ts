@@ -40,7 +40,7 @@ export const surfaceLights = {
 }
 
 /** Landing/taxi light beams that light the ground at night (nearest first). */
-export const MAX_LIGHT_BEAMS = 4
+export const MAX_LIGHT_BEAMS = 6
 
 /**
  * Camera-relative beam origin (m) with intensity in w (renderer irradiance
