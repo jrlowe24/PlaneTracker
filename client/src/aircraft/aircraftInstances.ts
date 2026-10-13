@@ -71,7 +71,9 @@ const COLOR_DEFAULT = new Color(0.86, 0.87, 0.89)
 const COLOR_SELECTED = new Color(0.95, 0.42, 0.05)
 const COLOR_MODEL = new Color(1, 1, 1)
 /** Street/apron emission map to aircraft-material irradiance. */
-const GROUND_LIGHT_GAIN = 0.6
+const GROUND_LIGHT_GAIN = 0.18
+/** Keep reflected apron light below the material's white shoulder. */
+const MAX_GROUND_IRRADIANCE = 0.035
 /** Only local, ground-hugging traffic needs the map read each frame. */
 const GROUND_LIGHT_DISTANCE = 5_000
 
@@ -463,7 +465,7 @@ export class AircraftInstances {
         const agl = pose.height - aircraft.groundHeight
         const nearGround = 1 - Math.min(1, Math.max(0, (agl - 30) / 170))
         if (nearGround > 0 && roads.groundLight(pose.position, groundLight)) {
-          groundLight.multiplyScalar(GROUND_LIGHT_GAIN * nearGround * nightState.night)
+          groundLight.multiplyScalar(GROUND_LIGHT_GAIN * nearGround * nightState.night).clampScalar(0, MAX_GROUND_IRRADIANCE)
         }
       }
       batch.groundLight[groundOffset] = groundLight.x

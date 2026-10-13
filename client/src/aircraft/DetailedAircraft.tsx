@@ -48,7 +48,9 @@ interface DetailedEntry {
 }
 
 /** Ground light map → aircraft irradiance (renderer units; sun ≈ 1.5). */
-const GROUND_LIGHT_GAIN = 0.6
+const GROUND_LIGHT_GAIN = 0.18
+/** Keep reflected apron light below the material's white shoulder. */
+const MAX_GROUND_IRRADIANCE = 0.035
 
 const basis = new Matrix4()
 const groundLight = new Vector3()
@@ -222,7 +224,7 @@ class DetailedAircraftController {
         const agl = pose.height - aircraft.groundHeight
         const near = 1 - Math.min(1, Math.max(0, (agl - 30) / 170))
         if (near > 0 && roads.groundLight(pose.position, groundLight)) {
-          groundLight.multiplyScalar(GROUND_LIGHT_GAIN * near * nightState.night)
+          groundLight.multiplyScalar(GROUND_LIGHT_GAIN * near * nightState.night).clampScalar(0, MAX_GROUND_IRRADIANCE)
         }
       }
       object.traverse(child => {

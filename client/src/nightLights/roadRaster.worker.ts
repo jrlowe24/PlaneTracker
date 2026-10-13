@@ -623,7 +623,10 @@ function scatterPools(
  */
 function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRasterRequest): void {
   const spacing = 90 / mpp
-  const radius = 30 / mpp
+  // A mast has a wide reach, but its useful illuminated pool is much
+  // smaller than the whole apron. Keeping the pools below 40 m across
+  // prevents adjacent masts from turning the map tile into a white sheet.
+  const radius = 18 / mpp
   for (let ringIndex = 0; ringIndex < rings.length; ++ringIndex) {
     const ring = rings[ringIndex]!
     if (ring.length < 2) continue
@@ -632,7 +635,7 @@ function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRas
       // Avoid a perfectly regular stadium-like outline while retaining
       // enough coverage for gates and ramp parking.
       if (hash(Math.round(x * 8), Math.round(y * 8), 53) < 0.12) return
-      lamp(ctx, x, y, radius, RUNWAY, 1.15, true)
+      lamp(ctx, x, y, radius, RUNWAY, 0.48, true)
     })
   }
 }

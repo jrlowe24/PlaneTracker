@@ -870,9 +870,15 @@ vec4 roadLevel(const int level, const vec3 offset, const float footprint, const 
   vec3 pools = texture(roadLights, vec3(fract(local), layer)).rgb;
   lamps = nearLamps(level, local, footprint, dX, dY, field);
   float edge = min(min(local.x, local.y), min(window - local.x, window - local.y));
+  // Each road-light cell is a separately streamed texture-array layer. Hand
+  // its contribution back to the coarser level over the last ~4% of a tile
+  // so a delayed/missing neighbour cannot make a hard luminous rectangle.
+  // The coarse level is already sampled below with the unused weight.
+  vec2 inTile = fract(local);
+  float tileEdge = min(min(inTile.x, inTile.y), min(1.0 - inTile.x, 1.0 - inTile.y));
   ivec2 cell = ivec2(floor(local));
   float fade = roadFade[level * ROAD_STRIDE + cell.y * int(window) + cell.x];
-  return vec4(pools, smoothstep(0.0, 0.25, edge) * fade);
+  return vec4(pools, smoothstep(0.0, 0.25, edge) * smoothstep(0.0, 0.04, tileEdge) * fade);
 }
 
 /**
