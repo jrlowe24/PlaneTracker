@@ -76,7 +76,7 @@ export function patchAircraftMaterial(material: MeshStandardMaterial, instanced:
       .replace(
         '#include <common>',
         `#include <common>
-${instanced ? 'attribute vec3 instanceShading;\nattribute vec3 instanceGroundLight;' : 'uniform vec3 aircraftShading;'}
+${instanced ? 'attribute vec3 instanceShading;\nattribute vec3 instanceGroundLight;' : 'uniform vec3 aircraftShading;\nuniform vec3 aircraftGroundLight;'}
 varying vec3 vShading;
 varying vec3 vGroundLight;`
       )
