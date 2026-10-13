@@ -9,6 +9,7 @@ import { nightState } from '../scene/nightLighting'
 import { AIRFRAMES } from './airframes'
 import { detailedHexes, modelLightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
+import { nightLightingTestStore } from '../nightLights/nightLightsStore'
 
 function configureShadows(gl: WebGLRenderer, enabled: boolean, type: ShadowMapType): void {
   gl.shadowMap.enabled = enabled
@@ -53,7 +54,7 @@ export const InspectionLights: FC = () => {
     const anchor = hex == null ? undefined : modelLightAnchors.get(hex)?.wingRoot
     const active = a != null && pose != null && hex != null && detailedHexes.has(hex) &&
       anchor != null && nightState.night > 0 &&
-      (pose.onGround ? pose.speed > 2.5 : a.groundHeight != null && pose.height - a.groundHeight < 3000)
+      (pose.onGround ? pose.speed > 2.5 || (import.meta.env.DEV && nightLightingTestStore.get().forceAircraftWorkLights) : a.groundHeight != null && pose.height - a.groundHeight < 3000)
     for (let i = 0; i < 2; ++i) {
       const light = lights.children[i * 2] as SpotLight
       light.intensity = 0

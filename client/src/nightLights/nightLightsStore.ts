@@ -12,7 +12,9 @@ export const nightLightsStore = createStore<{ credit: string | null; streets: bo
 
 /** Developer A/B control for the treatment of sub-pixel city fixtures. */
 export type NightLightingMode = 'current' | 'photographic' | 'noBoost'
-export const nightLightingTestStore = createStore<{ mode: NightLightingMode }>({ mode: 'current' })
+export const nightLightingTestStore = createStore<{ mode: NightLightingMode; forceAircraftWorkLights: boolean }>({
+  mode: 'current', forceAircraftWorkLights: false
+})
 
 /**
  * The night light emission buffer (lights and their glow) AerialPerspective

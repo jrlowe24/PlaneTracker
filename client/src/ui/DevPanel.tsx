@@ -43,6 +43,7 @@ export const DevPanel: FC = () => {
   const resolution = useStore(resolutionStore, s => s)
   const hazeQuality = useStore(qualityStore, s => s.elements.cityAtmosphere)
   const lightingMode = useStore(nightLightingTestStore, s => s.mode)
+  const forceWorkLights = useStore(nightLightingTestStore, s => s.forceAircraftWorkLights)
   const visible = useStore(settingsStore, s => s.showDevPanel)
   const offset = useStore(settingsStore, s => s.timeOffsetMs)
   const exposure = useStore(settingsStore, s => s.exposure)
@@ -119,6 +120,7 @@ export const DevPanel: FC = () => {
             <option value='noBoost'>No far-point boost — diagnostic</option>
           </select>
         </label>
+        <label><input type='checkbox' checked={forceWorkLights} onChange={e => nightLightingTestStore.set({ forceAircraftWorkLights: e.target.checked })} /> Test taxi lights on inspected aircraft</label>
         <label><input type='checkbox' checked={resolution.locked} onChange={e => resolutionStore.set({ locked: e.target.checked })} /> Hold render resolution</label>
         <span>{Math.round(resolution.scale * 100)}% render scale · {resolution.tileFactor.toFixed(2)} terrain factor</span>
         <button disabled={bench === 'running'} onClick={async () => {

@@ -18,6 +18,7 @@ import { detailedHexes, modelLightAnchors } from './detailState'
 import { AIRCRAFT_LAYER } from './layers'
 import { cameraModeStore } from '../state/cameraMode'
 import { selectionStore } from '../state/selection'
+import { nightLightingTestStore } from '../nightLights/nightLightsStore'
 import {
   glowLights,
   glowState,
@@ -38,7 +39,7 @@ import {
 
 const DEG_RAD = Math.PI / 180
 
-const LIGHTS_PER_AIRCRAFT = 10
+const LIGHTS_PER_AIRCRAFT = 12
 /** Physical light radius, meters (the lens, not the glow). */
 const LIGHT_RADIUS = 0.09
 /** Minimum on-screen radius, pixels. */
@@ -190,6 +191,7 @@ export class NavLights {
       this.allocate(capacity)
     }
     const origin = camera.position
+    lightBeams.origin.copy(origin)
     this.mesh.position.copy(origin)
     const matrices = this.mesh.instanceMatrix.array as Float32Array
     const colors = this.mesh.instanceColor!.array as Float32Array
@@ -373,7 +375,10 @@ export class NavLights {
           const base = anchors?.finBase
           const tailZ = base == null ? -p.length * ls * 0.34 : base.z * (modelTransform?.length ?? 1)
           const baseY = base == null ? r * 0.15 : base.y * (modelTransform?.length ?? 1) + (modelTransform == null ? 0 : modelTransform.lift + sink)
-          const [logoX, logoY, logoZ] = at(side * r * 1.6, baseY - 0.25, tailZ)
+          // The housing sits on the fuselage at the fin root, rather than
+          // partway up the fin or out on a class-estimated stabilizer.
+          const [logoX, logoY, logoZ] = at(side * r * 0.92, baseY - 0.25, tailZ)
+          put(logoX, logoY, logoZ, distance, WHITE, 0.035, 0.25)
           const aimX = -side * left.x * 0.75 + up.x * 0.65 - forward.x * 0.22
           const aimY = -side * left.y * 0.75 + up.y * 0.65 - forward.y * 0.22
           const aimZ = -side * left.z * 0.75 + up.z * 0.65 - forward.z * 0.22
@@ -401,7 +406,9 @@ export class NavLights {
       if (landingLights) {
         const agl = aircraft.groundHeight == null ? Infinity : pose.height - aircraft.groundHeight
         const landing = pose.onGround ? pose.speed > TAKEOFF_ROLL_SPEED : agl < LANDING_LIGHTS_AGL
-        const taxi = pose.onGround && pose.speed > TAXI_SPEED
+        const testTaxi = import.meta.env.DEV && nightLightingTestStore.get().forceAircraftWorkLights &&
+          aircraft.hex === (cameraModeStore.get().targetHex ?? selectionStore.get().selectedHex)
+        const taxi = pose.onGround && (pose.speed > TAXI_SPEED || testTaxi)
         if (landing || taxi) {
           // How directly the lights point at the camera (forward · toward camera).
           const facing = Math.max(0, -(forward.x * dx + forward.y * dy + forward.z * dz) / Math.max(distance, 1e-3))
@@ -437,7 +444,12 @@ export class NavLights {
                 [vx / length, vy / length, vz / length], Math.cos(38 * DEG_RAD))
             }
           }
-          const [nx, ny, nz] = at(0, -r * 1.35, (p.length / 2) * ls * 0.8)
+          // Instanced glTF aircraft use the same transformed nose-gear
+          // anchor as their geometry. The belly-resting placeholder needs
+          // a positive lens clearance; its old -1.35*r offset went BELOW
+          // the ground after its body was lowered onto the pavement.
+          const [nx, ny, nz] = anchors?.noseLight != null ? anchorAt(anchors.noseLight) :
+            at(0, isDetailed ? -r * 1.35 : -r + 0.5, (p.length / 2) * ls * 0.8)
           put(nx, ny, nz, distance, TAXI, lobe * (landing ? 1 : 0.8), 1.8)
           if (distance < BEAM_MAX_DISTANCE && (pose.onGround || agl < BEAM_MAX_AGL)) {
             const beam = landing ? BEAM.landing : BEAM.taxi

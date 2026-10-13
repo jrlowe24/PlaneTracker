@@ -49,6 +49,8 @@ export const MAX_LIGHT_BEAMS = 6
  */
 export const lightBeams = {
   count: 0,
+  /** Camera origin used when the camera-relative positions were written. */
+  origin: new Vector3(),
   position: Array.from({ length: MAX_LIGHT_BEAMS }, () => new Vector4()),
   direction: Array.from({ length: MAX_LIGHT_BEAMS }, () => new Vector4())
 }

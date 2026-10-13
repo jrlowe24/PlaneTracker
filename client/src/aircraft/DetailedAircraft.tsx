@@ -123,6 +123,7 @@ class DetailedAircraftController {
           wingtip: lifted(anchors.wingtip),
           wingRoot: anchors.wingRoot == null ? undefined : lifted(anchors.wingRoot),
           finBase: anchors.finBase == null ? undefined : lifted(anchors.finBase),
+          noseLight: anchors.noseLight == null ? undefined : lifted(anchors.noseLight),
           tail: lifted(anchors.tail),
           top: lifted(anchors.top),
           bottom: lifted(anchors.bottom),

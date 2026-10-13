@@ -187,6 +187,12 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
     if (wingRoot == null || p.z > wingRoot.z) wingRoot = p.clone()
   }
   if (wingRoot != null) wingRoot.z += 0.08
+  let noseLight: Vector3 | undefined
+  for (const p of points) {
+    if (Math.abs(p.x) > 0.6 || p.z < midZ + length * 0.15 || p.z > midZ + length * 0.4) continue
+    if (noseLight == null || p.y < noseLight.y) noseLight = p.clone()
+  }
+  if (noseLight != null) { noseLight.x = 0; noseLight.y += 0.45; noseLight.z += 0.1 }
   let finTip: Vector3 | undefined
   for (const p of points) {
     if (Math.abs(p.x) < 0.25 && p.z < midZ - length * 0.12 &&
@@ -196,7 +202,10 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
   if (finTip != null) {
     const z = finTip.z + length * 0.08
     for (const p of points) {
-      if (Math.abs(p.x) < 0.3 || Math.abs(p.x) > 1.2 || Math.abs(p.z - z) > 0.8) continue
+      // Sample the fuselage shoulders, not the thin fin itself. Fin-side
+      // vertices can otherwise make this "base" land halfway up the fin.
+      if (Math.abs(p.x) < Math.max(0.6, outer.x * 0.045) ||
+        Math.abs(p.x) > Math.max(1.2, outer.x * 0.1) || Math.abs(p.z - z) > 0.8) continue
       if (finBase == null || p.y > finBase.y) finBase = new Vector3(0, p.y, z)
     }
   }
@@ -215,7 +224,7 @@ export function computeLightAnchors(root: Object3D): LightAnchors {
   if (!Number.isFinite(top.y)) top.set(0, 1, 0)
   if (!Number.isFinite(bottom.y)) bottom.set(0, -1, 0)
   if (!Number.isFinite(tail.z)) tail.set(0, 0, minZ)
-  return { wingtip, wingRoot, finBase, tail, top, bottom, lowest: Number.isFinite(lowest) ? lowest : -1 }
+  return { wingtip, wingRoot, finBase, noseLight, tail, top, bottom, lowest: Number.isFinite(lowest) ? lowest : -1 }
 }
 
 /** Phones: base color at most this size, other maps half of it. */

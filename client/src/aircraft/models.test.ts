@@ -14,6 +14,37 @@ const manifest: ModelManifest = {
 }
 
 describe('model selection', () => {
+  it('finds the fuselage below the fin instead of mounting a logo light on the fin side', () => {
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('position', new Float32BufferAttribute([
+      0, 0, -20,
+      0, 0, 20,
+      18, 0, 0,
+      0, 10, -15,
+      0.4, 6, -12,
+      1, 1.2, -12
+    ], 3))
+    const anchors = computeLightAnchors(new Mesh(geometry))
+    expect(anchors.finBase).toBeDefined()
+    expect(anchors.finBase!.y).toBeCloseTo(1.2)
+    geometry.dispose()
+  })
+  it('places the taxi-light anchor above the nose gear rather than below the wheels', () => {
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('position', new Float32BufferAttribute([
+      0, 0, -20,
+      0, 0, 20,
+      18, 0, -2,
+      0, -3, 8,
+      0.2, -2.8, 8.2,
+      0, -1.5, 10
+    ], 3))
+    const anchors = computeLightAnchors(new Mesh(geometry))
+    expect(anchors.noseLight).toBeDefined()
+    expect(anchors.noseLight!.y - anchors.lowest).toBeCloseTo(0.45)
+    expect(anchors.noseLight!.z).toBeCloseTo(8.1)
+    geometry.dispose()
+  })
   it('anchors navigation lights at the outer wing leading edge, below an upturned winglet', () => {
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new Float32BufferAttribute([

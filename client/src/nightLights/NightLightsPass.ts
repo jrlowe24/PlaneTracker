@@ -92,6 +92,7 @@ uniform vec4 runwayAlong[${MAX_RUNWAYS}];
 uniform vec4 runwayAcross[${MAX_RUNWAYS}];
 uniform vec4 runwayApproach[${MAX_RUNWAYS}];
 uniform int beamCount;
+uniform vec3 beamOriginDelta;
 uniform vec4 beamPosition[${MAX_LIGHT_BEAMS}];
 uniform vec4 beamDirection[${MAX_LIGHT_BEAMS}];
 
@@ -900,25 +901,15 @@ vec3 lightBeams(const vec3 offset, const vec3 normal) {
   vec3 sum = vec3(0.0);
   for (int i = 0; i < ${MAX_LIGHT_BEAMS}; ++i) {
     if (i >= beamCount) break;
-    vec3 toPoint = offset - beamPosition[i].xyz;
+    vec3 toPoint = offset - (beamPosition[i].xyz + beamOriginDelta);
     float d2 = max(dot(toPoint, toPoint), 4.0);
     vec3 l = toPoint * inversesqrt(d2);
     float edge = beamDirection[i].w;
-    // Ground lamps have a fan-shaped horizontal distribution. Project the
-    // direction onto the local ground plane so the footprint widens from
-    // its fixture instead of forming a sharply bounded circular oval.
-    vec3 up = normalize(cameraPositionECEF + offset);
-    vec3 axis = beamDirection[i].xyz;
-    vec3 horizontal = normalize(axis - up * dot(axis, up));
-    float along = dot(toPoint, horizontal);
-    float lateral = abs(dot(toPoint, cross(up, horizontal)));
-    float spread = sqrt(max(0.0, 1.0 - edge * edge)) / max(edge, 0.1);
-    float width = max(0.5, along * spread);
-    float fan = 1.0 - smoothstep(width * 0.2, width, lateral);
-    float range = 150.0;
-    float cone = fan * smoothstep(0.0, 3.0, along) * (1.0 - smoothstep(range * 0.55, range, along));
-    // Keep the fan on surfaces below the lens, not distant terminal walls.
-    cone *= 1.0 - smoothstep(-0.5, 0.5, dot(toPoint, up));
+    // Evaluate the ray from the elevated fixture in full 3D. Flattening
+    // this cone onto the pavement discarded its height and downward aim,
+    // making the fan appear to start at a separate point on the ground.
+    float cone = smoothstep(edge, 1.0, dot(l, beamDirection[i].xyz));
+    cone *= 1.0 - smoothstep(80.0, 150.0, sqrt(d2));
     float incidence = abs(dot(normal, l));
     sum += vec3(1.0, 0.96, 0.88) * beamPosition[i].w * cone * incidence / d2;
   }
@@ -1285,6 +1276,7 @@ export class NightLightsPass extends Pass {
         runwayAcross: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         runwayApproach: new Uniform(Array.from({ length: MAX_RUNWAYS }, () => new Vector4())),
         beamCount: new Uniform(0),
+        beamOriginDelta: new Uniform(new Vector3()),
         beamPosition: new Uniform(lightBeams.position),
         beamDirection: new Uniform(lightBeams.direction)
       }
@@ -1433,6 +1425,8 @@ export class NightLightsPass extends Pass {
     this.u<Matrix4>('cameraWorld').value.copy(camera.matrixWorld)
     const position = this.u<Vector3>('cameraPositionECEF').value
     position.setFromMatrixPosition(camera.matrixWorld)
+    this.u<number>('beamCount').value = lightBeams.count
+    this.u<Vector3>('beamOriginDelta').value.copy(lightBeams.origin).sub(position)
     this.u<Texture | null>('inputBuffer').value = inputBuffer?.texture ?? null
     const mode = nightLightingTestStore.get().mode
     this.u<number>('lightingMode').value = mode === 'photographic' ? 1 : mode === 'noBoost' ? 2 : 0
