@@ -14,10 +14,9 @@ import { MAX_SURFACE_LIGHTS, surfaceLights } from './navLightsStore'
  *   y: sun visibility (Earth's shadow, which three.js lights don't know),
  *   z: sky-light scale relative to where the SkyLight probe sits.
  * Instanced meshes read it from an `instanceShading` attribute; single
- * meshes from a per-material uniform (`userData.shading`). Single meshes
- * also get `userData.groundLight`: irradiance from street and apron lights
- * around them at night, and the aircraft's own nav lights, beacons and
- * strobes light the surfaces around them (navLightsStore.surfaceLights).
+ * meshes from a per-material uniform (`userData.shading`). Both receive
+ * local irradiance from street and apron lights; single meshes additionally
+ * get their own nav-light spill through navLightsStore.surfaceLights.
  */
 /**
  * Point lights evaluated in the shader rather than as three.js lights, so
@@ -77,18 +76,20 @@ export function patchAircraftMaterial(material: MeshStandardMaterial, instanced:
       .replace(
         '#include <common>',
         `#include <common>
-${instanced ? 'attribute vec3 instanceShading;' : 'uniform vec3 aircraftShading;'}
-varying vec3 vShading;`
+${instanced ? 'attribute vec3 instanceShading;\nattribute vec3 instanceGroundLight;' : 'uniform vec3 aircraftShading;'}
+varying vec3 vShading;
+varying vec3 vGroundLight;`
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-vShading = ${instanced ? 'instanceShading' : 'aircraftShading'};`
+vShading = ${instanced ? 'instanceShading' : 'aircraftShading'};
+vGroundLight = ${instanced ? 'instanceGroundLight' : 'aircraftGroundLight'};`
       )
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        `#include <common>\nvarying vec3 vShading;\nuniform vec3 aircraftGroundLight;${
+        `#include <common>\nvarying vec3 vShading;\nvarying vec3 vGroundLight;\nuniform vec3 aircraftGroundLight;${
           instanced
             ? ''
             : `\nuniform vec4 navLightPosition[${MAX_SURFACE_LIGHTS}];\nuniform vec3 navLightColor[${MAX_SURFACE_LIGHTS}];\nuniform vec4 navLightDirection[${MAX_SURFACE_LIGHTS}];`
@@ -105,7 +106,7 @@ vShading = ${instanced ? 'instanceShading' : 'aircraftShading'};`
       )
       .replace(
         'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal );',
-        'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal ) * vShading.z + aircraftGroundLight;'
+        'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal ) * vShading.z + vGroundLight;'
       )
       .replace('#include <lights_fragment_end>', instanced ? '#include <lights_fragment_end>' : NAV_LIGHTS_FRAGMENT)
       .replace(

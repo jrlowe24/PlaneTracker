@@ -12,6 +12,8 @@ import {
 } from 'three'
 
 import { flightConnection, serverNow } from '../data/flightConnection'
+import { nightEmission } from '../nightLights/nightLightsStore'
+import { nightState } from '../scene/nightLighting'
 import { cameraModeStore } from '../state/cameraMode'
 import { selectionStore } from '../state/selection'
 import { settingsStore } from '../state/settings'
@@ -68,6 +70,10 @@ const APPEAR_MS = 600
 const COLOR_DEFAULT = new Color(0.86, 0.87, 0.89)
 const COLOR_SELECTED = new Color(0.95, 0.42, 0.05)
 const COLOR_MODEL = new Color(1, 1, 1)
+/** Street/apron emission map to aircraft-material irradiance. */
+const GROUND_LIGHT_GAIN = 0.6
+/** Only local, ground-hugging traffic needs the map read each frame. */
+const GROUND_LIGHT_DISTANCE = 5_000
 
 const CLASSES = Object.keys(AIRFRAMES) as AircraftClass[]
 
@@ -79,6 +85,9 @@ function allocate(mesh: InstancedMesh, capacity: number): void {
   const shading = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
   shading.setUsage(DynamicDrawUsage)
   mesh.geometry.setAttribute('instanceShading', shading)
+  const groundLight = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
+  groundLight.setUsage(DynamicDrawUsage)
+  mesh.geometry.setAttribute('instanceGroundLight', groundLight)
 }
 
 function createMesh(geometry: BufferGeometry, material: Material, name: string): InstancedMesh {
@@ -116,9 +125,11 @@ interface ClassBatch {
   matrices: Float32Array
   colors: Float32Array
   shading: Float32Array
+  groundLight: Float32Array
 }
 
 const sun = new Vector3()
+const groundLightScratch = new Vector3()
 const shadingScratch = { x: 0, y: 0, z: 0 }
 
 /**
@@ -158,7 +169,8 @@ export class AircraftInstances {
         count: 0,
         matrices: mesh.instanceMatrix.array as Float32Array,
         colors: mesh.instanceColor!.array as Float32Array,
-        shading: mesh.geometry.getAttribute('instanceShading').array as Float32Array
+        shading: mesh.geometry.getAttribute('instanceShading').array as Float32Array,
+        groundLight: mesh.geometry.getAttribute('instanceGroundLight').array as Float32Array
       })
     }
     void loadManifest().then(manifest => {
@@ -198,7 +210,8 @@ export class AircraftInstances {
           count: 0,
           matrices: mesh.instanceMatrix.array as Float32Array,
           colors: mesh.instanceColor!.array as Float32Array,
-          shading: mesh.geometry.getAttribute('instanceShading').array as Float32Array
+          shading: mesh.geometry.getAttribute('instanceShading').array as Float32Array,
+          groundLight: mesh.geometry.getAttribute('instanceGroundLight').array as Float32Array
         })
       })
       return null
@@ -250,13 +263,16 @@ export class AircraftInstances {
       const matrices = old.matrices
       const colors = old.colors
       const shading = old.shading
+      const groundLight = old.groundLight
       allocate(old.mesh, capacity)
       batch.matrices = old.mesh.instanceMatrix.array as Float32Array
       batch.colors = old.mesh.instanceColor!.array as Float32Array
       batch.shading = old.mesh.geometry.getAttribute('instanceShading').array as Float32Array
+      batch.groundLight = old.mesh.geometry.getAttribute('instanceGroundLight').array as Float32Array
       batch.matrices.set(matrices)
       batch.colors.set(colors)
       batch.shading.set(shading)
+      batch.groundLight.set(groundLight)
     }
     return { batch, index }
   }
@@ -430,6 +446,29 @@ export class AircraftInstances {
       batch.shading[index * 3] = shadingScratch.x
       batch.shading[index * 3 + 1] = shadingScratch.y
       batch.shading[index * 3 + 2] = shadingScratch.z
+
+      // Detailed aircraft already receive local apron/street spill. Feed the
+      // same irradiance to nearby instanced models so selection or batching
+      // never decides whether a parked aircraft is lit.
+      const groundOffset = index * 3
+      const groundLight = groundLightScratch.set(0, 0, 0)
+      const roads = nightEmission.roads
+      if (
+        roads != null &&
+        nightEmission.enabled &&
+        nightState.night > 0 &&
+        distance < GROUND_LIGHT_DISTANCE &&
+        aircraft.groundHeight != null
+      ) {
+        const agl = pose.height - aircraft.groundHeight
+        const nearGround = 1 - Math.min(1, Math.max(0, (agl - 30) / 170))
+        if (nearGround > 0 && roads.groundLight(pose.position, groundLight)) {
+          groundLight.multiplyScalar(GROUND_LIGHT_GAIN * nearGround * nightState.night)
+        }
+      }
+      batch.groundLight[groundOffset] = groundLight.x
+      batch.groundLight[groundOffset + 1] = groundLight.y
+      batch.groundLight[groundOffset + 2] = groundLight.z
     }
     aircraftRenderState.count = count
     arrows.end()
@@ -439,6 +478,7 @@ export class AircraftInstances {
       batch.mesh.instanceMatrix.needsUpdate = true
       batch.mesh.instanceColor!.needsUpdate = true
       batch.mesh.geometry.getAttribute('instanceShading').needsUpdate = true
+      batch.mesh.geometry.getAttribute('instanceGroundLight').needsUpdate = true
     }
   }
 }

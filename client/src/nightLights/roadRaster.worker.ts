@@ -428,13 +428,11 @@ async function render(
     const cls = String(feature.properties.class)
     if (cls === 'apron' && feature.type === 3) {
       const rings = geometry(feature)
-      // Aprons used to be a uniformly glowing polygon. Real airfields are
-      // lit from tall perimeter masts: keep only a small base wash, then
-      // place a sparse, deterministic row of bright heads around the apron
-      // edge. At map scale the mast itself is sub-pixel, but the separate
-      // lamp layer preserves a sharp fixture while its pool lights pavement
-      // and nearby detailed aircraft.
-      if (poolsEnabled) fillRings(ctx, rings, rgba(NEUTRAL_LED, 0.014))
+      // Aprons used to be a uniformly glowing polygon. Because OSM clips
+      // that polygon at each vector-tile boundary, even a faint base wash
+      // produced visible square seams as tiles streamed in. Real airfields
+      // are lit from tall perimeter masts, so use only their overlapping
+      // pools and bright heads instead.
       apronFloodlights(ctx, rings, mpp, request)
       continue
     }
