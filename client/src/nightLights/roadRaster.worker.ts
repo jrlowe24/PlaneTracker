@@ -650,7 +650,8 @@ function apronFloodBeam(
   nx: number,
   ny: number,
   length: number,
-  halfWidth: number
+  halfWidth: number,
+  sourceWidth: number
 ): void {
   const ex = x + nx * length
   const ey = y + ny * length
@@ -667,19 +668,32 @@ function apronFloodBeam(
   gradient.addColorStop(0.7, rgbaAlpha(RUNWAY, 0.34, 0.13))
   gradient.addColorStop(1, rgbaAlpha(RUNWAY, 0.08, 0))
   ctx.fillStyle = gradient
-  ctx.beginPath()
-  ctx.moveTo(x - px * 3, y - py * 3)
-  ctx.lineTo(ex + px * halfWidth, ey + py * halfWidth)
-  ctx.lineTo(ex - px * halfWidth, ey - py * halfWidth)
-  ctx.closePath()
-  ctx.fill()
+  // A raised fixture already covers a wide footprint at the near end.
+  // Feather the sides with nested wedges: hard triangle boundaries were
+  // leaving black teeth between adjacent gate stands.
+  const layers = 8
+  ctx.save()
+  ctx.globalAlpha = 1 / layers
+  for (let i = 0; i < layers; ++i) {
+    const spread = 0.7 + 0.3 * i / (layers - 1)
+    const nearWidth = sourceWidth * spread
+    const farWidth = halfWidth * spread
+    ctx.beginPath()
+    ctx.moveTo(x + px * nearWidth, y + py * nearWidth)
+    ctx.lineTo(ex + px * farWidth, ey + py * farWidth)
+    ctx.lineTo(ex - px * farWidth, ey - py * farWidth)
+    ctx.lineTo(x - px * nearWidth, y - py * nearWidth)
+    ctx.closePath()
+    ctx.fill()
+  }
+  ctx.restore()
 }
 
 function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRasterRequest): void {
   // 35–45 m mast heights commonly give a 150–200 m usable apron throw.
   // Adjacent cones intentionally overlap; terminal stands should be broadly
   // lit, rather than separated by black pavement between individual poles.
-  const spacing = 82 / mpp
+  const spacing = 65 / mpp
   const length = 185 / mpp
   const halfWidth = 112 / mpp
   // Contain every beam to the actual apron. This makes overlapping beams
@@ -690,6 +704,10 @@ function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRas
     ring.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)))
   }
   ctx.clip('evenodd')
+  // Reflected light from the overlapping mast bank keeps concave stand
+  // areas from falling to black between cones. This is a restrained floor,
+  // below the directional illumination, confined to mapped pavement.
+  if (poolsEnabled) fillRings(ctx, rings, rgba(RUNWAY, 0.045))
   for (let ringIndex = 0; ringIndex < rings.length; ++ringIndex) {
     const ring = rings[ringIndex]!
     if (ring.length < 2) continue
@@ -706,7 +724,7 @@ function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRas
         ny = -ny
       }
       if (!insideRings(rings, x + nx * probe, y + ny * probe)) return
-      apronFloodBeam(ctx, x, y, nx, ny, length, halfWidth)
+      apronFloodBeam(ctx, x, y, nx, ny, length, halfWidth, 48 / mpp)
       // Keep the physical mast itself, but do not give it a circular ground
       // pool—the directional beam above supplies the illumination.
       lamp(ctx, x, y, 0, RUNWAY, 0.22, false)
