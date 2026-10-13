@@ -5,7 +5,7 @@ import { flightStatusStore } from '../data/flightConnection'
 import { cloudCoverStore } from '../clouds/cloudCoverStore'
 import { weatherStore } from '../data/weather'
 import { tileStatusStore } from '../globe/tileStatus'
-import { nightEmission } from '../nightLights/nightLightsStore'
+import { nightEmission, nightLightingTestStore, type NightLightingMode } from '../nightLights/nightLightsStore'
 import { nightState } from '../scene/nightLighting'
 import type { BenchResult } from '../dev/DevBench'
 import { setViewSolarHours } from '../state/skyTime'
@@ -42,6 +42,7 @@ export const DevPanel: FC = () => {
   const [bench, setBench] = useState<BenchResult | 'running' | null>(null)
   const resolution = useStore(resolutionStore, s => s)
   const hazeQuality = useStore(qualityStore, s => s.elements.cityAtmosphere)
+  const lightingMode = useStore(nightLightingTestStore, s => s.mode)
   const visible = useStore(settingsStore, s => s.showDevPanel)
   const offset = useStore(settingsStore, s => s.timeOffsetMs)
   const exposure = useStore(settingsStore, s => s.exposure)
@@ -109,6 +110,13 @@ export const DevPanel: FC = () => {
         <label>City haze test
           <select aria-label='City haze test' value={hazeQuality} onChange={e => setQualityElement('cityAtmosphere', e.target.value as 'off' | 'low' | 'high')}>
             <option value='off'>Off</option><option value='low'>Low</option><option value='high'>High</option>
+          </select>
+        </label>
+        <label>Distance-light treatment
+          <select aria-label='Distance-light treatment' value={lightingMode} onChange={e => nightLightingTestStore.set({ mode: e.target.value as NightLightingMode })}>
+            <option value='current'>Current — sharp distant points</option>
+            <option value='photographic'>Photographic — distance falloff</option>
+            <option value='noBoost'>No far-point boost — diagnostic</option>
           </select>
         </label>
         <label><input type='checkbox' checked={resolution.locked} onChange={e => resolutionStore.set({ locked: e.target.checked })} /> Hold render resolution</label>

@@ -23,6 +23,7 @@ import { WINDOW_TILES } from './nightLightTiles'
 import { MAX_WINDOW, ROAD_LEVELS, ROAD_TILE_SIZE, type RoadLevelUniforms } from './roadTiles'
 import { MAX_RUNWAYS, type RunwayUniforms } from './runwayLights'
 import { lightBeams, MAX_LIGHT_BEAMS } from '../aircraft/navLightsStore'
+import { nightLightingTestStore } from './nightLightsStore'
 
 const drawingBuffer = new Vector2()
 
@@ -65,6 +66,8 @@ uniform sampler2DArray roadLights;
 uniform highp sampler2DArray roadLamps;
 uniform sampler2DArray waterMap;
 uniform float lampGain;
+/** 0 current, 1 photographic distance attenuation, 2 current fade without peak boost. */
+uniform float lightingMode;
 uniform float roadTexelMeters[${ROAD_LEVELS}];
 uniform vec2 roadOrigin[${ROAD_LEVELS}];
 uniform float roadEnabled[${ROAD_LEVELS}];
@@ -179,6 +182,11 @@ float mappedLand(const vec3 offset, const vec3 albedo) {
  * and the slow falloff turned streets into a glowing map.
  */
 float distantFade(const float share) {
+  if (lightingMode > 0.5) {
+    // The photo comparison: sub-pixel fixtures lose contrast more quickly
+    // instead of remaining an equally bright carpet all the way to horizon.
+    return min(1.0, pow(share, 0.72) * pow(min(1.0, share / 0.16), 0.85));
+  }
   return min(1.0, pow(share, 0.5) * pow(min(1.0, share / 0.1), 0.55));
 }
 
@@ -224,7 +232,10 @@ float poolShare(const float footprint) {
  * only; it deliberately does not add energy to bloom or ground spill.
  */
 float pointContrast(const float footprint) {
-  return mix(1.0, 1.5, smoothstep(1.25, 5.5, footprint));
+  float far = smoothstep(1.25, 5.5, footprint);
+  if (lightingMode > 1.5) return mix(1.0, 0.82, far);
+  if (lightingMode > 0.5) return mix(1.0, 1.0, far);
+  return mix(1.0, 1.5, far);
 }
 
 uvec2 pcg2d(uvec2 v);
@@ -1039,6 +1050,15 @@ void main() {
   vec3 field = fieldLamps * lampGain * 0.8 * smoothstep(0.35, 0.85, upness) * fieldOn;
   vec3 light = lit * gain * land + field;
   float glow = lightLuminance(glowing) * gain * land + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
+  if (lightingMode > 0.5) {
+    // The regular aerial perspective pass handles scene haze. This is the
+    // missing fixture-level extinction: it only affects the emissive city
+    // buffer before tone mapping, so far dots settle into city clusters.
+    float distanceKm = length(offset) * 0.001;
+    float extinction = exp(-max(0.0, distanceKm - 2.0) * 0.026);
+    light *= extinction;
+    glow *= extinction;
+  }
   // Landing and taxi lights on the runway, taxiway or apron ahead.
   if (beamCount > 0 && normalLength > 1e-12) {
     vec3 beams = albedo.rgb * lightBeams(offset, normal / normalLength) * night;
@@ -1231,6 +1251,7 @@ export class NightLightsPass extends Pass {
         roadLamps: new Uniform(null),
         waterMap: new Uniform(null),
         lampGain: new Uniform(0.125),
+        lightingMode: new Uniform(0),
         buildingMap: new Uniform(null),
         windowGain: new Uniform(WINDOW_GAIN),
         windowShares: new Uniform(new Vector2(0.2, 0.2)),
@@ -1400,6 +1421,8 @@ export class NightLightsPass extends Pass {
     const position = this.u<Vector3>('cameraPositionECEF').value
     position.setFromMatrixPosition(camera.matrixWorld)
     this.u<Texture | null>('inputBuffer').value = inputBuffer?.texture ?? null
+    const mode = nightLightingTestStore.get().mode
+    this.u<number>('lightingMode').value = mode === 'photographic' ? 1 : mode === 'noBoost' ? 2 : 0
     renderer.setRenderTarget(this.target)
     this.fullscreenMaterial = this.material
     renderer.render(this.scene, this.camera)

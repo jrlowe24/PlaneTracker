@@ -10,6 +10,10 @@ export const nightLightsStore = createStore<{ credit: string | null; streets: bo
   streets: false
 })
 
+/** Developer A/B control for the treatment of sub-pixel city fixtures. */
+export type NightLightingMode = 'current' | 'photographic' | 'noBoost'
+export const nightLightingTestStore = createStore<{ mode: NightLightingMode }>({ mode: 'current' })
+
 /**
  * The night light emission buffer (lights and their glow) AerialPerspective
  * adds to the terrain, and whether it's current (the pass is skipped by day).

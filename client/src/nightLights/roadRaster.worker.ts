@@ -151,6 +151,12 @@ function rgba(color: Rgb, intensity: number): string {
   return `rgb(${c(color[0])},${c(color[1])},${c(color[2])})`
 }
 
+/** A translucent version for overlapping floodlight beams. */
+function rgbaAlpha(color: Rgb, intensity: number, alpha: number): string {
+  const c = (v: number): number => Math.round(Math.min(1, v * intensity) * 255)
+  return `rgba(${c(color[0])},${c(color[1])},${c(color[2])},${alpha})`
+}
+
 type Point = { x: number; y: number }
 type Ctx = OffscreenCanvasRenderingContext2D
 
@@ -619,25 +625,94 @@ function scatterPools(
  * High-mast apron floodlights. OSM gives us an apron polygon but not its
  * lighting plan, so use the perimeter—where these masts normally sit—and a
  * world-fixed phase so adjacent streamed tiles never make the lights crawl.
- * Holes are included too: terminal/gate islands receive their own edge row.
+ *
+ * Each mast emits a broad, terminal-facing wedge rather than a circular
+ * pool. That is the useful shape of a raised apron floodlight: a low, wide
+ * triangle of pavement illumination reaching from the terminal edge toward
+ * the stands, not a bright dot in the middle of each ramp bay.
  */
+function insideRings(rings: Point[][], x: number, y: number): boolean {
+  let inside = false
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i]!
+      const b = ring[j]!
+      if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside
+    }
+  }
+  return inside
+}
+
+function apronFloodBeam(
+  ctx: Ctx,
+  x: number,
+  y: number,
+  nx: number,
+  ny: number,
+  length: number,
+  halfWidth: number
+): void {
+  const ex = x + nx * length
+  const ey = y + ny * length
+  const px = -ny
+  const py = nx
+  const gradient = ctx.createLinearGradient(x, y, ex, ey)
+  // A bright enough source to reveal the gate equipment, but no circular
+  // white hotspot. The clipped beam broadens towards the aircraft stand.
+  // High masts throw much farther than the old small pools. The source is
+  // deliberately not a white pin: overlapping, low-gradient wedges give
+  // the stand a broad, elevated illumination instead.
+  gradient.addColorStop(0, rgbaAlpha(RUNWAY, 0.62, 0.3))
+  gradient.addColorStop(0.22, rgbaAlpha(RUNWAY, 0.54, 0.25))
+  gradient.addColorStop(0.7, rgbaAlpha(RUNWAY, 0.34, 0.13))
+  gradient.addColorStop(1, rgbaAlpha(RUNWAY, 0.08, 0))
+  ctx.fillStyle = gradient
+  ctx.beginPath()
+  ctx.moveTo(x - px * 3, y - py * 3)
+  ctx.lineTo(ex + px * halfWidth, ey + py * halfWidth)
+  ctx.lineTo(ex - px * halfWidth, ey - py * halfWidth)
+  ctx.closePath()
+  ctx.fill()
+}
+
 function apronFloodlights(ctx: Ctx, rings: Point[][], mpp: number, tile: RoadRasterRequest): void {
-  const spacing = 90 / mpp
-  // A mast has a wide reach, but its useful illuminated pool is much
-  // smaller than the whole apron. Keeping the pools below 40 m across
-  // prevents adjacent masts from turning the map tile into a white sheet.
-  const radius = 18 / mpp
+  // 35–45 m mast heights commonly give a 150–200 m usable apron throw.
+  // Adjacent cones intentionally overlap; terminal stands should be broadly
+  // lit, rather than separated by black pavement between individual poles.
+  const spacing = 82 / mpp
+  const length = 185 / mpp
+  const halfWidth = 112 / mpp
+  // Contain every beam to the actual apron. This makes overlapping beams
+  // continuous across gates without washing the terminal building or roads.
+  ctx.save()
+  ctx.beginPath()
+  for (const ring of rings) {
+    ring.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)))
+  }
+  ctx.clip('evenodd')
   for (let ringIndex = 0; ringIndex < rings.length; ++ringIndex) {
     const ring = rings[ringIndex]!
     if (ring.length < 2) continue
     const phase = spacing * hash(tile.x * 4099 + ringIndex, tile.y * 8191 + ring.length, tile.z + 47)
-    along(ring, spacing, phase, (x, y) => {
-      // Avoid a perfectly regular stadium-like outline while retaining
-      // enough coverage for gates and ramp parking.
-      if (hash(Math.round(x * 8), Math.round(y * 8), 53) < 0.12) return
-      lamp(ctx, x, y, radius, RUNWAY, 0.48, true)
+    along(ring, spacing, phase, (x, y, dx, dy) => {
+      // Pick the segment normal that actually leads into the apron. This
+      // works for both outer boundaries and terminal-shaped holes, without
+      // relying on vector-tile winding direction.
+      let nx = -dy
+      let ny = dx
+      const probe = Math.max(3, 16 / mpp)
+      if (!insideRings(rings, x + nx * probe, y + ny * probe)) {
+        nx = -nx
+        ny = -ny
+      }
+      if (!insideRings(rings, x + nx * probe, y + ny * probe)) return
+      apronFloodBeam(ctx, x, y, nx, ny, length, halfWidth)
+      // Keep the physical mast itself, but do not give it a circular ground
+      // pool—the directional beam above supplies the illumination.
+      lamp(ctx, x, y, 0, RUNWAY, 0.22, false)
     })
   }
+  ctx.restore()
 }
 
 /**
