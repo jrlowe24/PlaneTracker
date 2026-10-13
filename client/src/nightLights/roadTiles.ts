@@ -14,6 +14,7 @@ import {
 
 import type { RoadRasterRequest, RoadRasterResponse } from './roadRaster.worker'
 import { RunwayLights } from './runwayLights'
+import { GroundNavigation } from '../aircraft/groundNavigation'
 
 /**
  * Street, area and airport lighting from OpenStreetMap (OpenFreeMap vector
@@ -249,6 +250,7 @@ const up = new Vector3()
 const ground = new Vector3()
 
 export class RoadLightTiles {
+  readonly groundNavigation = new GroundNavigation()
   readonly texture: DataArrayTexture
   /** Exact lamp positions per texel cell (nearest filtering, no mips). */
   readonly lamps: DataArrayTexture
@@ -422,6 +424,7 @@ export class RoadLightTiles {
       if (s.key === key) continue
       if ([...this.pending.values()].some(p => p.key === key)) continue
       if ((this.failed.get(key) ?? 0) > now) continue
+      if (level.z === 14) this.groundNavigation.removeTile(s.key)
       s.key = key
       s.loaded = false
       const lat = latOfTileY(y + 0.5, level.z)
@@ -454,6 +457,7 @@ export class RoadLightTiles {
       return
     }
     if (s.key !== key) return // window moved on
+    if (level.z === 14) this.groundNavigation.setTile(key, response.groundPaths ?? [])
     const layer = level.layerOf(slot)
     this.data.set(response.pixels, layer * SIZE * SIZE * 4)
     this.texture.addLayerUpdate(layer)
@@ -534,6 +538,7 @@ export class RoadLightTiles {
   }
 
   dispose(): void {
+    this.groundNavigation.clear()
     for (const worker of this.workers) worker.terminate()
     this.texture.dispose()
     this.lamps.dispose()

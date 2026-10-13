@@ -4,6 +4,7 @@ import { Vector3 } from 'three'
 import type { TrackedAircraft } from '../data/aircraftRegistry'
 import { AIRFRAMES } from './airframes'
 import { glidePath } from './approach'
+import { nightEmission } from '../nightLights/nightLightsStore'
 import {
   bankAngle,
   defaultMotionOptions,
@@ -139,6 +140,10 @@ export function computePose(
     out.opacity = 0
     return out
   }
+  const sample = aircraft.motion[aircraft.motion.length - 1]
+  const groundConstrained = sample != null && aircraft.cameraDistance < 40_000 &&
+    (nightEmission.roads?.groundNavigation.constrain(sample, k) ?? false)
+  aircraft.groundPrediction = groundConstrained ? (Math.hypot(k.vn, k.ve) < 0.1 ? 'holding' : 'following') : undefined
   const speed = Math.hypot(k.vn, k.ve)
   const track = trackOf(k.vn, k.ve)
   const first = !attitude.initialized
@@ -272,6 +277,13 @@ export function computePose(
     if (aircraft.groundHeight != null) {
       height = Math.max(height, aircraft.groundHeight + clearance)
     }
+  }
+  // The generic error offset can carry a held aircraft beyond a pavement
+  // endpoint. Mapped prediction already eases its lateral correction.
+  if (groundConstrained) {
+    lat = k.lat
+    lon = k.lon
+    attitude.errorN = attitude.errorE = 0
   }
   attitude.lastLat = lat
   attitude.lastLon = lon

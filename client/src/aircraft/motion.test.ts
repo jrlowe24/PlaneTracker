@@ -18,6 +18,9 @@ import {
 import { computePose, createPose, WHEEL_CONTACT_LIFT, writePose } from './pose'
 import { AircraftRegistry } from '../data/aircraftRegistry'
 import { AIRFRAMES } from './airframes'
+import { GroundNavigation } from './groundNavigation'
+import { nightEmission } from '../nightLights/nightLightsStore'
+import type { RoadLightTiles } from '../nightLights/roadTiles'
 
 function out(): KinematicState {
   return { lat: 0, lon: 0, height: 0, vn: 0, ve: 0, vu: 0, onGround: false, extrapolation: 0 }
@@ -212,6 +215,36 @@ describe('altitude datum', () => {
     const pose = computePose(aircraft, 0, 1 / 60, true, createPose(), true)
     expect(pose.onGround).toBe(true)
     expect(pose.height).toBeCloseTo(110 + aircraft.scale.length * AIRFRAMES[aircraft.cls].groundClearance + WHEEL_CONTACT_LIFT, 8)
+  })
+
+  it('does not let pose error smoothing push a predicted aircraft past a runway end', () => {
+    const previous = nightEmission.roads
+    const nav = new GroundNavigation()
+    const m = metersPerRadian(state.lat)
+    const d = m.east * Math.PI / 180
+    nav.setTile('test', [{ kind: 'runway', points: [[state.lon, state.lat], [state.lon + 50 / d, state.lat]] }])
+    nightEmission.roads = { groundNavigation: nav } as RoadLightTiles
+    try {
+      const registry = new AircraftRegistry()
+      const aircraft = registry.upsert({ ...state, onGround: true, track: 90, groundSpeed: 20 }, 0)
+      aircraft.cameraDistance = 100
+      aircraft.groundHeight = 110
+      const out = createPose()
+      computePose(aircraft, 1000, 1 / 60, true, out, true)
+      // Reproduce the old generic smoothing wanting to continue the roll.
+      aircraft.attitude.errorE = 80
+      computePose(aircraft, 7000, 1 / 60, true, out, true)
+      expect((out.lon - state.lon) * d).toBeCloseTo(47, 2)
+      expect(out.speed).toBe(0)
+      expect(aircraft.groundPrediction).toBe('holding')
+      expect(out.opacity).toBe(1)
+      registry.upsert({ ...state, onGround: true, track: 90, groundSpeed: 20,
+        positionTimestamp: 8000, lon: state.lon + 40 / d }, 8000)
+      computePose(aircraft, 8000, 1 / 60, true, out, true)
+      expect(aircraft.groundPrediction).toBeUndefined()
+    } finally {
+      nightEmission.roads = previous
+    }
   })
 
   it('converts a state into an SI sample with track-based velocity', () => {

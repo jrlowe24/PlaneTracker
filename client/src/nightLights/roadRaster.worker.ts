@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import { VectorTile, type VectorTileFeature } from '@mapbox/vector-tile'
 import Pbf from 'pbf'
+import type { GroundPath } from '../aircraft/groundNavigation'
 
 /**
  * Turns one OpenStreetMap vector tile (OpenMapTiles schema, from
@@ -46,6 +47,7 @@ export interface RoadRasterResponse {
   water?: Uint8Array | null
   /** Whole runways near the tile, for exact runway lighting (runwayLights.ts). */
   runways?: RunwayRecord[]
+  groundPaths?: GroundPath[]
   error?: string
 }
 
@@ -264,6 +266,7 @@ async function render(
   buildings: Uint8Array | null
   water: Uint8Array
   runways: RunwayRecord[]
+  groundPaths: GroundPath[]
 }> {
   const { size, metersPerPixel: mpp } = request
   lampSize = size
@@ -412,6 +415,21 @@ async function render(
 
   // Airports.
   const aeroway = tile.layers.aeroway
+  const groundPaths: GroundPath[] = []
+  if (request.z === 14) {
+    const n = 2 ** request.z
+    for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
+      const feature = aeroway!.feature(i)
+      const kind = String(feature.properties.class)
+      if (feature.type !== 2 || (kind !== 'runway' && kind !== 'taxiway')) continue
+      for (const line of geometry(feature)) {
+        groundPaths.push({ kind, points: line.map(p => [
+          (request.x + p.x / size) / n * 360 - 180,
+          Math.atan(Math.sinh(Math.PI * (1 - 2 * (request.y + p.y / size) / n))) * 180 / Math.PI
+        ]) })
+      }
+    }
+  }
   let lit = false
   for (let i = 0; i < (aeroway?.length ?? 0); ++i) {
     const feature = aeroway!.feature(i)
@@ -532,7 +550,8 @@ async function render(
     lamps: lampCells,
     buildings: buildingMap,
     water,
-    runways: index?.runways ?? []
+    runways: index?.runways ?? [],
+    groundPaths
   }
 }
 
@@ -1013,8 +1032,8 @@ self.onmessage = async (event: MessageEvent<RoadRasterRequest>) => {
   try {
     const response = await fetch(request.url)
     if (!response.ok) throw new Error(`tile ${response.status}`)
-    const { pixels, lamps, buildings, water, runways } = await render(request, await response.arrayBuffer())
-    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, water, runways }
+    const { pixels, lamps, buildings, water, runways, groundPaths } = await render(request, await response.arrayBuffer())
+    const message: RoadRasterResponse = { id: request.id, pixels, lamps, buildings, water, runways, groundPaths }
     const transfer = [pixels.buffer, lamps.buffer, water.buffer]
     if (buildings != null) transfer.push(buildings.buffer)
     ;(self as unknown as Worker).postMessage(message, transfer)

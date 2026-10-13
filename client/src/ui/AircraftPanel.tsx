@@ -148,6 +148,10 @@ export const AircraftPanel: FC = () => {
         <dd className='secondary'>{state.squawk ?? '—'}</dd>
         <dt className='secondary'>ICAO</dt>
         <dd className='secondary'>{state.hex.toUpperCase()}</dd>
+        {tracked.groundPrediction != null && <>
+          <dt className='secondary'>Ground position</dt>
+          <dd>{tracked.groundPrediction === 'holding' ? 'Holding for update' : 'Pavement prediction'}</dd>
+        </>}
         <dt className='secondary'>Position age</dt>
         <dd className='secondary'>{ageS.toFixed(0)} s</dd>
       </dl>

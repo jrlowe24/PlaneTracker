@@ -59,6 +59,8 @@ export interface TrackedAircraft {
   pose: Pose | null
   /** Actual instanced model transform, also used by its attached fixtures. */
   renderLights?: { anchors: LightAnchors; span: number; length: number; lift: number }
+  /** Explicitly distinguish inferred pavement motion from received positions. */
+  groundPrediction?: 'following' | 'holding'
   /** Distance from the camera last frame, meters. */
   cameraDistance: number
   /** Client wall time of the last update. */
