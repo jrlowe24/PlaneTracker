@@ -182,7 +182,7 @@ float mappedLand(const vec3 offset, const vec3 albedo) {
  * and the slow falloff turned streets into a glowing map.
  */
 float distantFade(const float share) {
-  if (lightingMode > 0.5) {
+  if (lightingMode > 0.5 && lightingMode < 1.5) {
     // The photo comparison: sub-pixel fixtures lose contrast more quickly
     // instead of remaining an equally bright carpet all the way to horizon.
     return min(1.0, pow(share, 0.72) * pow(min(1.0, share / 0.16), 0.85));
@@ -233,8 +233,7 @@ float poolShare(const float footprint) {
  */
 float pointContrast(const float footprint) {
   float far = smoothstep(1.25, 5.5, footprint);
-  if (lightingMode > 1.5) return mix(1.0, 0.82, far);
-  if (lightingMode > 0.5) return mix(1.0, 1.0, far);
+  if (lightingMode > 0.5) return 1.0;
   return mix(1.0, 1.5, far);
 }
 
@@ -1050,7 +1049,7 @@ void main() {
   vec3 field = fieldLamps * lampGain * 0.8 * smoothstep(0.35, 0.85, upness) * fieldOn;
   vec3 light = lit * gain * land + field;
   float glow = lightLuminance(glowing) * gain * land + lightLuminance(field) * glowShare(0.35 / max(footprint, 1e-3) / 0.8);
-  if (lightingMode > 0.5) {
+  if (lightingMode > 0.5 && lightingMode < 1.5) {
     // The regular aerial perspective pass handles scene haze. This is the
     // missing fixture-level extinction: it only affects the emissive city
     // buffer before tone mapping, so far dots settle into city clusters.

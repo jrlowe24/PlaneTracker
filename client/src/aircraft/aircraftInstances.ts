@@ -460,9 +460,9 @@ export class AircraftInstances {
         nightEmission.enabled &&
         nightState.night > 0 &&
         distance < GROUND_LIGHT_DISTANCE &&
-        aircraft.groundHeight != null
+        (pose.onGround || aircraft.groundHeight != null)
       ) {
-        const agl = pose.height - aircraft.groundHeight
+        const agl = pose.onGround ? 0 : pose.height - aircraft.groundHeight!
         const nearGround = 1 - Math.min(1, Math.max(0, (agl - 30) / 170))
         if (nearGround > 0 && roads.groundLight(pose.position, groundLight)) {
           groundLight.multiplyScalar(GROUND_LIGHT_GAIN * nearGround * nightState.night).clampScalar(0, MAX_GROUND_IRRADIANCE)

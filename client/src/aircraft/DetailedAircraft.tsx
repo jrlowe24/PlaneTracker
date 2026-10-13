@@ -220,8 +220,8 @@ class DetailedAircraftController {
       // near the ground light it too.
       groundLight.set(0, 0, 0)
       const roads = nightEmission.roads
-      if (roads != null && nightEmission.enabled && aircraft?.groundHeight != null && nightState.night > 0) {
-        const agl = pose.height - aircraft.groundHeight
+      if (roads != null && nightEmission.enabled && (pose.onGround || aircraft?.groundHeight != null) && nightState.night > 0) {
+        const agl = pose.onGround ? 0 : pose.height - aircraft!.groundHeight!
         const near = 1 - Math.min(1, Math.max(0, (agl - 30) / 170))
         if (near > 0 && roads.groundLight(pose.position, groundLight)) {
           groundLight.multiplyScalar(GROUND_LIGHT_GAIN * near * nightState.night).clampScalar(0, MAX_GROUND_IRRADIANCE)

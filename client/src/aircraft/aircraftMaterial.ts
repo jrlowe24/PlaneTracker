@@ -106,9 +106,12 @@ vGroundLight = ${instanced ? 'instanceGroundLight' : 'aircraftGroundLight'};`
       )
       .replace(
         'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal );',
-        'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal ) * vShading.z + vGroundLight;'
+        'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal ) * vShading.z;'
       )
-      .replace('#include <lights_fragment_end>', instanced ? '#include <lights_fragment_end>' : NAV_LIGHTS_FRAGMENT)
+      .replace('#include <lights_fragment_end>', `${instanced ? '#include <lights_fragment_end>' : NAV_LIGHTS_FRAGMENT}
+// Apron illumination must not depend on USE_LIGHT_PROBES. Keep the paint's
+// diffuse response and apply it to every detailed and instanced model.
+reflectedLight.indirectDiffuse += material.diffuseColor * vGroundLight * RECIPROCAL_PI;`)
       .replace(
         '#include <emissivemap_fragment>',
         '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vShading.x;'
